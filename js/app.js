@@ -1,0 +1,2489 @@
+/**
+ * app.js — Live2D Interaction Engine (FIXED)
+ * 神宫白子 (Jingu Shiroshi) — PixiJS v6 + pixi-live2d-display@0.4.0
+ *
+ * Root-cause fixes vs the previous (broken) version:
+ *   - The page loaded PixiJS v7, but pixi-live2d-display@0.4.0 only supports PixiJS v6.
+ *     The SDK attaches the model to a v6-style stage; under v7 the model silently
+ *     never rendered and every interaction threw. We now use pixi.6.5.10.min.js.
+ *   - PIXI.Application in v6 needs an explicit `view` to a canvas (done) and the
+ *     model is added as a normal DisplayObject (done). No `app.stage` v7 quirks.
+ *   - Setting parameters: correct API is model.setParameterValueById(id, value, weight).
+ *     The old code called model.setParameter(...) which does not exist -> every
+ *     eye-tracking / slider / accessory call failed silently.
+ *   - Expressions: correct API is model.expression(id) (async), where id is the
+ *     expression NAME (e.g. "呆猫") from model3.json, or no arg for random.
+ *     The old code used model.expression = null (no setter) and
+ *     motionManager._runtime.setExpression(...) (path does not exist).
+ *     To reset we call model.internalModel.motionManager.expressionManager.resetExpression().
+ *   - Idle sway used model.y += ... inside setInterval without resetting, which
+ *     drifted the model off-screen; now we apply a small offset relative to a
+ *     base position each tick instead of accumulating.
+ */
+(function () {
+  'use strict';
+
+  // ─── moc version-stamp compatibility shim ───────────────────────
+  // The bundled Cubism 4.2.2 core rejects moc binary versions > 4
+  // (C.Moc.fromArrayBuffer returns null). Many Cubism 3 / early-Cubism-4
+  // models are stamped version 5 but use a v4-compatible layout; the core
+  // simply refuses them. Rewrite the 4-byte version stamp at offset 4 to 4
+  // so the core accepts them — no Cubism Editor re-export required.
+  (function patchCubismCore() {
+    const core = window.Live2DCubismCore;
+    if (!core || !core.Moc || !core.Moc.fromArrayBuffer) return;
+    const orig = core.Moc.fromArrayBuffer.bind(core.Moc);
+    core.Moc.fromArrayBuffer = function (buf) {
+      try {
+        const ab = (buf instanceof ArrayBuffer) ? buf : (buf && buf.buffer) || buf;
+        const u8 = new Uint8Array(ab);
+        if (u8.length > 8) {
+          const v = u8[4] | (u8[5] << 8) | (u8[6] << 16) | (u8[7] << 24);
+          if (v > 4) { u8[4] = 4; u8[5] = 0; u8[6] = 0; u8[7] = 0; }
+        }
+      } catch (e) { /* fall through to original */ }
+      return orig(buf);
+    };
+  })();
+
+  const API = 'http://127.0.0.1:8310';   // backend origin (used by boot + model/conn UI)
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));  // shared math helper
+  // ─── State ────────────────────────────────────────────────────
+  const state = {
+    model: null,
+    blinkEnabled: true,
+    idleEnabled: true,
+    blinkInterval: null,
+    idleRAF: null,
+    aiLock: false,            // true while AI controls the character (pause user interaction)
+    accessoryValues: {},
+    // Sticky parameter overrides (accessories + sliders + eye-follow).
+    // The model re-evaluates its own motion/physics every frame, so we re-apply
+    // these after each model update to keep them "held".
+    overrides: {},
+    isDragging: false,
+    dragTarget: null,
+    dragOffset: { x: 0, y: 0 },
+    basePos: { x: 0, y: 0 },     // center, used by idle sway as anchor
+    scale: 1,
+    talking: false,            // true while TTS/simulated speech is playing
+    mouthRest: 0,              // resting mouth-open value (set by slider)
+    mouthTimer: null,
+    // Look/follow target + current (eased) values. We store a TARGET on
+    // mousemove and lerp CURRENT -> TARGET every frame, then write with
+    // weight=1 so the head/eyes reach the target exactly (precise) while
+    // still moving smoothly (eased). This fixes the "follow feels imprecise"
+    // problem caused by the old weight=0.3 blend that never fully arrived.
+    look: { ax:0, ay:0, ex:0, ey:0, tax:0, tay:0, tex:0, tey:0, bx:0, by:0, tbx:0, tby:0 },
+    // AI-driven POSE TARGET while the AI has the lock. While aiLock is true,
+    // the engine eases the model toward THIS (plus a live fidget), so poses
+    // transition smoothly instead of snapping — the "stiff" fix.
+    aiPose: { ax:0, ay:0, ex:0, ey:0, mouthForm:0, bodyX:0, bodyY:0, bodyZ:0, breath:0.45 },
+    // Live fidget seed (randomized each lock) so every session feels unique.
+    fidgetT: 0,
+    fidgetSeed: Math.random() * 1000,
+    // Cached look reference frame (computed once per model load) so the
+    // follow gain is stable and doesn't get "held back" if getLocalBounds()
+    // returns a different box after re-framing.
+    lookFrame: { eyeX:0, eyeY:0, w:1, h:1 },
+    idleMotionTimer: null,
+    activeEmotion: 'normal',
+    activeProperty: 'default',
+    supportedEmotions: {},   // (was populated from emotion templates; now empty — panel removed)
+    // Real, sheet-derived capability flags so the AI engine only drives
+    // parameters THIS model actually owns. Populated by hydrateCaps() from
+    // the character sheet (file -> localStorage -> live inspect fallback).
+    caps: {
+      hasHead: true, hasEyes: true, hasMouth: true,
+      hasBody: false, hasBrow: false, hasHair: false,
+      params: null,          // Set of owned param ids (or null = unknown)
+      ids: {},               // role -> actual model param id (model-agnostic)
+      motionGroups: [],      // model's own motion groups (if any)
+    },
+    paramRange: {},          // id -> {min,max,def} from Cubism Core (true ranges)
+    // Micro-gesture scheduler state (neuro-sama-ish "always alive" feel).
+    gesture: { timer: null, nextAt: 0, seed: Math.random() * 1000 },
+    // ── Motion-clip taxonomy (semantic verbs) ──
+    // byVerb: verb -> [clip names]; clipMeta: clip name -> {verb, group, index}.
+    // Fetched once per model from GET /api/model/motion-taxonomy (server parses
+    // every .motion3.json and classifies it by its actual curves). Used to pick
+    // clips that MATCH the current emotion instead of uniformly at random —
+    // the fix for "she plays a crying animation while saying something happy".
+    motionTaxonomy: null,
+    // Clip playback guard. While a native clip is playing it owns the head/body
+    // params, so the eased AI pose must NOT fight it (two writers on the same
+    // parameter = the stiff, twitchy look). Timestamp in ms; 0 = idle.
+    clipUntil: 0,
+    clipName: null,
+    clipStartedAt: 0,
+    // Eased emotion system: AI/UI set a TARGET, the engine eases toward it
+    // every frame so expression changes morph smoothly instead of snapping.
+    emoTarget: {}, emoCur: {},
+    // "Pop" impulse + transient energy boost fired on each response segment so
+    // she bounces/lurches with life when she starts talking or changes pose.
+    impulse: 0,
+    energyBoost: 0,
+    // Intrinsic (scale-1) model size, cached at framing so we can do breathing
+    // squash/stretch and bob around a stable center every frame.
+    natW: 0, natH: 0,
+  };
+
+  // ─── DOM helpers ──────────────────────────────────────────────
+  const $  = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
+
+  // ─── Parameter helpers (CORRECT API for pixi-live2d-display@0.4.0) ──
+  // The public Live2DModel has NO setParameter* method; the real setter lives
+  // on internalModel.coreModel (the Cubism core model wrapper).
+  function coreModel() {
+    return state.model && state.model.internalModel
+      ? state.model.internalModel.coreModel : null;
+  }
+
+  // Apply a value immediately (transient writes, e.g. blink).
+  function pokeParam(id, value, weight) {
+    const cm = coreModel();
+    if (!cm) return;
+    try { cm.setParameterValueById(id, value, weight === undefined ? 1 : weight); } catch (e) {}
+  }
+
+  // Set a sticky override (accessories / sliders / eye-follow) — re-applied
+  // every frame so the model's own update can't erase it.
+  function setSticky(id, value, weight) {
+    state.overrides[id] = (weight === undefined ? 1 : weight) === 1 ? value
+      : { value, weight: weight === undefined ? 1 : weight };
+    pokeParam(id, value, weight);
+  }
+
+  function applyOverrides() {
+    const cm = coreModel();
+    if (!cm) return;
+    for (const id in state.overrides) {
+      const o = state.overrides[id];
+      try {
+        if (typeof o === 'object') cm.setParameterValueById(id, o.value, o.weight);
+        else cm.setParameterValueById(id, o, 1);
+      } catch (e) {}
+    }
+  }
+
+  // ── Parts (opacity) — distinct from Parameters ──
+  // Cubism models expose two separate systems: Parameters (deformation, what
+  // we've been driving above) and Parts (per-layer opacity, 0..1). The model's
+  // parts are enumerated below for the inspect/capability engine.
+  // Enumerate every Part this model owns (id + current opacity as default).
+  function enumerateParts() {
+    const cm = coreModel();
+    const out = [];
+    try {
+      const gm = (cm && cm.getModel) ? cm.getModel() : cm;
+      if (!gm || typeof gm.getPartCount !== 'function') return out;
+      const n = gm.getPartCount();
+      for (let i = 0; i < n; i++) {
+        let id = '';
+        try { id = (typeof gm.getPartIds === 'function') ? gm.getPartIds()[i] : ''; } catch (e) {}
+        if (!id) continue;
+        let def = 1;
+        try { def = gm.getPartOpacityByIndex ? gm.getPartOpacityByIndex(i) : 1; } catch (e) {}
+        out.push({ id, min: 0, max: 1, def, group: 'Bagian (Parts)', label: id });
+      }
+    } catch (e) { console.warn('[inspect] part enumeration failed:', e.message); }
+    return out;
+  }
+
+  // Read a parameter's CURRENT value (eased) so the AI pose can build on top
+  // of where the character already is — this is what makes transitions smooth
+  // instead of snapping to a fixed number.
+  function readParam(id) {
+    const cm = coreModel();
+    if (!cm) return 0;
+    try { return cm.getParameterValueById(id); } catch (e) { return 0; }
+  }
+
+  // ─── Init Pixi Application (v6 API) ───────────────────────────
+  // The canvas lives inside #stage (left of the sidebar), so the renderer
+  // must match the STAGE element size — NOT the full window. Otherwise the
+  // drawing buffer is wider than the displayed canvas and the character
+  // gets squished horizontally ("gepeng").
+  function stageSize() {
+    const el = document.getElementById('stage');
+    const w = el ? el.clientWidth : 0;
+    const h = el ? el.clientHeight : 0;
+    return {
+      w: w > 0 ? w : Math.max(280, window.innerWidth - 380),
+      h: h > 0 ? h : window.innerHeight,
+    };
+  }
+  const _sz = stageSize();
+  const app = new PIXI.Application({
+    view: $('#live2d-canvas'),
+    width: _sz.w,
+    height: _sz.h,
+    backgroundColor: 0x0a0a14,
+    autoDensity: true,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    antialias: true,
+  });
+
+  function fitCanvas() {
+    const sz = stageSize();
+    app.renderer.resize(sz.w, sz.h);
+    const canvas = $('#live2d-canvas');
+    canvas.style.width  = sz.w + 'px';
+    canvas.style.height = sz.h + 'px';
+  }
+  fitCanvas();
+  window.addEventListener('resize', () => {
+    fitCanvas();
+    if (state.model) {
+      state.basePos.x = app.screen.width / 2;
+      state.basePos.y = app.screen.height / 2;
+      state.model.x = state.basePos.x;
+      state.model.y = state.basePos.y;
+    }
+  });
+
+  // ─── Load Model ───────────────────────────────────────────────
+  // modelPath is OPTIONAL. When omitted we load the bundled default
+  // (神宫白子). When a user imports their own model we pass the path
+  // under model/<name>/<file>.model3.json. autoInteract is OFF so the
+  // library's built-in pointer-follow does NOT fight our own mouse handler.
+  async function loadModel(modelPath) {
+    try {
+      if (typeof modelPath !== 'string' || !modelPath) {
+        modelPath = 'model/神宫白子/面饼0.model3.json';
+      }
+      state.modelPath = modelPath;
+      // Reset per-model derived state so a previous model's clips can't leak.
+      state.motionTaxonomy = null;
+      state.clipUntil = 0; state.clipName = null; state.clipStartedAt = 0;
+      // unload previous model if switching
+      if (state.model) {
+        try { app.stage.removeChild(state.model); state.model.destroy(); } catch (e) {}
+        state.model = null;
+        // drop sticky overrides + timers from the previous model
+        state.overrides = {};
+        state.accessoryValues = {};
+        state.activeEmotion = 'normal';
+        state.activeProperty = 'default';
+        if (state.idleMotionTimer) { clearInterval(state.idleMotionTimer); state.idleMotionTimer = null; }
+        state.lookFrame = { eyeX:0, eyeY:0, w:1, h:1 };
+      }
+      state.model = await PIXI.live2d.Live2DModel.from(modelPath, {
+        autoInteract: false,
+      });
+
+      app.stage.addChild(state.model);
+      app.stage.sortableChildren = true;
+      state.model.zIndex = 0;
+      state.model.anchor.set(0, 0);   // top-left origin → easy to frame by top margin
+
+      // Stage area = the canvas itself (renderer now matches #stage size),
+      // so the character is centered within the full visible canvas.
+      state.stageArea = { width: app.screen.width };
+
+      frameModel('upper');   // default framing: head + shoulders, centered in stage
+
+      console.log('[Live2D] Model loaded:', state.model);
+
+      startBlink();
+      startIdle();
+      wireInteractions();
+      detectModelCapabilities();   // adapt emotions/params to THIS model
+      startIdleMotion();           // auto-play model's own motions so it isn't a static T-pose
+
+      // Classify this model's motion clips by semantic verb so gestures can be
+      // matched to emotion. Fire-and-forget: the gesture scheduler treats a null
+      // taxonomy as "synthetic gestures only", so nothing breaks while it loads.
+      loadMotionTaxonomy().catch(e => console.warn('[taxonomy] load error', e));
+
+    } catch (err) {
+      console.error('[Live2D] Failed to load model:', err);
+      const p = $('#loader p');
+      if (p) p.textContent = '❌ Gagal memuat model: ' + err.message;
+    }
+  }
+
+  // ─── Blink System (uses real parameter ids) ──────────────────
+  function startBlink() {
+    if (state.blinkInterval) clearInterval(state.blinkInterval);
+    const blinkOnce = () => {
+      if (!state.model || !state.blinkEnabled) return;
+      try {
+        const lo = roleId('eyeLOpen'), ro = roleId('eyeROpen');
+        if (lo) pokeParam(lo, 0, 1);
+        if (ro) pokeParam(ro, 0, 1);
+        setTimeout(() => {
+          if (lo) pokeParam(lo, 1, 1);
+          if (ro) pokeParam(ro, 1, 1);
+        }, 140);
+      } catch (e) { /* swallow */ }
+    };
+    state.blinkInterval = setInterval(() => {
+      if (Math.random() < 0.15) blinkOnce();
+    }, 3000);
+  }
+
+  // ─── Idle Animation + LIVELY "alive" engine ──────────────────
+  // IMPORTANT: all life comes from the model's OWN rigged parameters (head
+  // angles, eye-balls, breath, body tilt, mouth), NOT by moving/scaling the
+  // whole sprite. We never touch model.x / model.y / model.scale here — the
+  // character stays framed; only her internal params animate, so she looks
+  // alive (neuro-sama style) whether idle or mid-response.
+  function startIdle() {
+    if (state.idleRAF) cancelAnimationFrame(state.idleRAF);
+    let last = performance.now();
+    const tick = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const m = state.model;
+      if (!m) { state.idleRAF = requestAnimationFrame(tick); return; }
+
+      // Decay the transient "life" signals fired per response segment.
+      state.impulse *= 0.90;
+      if (state.impulse < 0.001) state.impulse = 0;
+      state.energyBoost *= 0.96;
+      if (state.energyBoost < 0.001) state.energyBoost = 0;
+
+      const t = now / 1000;
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      const owned = (id) => !state.caps.params || state.caps.params.has(id);
+      const liveliness = Math.min(2.4, (state.talking ? 1 : 0.4) + state.energyBoost);
+
+      // ── Autonomous "life" oscillators (rigged params, visible amplitude) ──
+      // These run every frame so she is NEVER frozen, and grow while talking.
+      const headXLife = (state.talking ? 14 : 8) + state.impulse * 12;
+      const headYLife = (state.talking ? 8 : 5);
+      const A1 = Math.sin(t * 0.7) * headXLife + Math.sin(t * 1.9) * headXLife * 0.3;   // head L/R
+      const A2 = Math.sin(t * 0.5 + 1.0) * headYLife + Math.sin(t * 2.3) * headYLife * 0.25; // head U/D
+      const E1 = Math.sin(t * 0.35) * 0.35 + Math.sin(t * 1.3 + 0.5) * 0.2;            // eye L/R wander
+      const E2 = Math.sin(t * 0.45 + 2.0) * 0.22 + (state.talking ? Math.sin(t * 3.1) * 0.2 : 0); // eye U/D
+      const breath = Math.sin(t * 1.1) * 0.5 + 0.5;                                     // 0..1 chest
+      const tiltLife = Math.sin(t * 0.4 + 0.7) * (state.talking ? 7 : 4) + state.impulse * 8; // body/head tilt
+      const bodyLeanLife = Math.sin(t * 0.6) * 4 + Math.sin(t * 1.4) * 1.5;             // weight shift
+      const talkHead = state.talking ? Math.sin(t * 9.0) * 5 : 0;                        // speech head bob
+
+      // ── Resolve the control target (mouse vs AI) + layer life on top ──
+      let bAx, bAy, bEx, bEy, bMf, bBx, bBy, bBz;
+      if (!state.aiLock) {
+        // Mouse-follow, but with life mixed in so she still moves when idle.
+        const L = state.look, k = 0.28;
+        L.ax += (L.tax - L.ax) * k; L.ay += (L.tay - L.ay) * k;
+        L.ex += (L.tex - L.ex) * k; L.ey += (L.tey - L.ey) * k;
+        L.bx += (L.tbx - L.bx) * k; L.by += (L.tby - L.by) * k;
+        bAx = L.ax + A1 * 0.5;
+        bAy = L.ay + A2 * 0.5;
+        bEx = L.ex + E1;
+        bEy = L.ey + E2;
+        bMf = 0; bBx = L.bx + bodyLeanLife * 0.4; bBy = L.by; bBz = tiltLife * 0.4;
+      } else {
+        // AI lock: pose target + BIG fidget + life + speech head bob.
+        const P = state.aiPose;
+        state.fidgetT += dt;
+        const ft = state.fidgetT + state.fidgetSeed;
+        const amp = 1 + liveliness * 1.6;
+        const fx = (Math.sin(ft * 0.6) * 9 + Math.sin(ft * 1.7) * 3) * amp;
+        const fy = (Math.sin(ft * 0.45 + 1.3) * 7 + Math.sin(ft * 2.1) * 2.5) * amp;
+        bAx = P.ax + fx + talkHead;
+        bAy = P.ay + fy;
+        bEx = P.ex + fx * 0.05 + E1;
+        bEy = P.ey + fy * 0.05 + E2;
+        bMf = P.mouthForm;
+        bBx = P.bodyX + (Math.sin(ft * 0.5) * 5 + Math.sin(ft * 1.1) * 1.5) * amp;
+        bBy = P.bodyY;
+        bBz = P.bodyZ + Math.sin(ft * 0.33 + 0.7) * 5 * amp + tiltLife;
+      }
+
+      // Global motion amplitude boost (config: motion.enabled + motion.gain).
+      // OFF by default (gain 1) so behaviour is unchanged unless the user opts
+      // in via config.json. Scales the whole control intent (look + life + AI
+      // fidget) together; values past the model's real range simply clamp.
+      const mGain = (MOTION && MOTION.enabled) ? (MOTION.gain || 1) : 1;
+      bAx *= mGain; bAy *= mGain; bEx *= mGain; bEy *= mGain;
+      bMf *= mGain; bBx *= mGain; bBy *= mGain; bBz *= mGain;
+
+      // ── Ease current param values toward the live target ──
+      // CLIP HANDOFF: while a native motion clip owns the rig we must not also
+      // write head/eye/body params — the clip animates them and our ease pulls
+      // them somewhere else, so the two writers fight and the result reads as
+      // stiff twitching. Instead of hard-cutting (which snaps at both ends) we
+      // ramp our authority down over 200ms at clip start and back up over 350ms
+      // after it ends, so control crossfades.
+      const CLIP_IN_MS = 200, CLIP_OUT_MS = 350;
+      let poseAuthority = 1;
+      if (state.clipUntil) {
+        const nowMs = performance.now();
+        const remain = state.clipUntil - nowMs;
+        if (remain > 0) {
+          // Inside the clip: fade out fast, hold at 0.
+          const elapsed = nowMs - (state.clipStartedAt || nowMs);
+          poseAuthority = Math.max(0, 1 - elapsed / CLIP_IN_MS);
+        } else if (-remain < CLIP_OUT_MS) {
+          // Just ended: fade our control back in.
+          poseAuthority = Math.min(1, -remain / CLIP_OUT_MS);
+        } else {
+          state.clipUntil = 0;      // fully handed back
+          state.clipName = null;
+        }
+      }
+
+      const ease = state.talking ? 0.25 : 0.16;
+      const target = (role, vRef) => {
+        const id = roleId(role);
+        if (!id || !owned(id)) return;
+        if (poseAuthority <= 0.001) return;   // clip owns this parameter
+        // Map the reference-scale intent into THIS model's real range, then
+        // clamp to the actual min/max. Scaling the STEP (not the target) by
+        // poseAuthority keeps the clip handoff continuous.
+        const actual = roleClampActual(role, toActual(role, vRef));
+        const cur = readParam(id);
+        pokeParam(id, cur + (actual - cur) * ease * poseAuthority, 1);
+      };
+      if (state.caps.hasHead) {
+        target('angleX', bAx);
+        target('angleY', bAy);
+      }
+      if (state.caps.hasEyes) {
+        target('eyeBallX', clamp(bEx, -1, 1));
+        target('eyeBallY', clamp(bEy, -1, 1));
+      }
+      if (roleId('mouthForm'))
+        target('mouthForm', clamp(bMf, -1, 1));
+
+      if (state.caps.hasBody) {
+        target('bodyAngleX', bBx);
+        target('bodyAngleY', bBy);
+        target('bodyAngleZ', bBz);
+      } else if (roleId('angleZ')) {
+        // No body-lean params: a visible head/body tilt keeps her lively.
+        target('angleZ', tiltLife + (state.aiLock ? bBz * 0.5 : 0));
+      }
+
+      // Breathing drives the chest/body param directly (smooth controller).
+      if (state.hasBreath && roleId('breath'))
+        pokeParam(roleId('breath'), clamp(breath, 0, 1), 1);
+
+      // ── EASED EMOTION (morph the face instead of snapping) ──
+      if (state.emoCur) {
+        const e = 0.12;
+        const eyeLO = roleId('eyeLOpen'), eyeRO = roleId('eyeROpen');
+        for (const id in state.emoTarget) {
+          // Eye-open is owned by the blink system — never fight it here.
+          if (id === eyeLO || id === eyeRO) continue;
+          const tgt = state.emoTarget[id];
+          const cur = (state.emoCur[id] === undefined) ? readParam(id) : state.emoCur[id];
+          const nv = cur + (tgt - cur) * e;
+          state.emoCur[id] = nv;
+          if (owned(id)) pokeParam(id, nv, 1);
+        }
+      }
+
+      if (state.talking) {
+        const mId = roleId('mouthOpenY');
+        if (mId) {
+          const base = 0.35 + 0.4 * Math.abs(Math.sin(t * 9));   // syllable rhythm
+          const jitter = Math.random() < 0.25 ? 0.25 : 0;         // occasional wider open
+          state.overrides[mId] = Math.min(1, base + jitter);
+        }
+      }
+      applyOverrides();
+      state.idleRAF = requestAnimationFrame(tick);
+    };
+    state.idleRAF = requestAnimationFrame(tick);
+  }
+
+  // ─── Idle Motion (auto-play the model's own motions) ──────────
+  // Many imported models (e.g. Ichika) ship motions but NO idle loop, so they
+  // sit in a static T-pose. We periodically fire one of the model's own motion
+  // groups (pixi-live2d's model.motion(group, index|random)) so the character
+  // actually moves. If the model has no motions we silently skip.
+  function startIdleMotion() {
+    if (state.idleMotionTimer) clearInterval(state.idleMotionTimer);
+    const m = state.model;
+    if (!m) return;
+    const im = m.internalModel && m.internalModel.motionManager;
+    if (!im) return;
+    const groups = (im.definitions && Object.keys(im.definitions)) ||
+                   (m.motions && Object.keys(m.motions)) || [];
+    if (!groups.length) return;   // no motions → nothing to play
+    const playRandom = () => {
+      if (!state.model || !state.idleEnabled) return;
+      // Don't fight the AI: the model's own idle motion would override the
+      // AI's eased pose, so pause it while the AI has the lock.
+      if (state.aiLock) return;
+      if (clipIsPlaying()) return;   // a clip is already running
+
+      // Prefer a clip that matches her current mood. When idle that's usually
+      // 'normal', which the taxonomy maps to calm verbs (neutral/nod/tilt) —
+      // so a resting character no longer randomly bursts into an angry or
+      // crying animation, which was the old behaviour here.
+      if (playEmotionClip(state.activeEmotion || 'normal')) return;
+
+      // No taxonomy (or nothing compatible): fall back to the original random
+      // pick so models still move rather than freezing in a T-pose.
+      try {
+        const g = groups[Math.floor(Math.random() * groups.length)];
+        // index = -1 / 'random' picks a random clip in the group
+        state.model.motion(g, -1, 1);
+      } catch (e) { /* ignore */ }
+    };
+    playRandom();
+    state.idleMotionTimer = setInterval(playRandom, 7000);  // a little life every 7s
+  }
+
+  // ─── Mouse / Touch Interactions ────────────────────────────────
+  function wireInteractions() {
+    const canvas = $('#live2d-canvas');
+
+    // Head + eye-follow: store a TARGET on mousemove; the frame loop eases
+    // CURRENT -> TARGET and writes it with weight=1 (precise + smooth).
+    //
+    // The look reference point is the CHARACTER'S FACE (eye line), NOT the
+    // canvas center. So when the cursor sits on her eyes she looks straight
+    // ahead (neutral); only when the cursor moves away does she tilt to follow.
+    // (Previously the reference was the canvas center ≈ her belly, which made
+    // her tilt UP whenever the cursor was near her face.)
+    canvas.addEventListener('mousemove', (e) => {
+      if (state.isDragging || !state.model || state.aiLock) return;
+      const m = state.model;
+
+      // Recompute the look reference frame only when it's stale (per load),
+      // not every mousemove — getLocalBounds() can return a slightly different
+      // box after re-framing, which made the gain feel "held back".
+      // Use FRESH local bounds every move so the gain reference never goes
+      // stale after a re-frame (zoom / full-body / resize). A stale reference
+      // box was shrinking the normalized dx/dy, which made the head feel
+      // "held back" and reduced how far it travelled.
+      const lb = m.getLocalBounds();
+      const curLocal = m.toLocal(new PIXI.Point(e.clientX, e.clientY));
+      const eyeLocalX = lb.x + lb.width / 2;
+      const eyeLocalY = lb.y + lb.height * 0.22;
+      const dx = (curLocal.x - eyeLocalX) / lb.width;
+      const dy = (curLocal.y - eyeLocalY) / lb.height;
+
+      // Gain: head travels a wide, proportional range. Y sign MATCHES the
+      // eyeball convention (eyeballs use -dy) so the head tilts the SAME way
+      // the eyes look — fixes the "head/body goes the opposite way" bug
+      // (mouse down used to tilt the head UP instead of down).
+      state.look.tax =  dx * 55;    // head turn L/R (same sign as eyeball X)
+      state.look.tay =  dy * -55;   // head tilt up/down (sign matches eyeball Y)
+      state.look.tex =  dx * 4;     // eye ball x
+      state.look.tey =  dy * -4;    // eye ball y
+      // Body follows the cursor too (25% of head gain) so the whole upper body
+      // leans toward the pointer, not just the head — fixes "only the head moves".
+      state.look.tbx =  dx * 55 * 0.25;
+      state.look.tby =  dy * -55 * 0.25;
+    });
+
+    canvas.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+
+    // Scroll to zoom — scale AROUND the current screen-center of the model,
+    // so zooming out reveals the full body instead of shrinking toward the head.
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      if (!state.model) return;
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      const newScale = Math.max(0.15, Math.min(3, state.model.scale.x + delta));
+      setScaleAroundCenter(newScale);
+      if (state._showFullBtn) state._showFullBtn();
+    }, { passive: false });
+
+    // Double-click to reset framing
+    canvas.addEventListener('dblclick', () => {
+      if (!state.model) return;
+      state.model.rotation = 0;
+      state.look.tax = state.look.tay = state.look.tex = state.look.tey = 0;
+      state.look.bx = state.look.by = state.look.tbx = state.look.tby = 0;
+      state.look.ax = state.look.ay = state.look.ex = state.look.ey = 0;
+      frameModel('reset');
+    });
+  }
+
+  function onPointerDown(e) {
+    if (!state.model) return;
+    state.isDragging = true;
+    state.dragTarget = state.model;
+    state.dragOffset.x = e.clientX - state.model.x;
+    state.dragOffset.y = e.clientY - state.model.y;
+    $('#live2d-canvas').style.cursor = 'grabbing';
+    if (state._showFullBtn) state._showFullBtn();
+  }
+
+  function onPointerMove(e) {
+    if (!state.isDragging || !state.dragTarget || !state.model) return;
+    state.model.x = e.clientX - state.dragOffset.x;
+    state.model.y = e.clientY - state.dragOffset.y;
+    // Keep idle sway anchored to wherever the user dragged it
+    state.basePos.x = state.model.x;
+    state.basePos.y = state.model.y;
+  }
+
+  function onPointerUp() {
+    state.isDragging = false;
+    state.dragTarget = null;
+    $('#live2d-canvas').style.cursor = 'grab';
+  }
+
+  // ─── Framing (top-level so loadModel + interactions can both call it) ───
+  // Zoom while keeping the model's on-screen center fixed (no head-only shrink).
+  function setScaleAroundCenter(newScale) {
+    const m = state.model;
+    if (!m) return;
+    const mw = m.width * m.scale.x, mh = m.height * m.scale.y;
+    const cx = m.x + mw / 2, cy = m.y + mh / 2;   // anchor is top-left (0,0)
+    m.scale.set(newScale);
+    const nw = m.width * newScale, nh = m.height * newScale;
+    m.x = cx - nw / 2;
+    m.y = cy - nh / 2;
+    state.scale = newScale;
+    if ($('#sl-scale')) { $('#sl-scale').value = newScale.toFixed(2); $('#val-scale').textContent = newScale.toFixed(2); }
+  }
+
+  // Frame the model: 'upper' (head+shoulders, default), 'full' (whole body), 'reset'.
+  function frameModel(mode) {
+    if (!state.model) return;
+    const m = state.model;
+    const W = app.screen.width, H = app.screen.height;
+    const stageW = (state.stageArea && state.stageArea.width) || W * 0.55;
+
+    // Intrinsic size measured from actual rendered bounds (robust — does NOT
+    // trust m.width/m.height, which can disagree with the drawn art).
+    let b = m.getBounds();
+    const natW = b.width / m.scale.x, natH = b.height / m.scale.y;
+
+    let scale;
+    if (mode === 'full') {
+      // fit the ENTIRE body into stage height with a small margin
+      scale = (H * 0.82) / natH;
+    } else if (mode === 'upper') {
+      scale = Math.min(stageW / natW, H / natH) * 1.05;
+    } else { // reset
+      scale = Math.min(stageW / natW, H / natH) * 0.9;
+    }
+
+    m.scale.set(scale);
+
+    // Cache intrinsic (scale-1) size so the per-frame breathing/bob transform
+    // can keep the model centered regardless of the current zoom.
+    state.natW = natW;
+    state.natH = natH;
+
+    // Center using the ACTUAL bounds at the new scale (verify-correct pass),
+    // so horizontal/vertical placement is exact regardless of rigging quirks.
+    b = m.getBounds();
+    const ax = stageW / 2;
+    m.x = ax - b.width / 2;     // center horizontally within the left stage
+    m.y = (H - b.height) / 2;   // center vertically within the window
+    state.basePos.x = m.x;
+    state.basePos.y = m.y;
+    state.scale = scale;
+    if ($('#sl-scale')) { $('#sl-scale').value = scale.toFixed(2); $('#val-scale').textContent = scale.toFixed(2); }
+  }
+
+  // ─── Expression System (correct API) ─────────────────────────
+  //
+  // Two kinds of "expression":
+  //   1) Model's own .exp3 expressions (name-based, e.g. 围裙, 眼镜, 呆猫…).
+  //      These are actually PROPERTY toggles (apron/glasses/pen…), not emotions.
+  //   2) REAL EMOTIONS we synthesize from the model's facial parameters
+  //      (brows, eye-smile, mouth form). The model HAS these params
+  //      (ParamBrowLForm, ParamEyeLSmile, ParamMouthForm, …) but ships no
+  //      emotion .exp3 — so we drive them directly. This is the fix for the
+  //      "expressions look like duplicates of accessories" problem.
+  // ─── Cubism-style parameter catalog (for the emotion editor) ───
+  // Mirrors the Live2D Cubism inspector: every parameter is grouped the
+  // same way Cubism Editor organizes them (Angle / Eye / Eyebrow / Mouth /
+  // Body / Hair / Accessory / custom ParamXX). The editor shows ONLY params
+  // THIS model actually owns (filtered against state.modelParams), so users
+  // see exactly "what can be moved" on their character — like Cubism itself.
+
+  // ── Model-agnostic role → actual parameter id mapping ──
+  // Live2D creators name parameters however they like (English Param* names,
+  // Japanese 目/口/眉/頭, Chinese 左目/口開, etc.). To drive the "alive"
+  // animation on ANY model we map semantic ROLES (head/eye/mouth/body/breath)
+  // to the model's REAL parameter ids. Exact English Param* ids are tried
+  // first for precision; keyword lists (incl. CJK) catch other conventions.
+  const ROLE_KEYWORDS = {
+    angleX:     ['ParamAngleX','AngleX','angle_x','yaw','turnx','rotx','頭','头','横向','左右','朝向x','方向x'],
+    angleY:     ['ParamAngleY','AngleY','angle_y','pitch','turny','roty','縦','纵向','上下','朝向y','方向y'],
+    angleZ:     ['ParamAngleZ','AngleZ','angle_z','roll','tilt','傾','倾','回転z','旋转z','歪'],
+    eyeBallX:   ['ParamEyeBallX','EyeBallX','eyeball_x','lookx','瞳X','瞳','眼球','目玉','视x'],
+    eyeBallY:   ['ParamEyeBallY','EyeBallY','eyeball_y','looky','瞳Y','瞳','眼球','目玉','视y'],
+    eyeLOpen:   ['ParamEyeLOpen','EyeLOpen','eye_l_open','左目','左眼'],
+    eyeROpen:   ['ParamEyeROpen','EyeROpen','eye_r_open','右目','右眼'],
+    eyeLSmile:  ['ParamEyeLSmile','EyeLSmile','eye_l_smile','左目笑','左眼笑'],
+    eyeRSmile:  ['ParamEyeRSmile','EyeRSmile','eye_r_smile','右目笑','右眼笑'],
+    eyeForm:    ['ParamEyeForm','EyeForm','eye_form','目形','眼形'],
+    mouthOpenY: ['ParamMouthOpenY','MouthOpenY','mouth_open','口開','张口','张嘴'],
+    mouthForm:  ['ParamMouthForm','MouthForm','mouth_form','口角','口形','嘴形','口型'],
+    mouthOpenX: ['ParamMouthOpenX','MouthOpenX','mouth_wide','口幅','嘴宽'],
+    bodyAngleX: ['ParamBodyAngleX','BodyAngleX','body_angle_x','bodyx','体','胴','躯'],
+    bodyAngleY: ['ParamBodyAngleY','BodyAngleY','body_angle_y','bodyy','体','胴','躯'],
+    bodyAngleZ: ['ParamBodyAngleZ','BodyAngleZ','body_angle_z','bodyz','体','胴','躯'],
+    breath:     ['ParamBreath','Breath','breath','呼吸','breathe','息'],
+    browLForm:  ['ParamBrowLForm','BrowLForm','brow_l','左眉','眉'],
+    browRForm:  ['ParamBrowRForm','BrowRForm','brow_r','右眉','眉'],
+    browLY:     ['ParamBrowLY','BrowLY','brow_l_y','左眉Y','左眉上下'],
+    browRY:     ['ParamBrowRY','BrowRY','brow_r_y','右眉Y','右眉上下'],
+    browLAngle: ['ParamBrowLAngle','BrowLAngle','brow_l_angle','左眉角'],
+    browRAngle: ['ParamBrowRAngle','BrowRAngle','brow_r_angle','右眉角'],
+    blush:      ['Param91','ParamBlush','Blush','blush','頬紅','脸红','害羞','ParamCheek'],
+  };
+
+  // ── Official ground-truth from model3.json "Groups" ──
+  // Cubism Editor lets the model creator explicitly tag which parameters are
+  // EyeBlink / LipSync in the "Groups" section of the .model3.json — this is
+  // authored metadata, not a naming guess, so it beats any keyword heuristic
+  // whenever it's present. pixi-live2d-display already parses this for us
+  // (internalModel.eyeBlinkIds / lipSyncIds, sourced from
+  // settings.getEyeBlinkParameters() / getLipSyncParameters()).
+  function getOfficialGroups(m) {
+    const out = { eyeBlinkIds: [], lipSyncIds: [] };
+    if (!m || !m.internalModel) return out;
+    const im = m.internalModel;
+    try {
+      if (Array.isArray(im.eyeBlinkIds) && im.eyeBlinkIds.length) out.eyeBlinkIds = im.eyeBlinkIds.slice();
+      else if (im.settings && typeof im.settings.getEyeBlinkParameters === 'function') {
+        out.eyeBlinkIds = im.settings.getEyeBlinkParameters() || [];
+      }
+    } catch (e) {}
+    try {
+      if (Array.isArray(im.lipSyncIds) && im.lipSyncIds.length) out.lipSyncIds = im.lipSyncIds.slice();
+      else if (im.settings && typeof im.settings.getLipSyncParameters === 'function') {
+        out.lipSyncIds = im.settings.getLipSyncParameters() || [];
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  // Build the role→actualId map for a set of owned param ids.
+  // `official` (optional) = { eyeBlinkIds, lipSyncIds } read straight from the
+  // model3.json Groups metadata — when present it overrides naming heuristics
+  // for eyeLOpen/eyeROpen/mouthOpenY, since it's authored truth, not a guess.
+  function mapRoles(paramSet, official) {
+    const ids = {};
+    if (!paramSet || !paramSet.size) return ids;
+    const list = Array.from(paramSet).map(id => id.toLowerCase());
+    const lowerToReal = {};
+    Array.from(paramSet).forEach((id, i) => { lowerToReal[list[i]] = id; });
+    for (const role in ROLE_KEYWORDS) {
+      // 0) OFFICIAL model3.json Groups — authored by the model creator, so it
+      // beats both exact-name and keyword guessing when it's available.
+      if (official && official.eyeBlinkIds && official.eyeBlinkIds.length) {
+        if (role === 'eyeLOpen') { ids[role] = official.eyeBlinkIds[0]; continue; }
+        if (role === 'eyeROpen') { ids[role] = official.eyeBlinkIds[1] || official.eyeBlinkIds[0]; continue; }
+      }
+      if (official && official.lipSyncIds && official.lipSyncIds.length && role === 'mouthOpenY') {
+        ids[role] = official.lipSyncIds[0]; continue;
+      }
+      // 1) exact English Param* id (most precise)
+      const canonical = 'Param' + role.charAt(0).toUpperCase() + role.slice(1);
+      if (paramSet.has(canonical)) { ids[role] = canonical; continue; }
+      // 2) keyword substring (EN + CJK) — last resort
+      let foundLower = null;
+      for (const kw of ROLE_KEYWORDS[role]) {
+        const lk = kw.toLowerCase();
+        const hit = list.find(x => x.includes(lk));
+        if (hit) { foundLower = hit; break; }
+      }
+      if (foundLower) ids[role] = lowerToReal[foundLower];
+    }
+    return ids;
+  }
+
+  // Get the actual model param id for a semantic role (or null when absent).
+  const roleId = (role) => (state.caps && state.caps.ids && state.caps.ids[role]) || null;
+
+  // ── Range-aware motion (fixes "stiff / head-only on other models") ──
+  // All motion code below authors values in a REFERENCE scale (tuned for
+  // 神宫白子, whose head param half-range ≈ 30°). We map that reference value
+  // proportionally into THIS model's real parameter range (from Cubism Core via
+  // state.paramRange) so the same code produces natural motion on any model —
+  // small-range models get small motion, large-range models get large motion,
+  // instead of everything slamming into a hard-coded ±42 clamp.
+  const REF_HALF = 30;
+  // Roles authored in DEGREES (±30 reference = full travel) vs NORMALIZED roles
+  // (±1 reference = full travel, e.g. eyeBall / mouth / brow). Mixing the two on
+  // one ±30 scale made normalized params (esp. the eyes) move only ~3% of their
+  // range — so the gaze looked "stuck in the middle" no matter where the mouse
+  // went. Splitting the reference scale fixes eye-follow on models like Lumine.
+  const DEGREE_ROLES = new Set(['angleX','angleY','angleZ','bodyAngleX','bodyAngleY','bodyAngleZ']);
+  const refHalfFor = (role) => DEGREE_ROLES.has(role) ? REF_HALF : 1;
+  function roleRange(role) {
+    const id = roleId(role);
+    if (!id || !state.paramRange || !state.paramRange[id]) return null;
+    return state.paramRange[id];
+  }
+  // Convert a reference-scale value into the model's actual parameter value.
+  function toActual(role, vRef) {
+    const RH = refHalfFor(role);
+    const r = roleRange(role);
+    if (!r) return clamp(vRef, -RH, RH);   // no range info → assume full reference
+    const mid = (r.max + r.min) / 2, half = (r.max - r.min) / 2;
+    return mid + (vRef / RH) * (half || RH);
+  }
+  // Clamp an already-actual value to the model's real min/max (fallback ±42).
+  function roleClampActual(role, v) {
+    const r = roleRange(role);
+    if (!r) return clamp(v, -42, 42);
+    return clamp(v, r.min, r.max);
+  }
+
+
+
+  // Set the eased emotion TARGET from a preset (param->value) with optional intensity factor.
+  // Any param an emotion can touch but is absent from the preset is eased back to its
+  // neutral default, so the previous expression never "sticks". Current values
+  // are seeded from the live param so the morph starts from where it is.
+  // Emotion targets DISABLED (Emosi panel removed). Kept as a no-op so callers
+  // (applyExpression / resetEmotion / agent) never throw.
+  function setEmotionTargets(preset, intensity) {
+    return;
+  }
+
+  // Clear all emotion-driven params back to neutral.
+  function resetEmotion() {
+    const mgr = state.model && state.model.internalModel &&
+                state.model.internalModel.motionManager &&
+                state.model.internalModel.motionManager.expressionManager;
+    if (mgr && typeof mgr.resetExpression === 'function') mgr.resetExpression();
+  }
+
+  // ─── Adaptive model capabilities (for user-imported models) ────
+  // A user may import ANY Cubism model. We must NOT assume it has the same
+  // parameters / .exp3 expressions as 神宫白子. After load we introspect the
+  // model and decide how to drive emotions:
+  //   • NATIVE  → model ships its own .exp3 expressions → use those directly.
+  //   • SYNTHETIC → no .exp3 (or unknown) → drive the facial params the model
+  //     actually owns, so we never poke a parameter the model lacks.
+  function detectModelCapabilities() {
+    const m = state.model;
+    if (!m) return;
+    const cm = coreModel();
+    console.log('[cap] coreModel?', !!cm, 'internalModel?', !!(m.internalModel));
+    if (m.internalModel) console.log('[cap] internalModel keys:', Object.keys(m.internalModel).join(','));
+
+    // ── Enumerate ALL parameter IDs this model owns ──
+    // Cubism models vary widely; we try every known path until one works.
+    let paramIds = [];
+
+    // Path A: pixi-live2d model has getParameterIds() directly
+    try {
+      if (typeof m.getParameterIds === 'function') paramIds = m.getParameterIds() || [];
+    } catch (e) {}
+
+    // Path B: CubismModel wrapper via cm.getModel()
+    if (!paramIds.length && cm) {
+      try {
+        const gm = cm.getModel && cm.getModel();
+        if (gm && typeof gm.getParameterIds === 'function') paramIds = gm.getParameterIds() || [];
+      } catch (e) {}
+    }
+
+    // Path C: iterate via getParameterCount() + getParameterId(i)
+    if (!paramIds.length && cm) {
+      try {
+        const gm = cm.getModel && cm.getModel();
+        const src = gm || cm;
+        if (typeof src.getParameterCount === 'function' && typeof src.getParameterId === 'function') {
+          const n = src.getParameterCount();
+          for (let i = 0; i < n; i++) {
+            const id = src.getParameterId(i);
+            if (id) paramIds.push(id);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Path D: internalModel.parameters array (pixi-live2d legacy)
+    if (!paramIds.length && m.internalModel && Array.isArray(m.internalModel.parameters)) {
+      try {
+        paramIds = m.internalModel.parameters.map(p => p.id).filter(Boolean);
+      } catch (e) {}
+    }
+
+    // Path E: raw CubismModel._parameterIds (last resort — dig into internal)
+    if (!paramIds.length && cm) {
+      try {
+        const gm = cm.getModel && cm.getModel();
+        // CubismModel stores IDs in _parameterIds or _model.parameters.ids
+        if (gm && Array.isArray(gm._parameterIds) && gm._parameterIds.length) {
+          paramIds = gm._parameterIds.slice();
+        } else if (gm && gm._model && gm._model.parameters && Array.isArray(gm._model.parameters.ids)) {
+          paramIds = gm._model.parameters.ids.slice();
+        }
+      } catch (e) {}
+    }
+
+    // Path F: scan all properties for anything that looks like a parameter array
+    if (!paramIds.length && cm) {
+      try {
+        const gm = cm.getModel && cm.getModel();
+        if (gm) {
+          // Check common Cubism property paths
+          for (const key of ['_parameterIds', 'parameterIds']) {
+            if (Array.isArray(gm[key]) && gm[key].length) { paramIds = gm[key].slice(); break; }
+          }
+          // Check if the coreModel itself has the array
+          if (!paramIds.length) {
+            for (const key of ['_parameterIds', 'parameterIds']) {
+              if (Array.isArray(cm[key]) && cm[key].length) { paramIds = cm[key].slice(); break; }
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    console.log('[cap] paramIds found:', paramIds.length, '→', JSON.stringify(paramIds).slice(0, 400));
+    state.modelParams = new Set(paramIds);
+
+    // Map semantic roles → this model's REAL parameter ids so the "alive"
+    // animation drives the correct params regardless of how the creator named
+    // them (English Param* / Japanese / Chinese / etc.).
+    state.caps.ids = mapRoles(state.modelParams, getOfficialGroups(m));
+    const R = state.caps.ids;
+    state.caps.hasHead  = !!(R.angleX || R.angleY);
+    state.caps.hasEyes  = !!(R.eyeBallX || R.eyeBallY || R.eyeLOpen || R.eyeROpen);
+    state.caps.hasMouth = !!(R.mouthOpenY || R.mouthForm);
+    state.caps.hasBody  = !!(R.bodyAngleX || R.bodyAngleY || R.bodyAngleZ);
+    state.caps.hasBrow  = !!(R.browLForm || R.browRForm);
+    state.hasBreath     = !!R.breath;
+    console.log('[cap] role ids:', JSON.stringify(R));
+
+    // Populate TRUE per-parameter ranges straight from Cubism Core so the
+    // motion system can scale amplitudes to THIS model (range-aware). Don't
+    // rely on the sheet alone — read every load so a fresh/changed model is
+    // always correct.
+    try {
+      const cm = coreModel();
+      const gm = (cm && cm.getModel) ? cm.getModel() : cm;
+      if (gm && typeof gm.getParameterCount === 'function') {
+        const n = gm.getParameterCount();
+        for (let i = 0; i < n; i++) {
+          const pid = gm.getParameterId(i);
+          if (!pid) continue;
+          let lo, hi, def;
+          try {
+            lo = gm.getParameterMinimumValue(i);
+            hi = gm.getParameterMaximumValue(i);
+            def = gm.getParameterDefaultValue(i);
+          } catch (e) { continue; }
+          if (typeof lo !== 'number' || typeof hi !== 'number') continue;
+          state.paramRange[pid] = {
+            min: lo, max: hi,
+            def: (typeof def === 'number' ? def : (lo + hi) / 2),
+          };
+        }
+        console.log('[cap] paramRange populated:', Object.keys(state.paramRange).length);
+      }
+    } catch (e) { console.warn('[cap] paramRange read failed', e.message); }
+
+    // 2) native expressions (exp3 names) if the model ships any
+    let exprs = [];
+    try {
+      if (Array.isArray(m.expressions)) exprs = m.expressions.slice();
+      else if (m.expressions && typeof m.expressions === 'object') exprs = Object.keys(m.expressions);
+    } catch (e) {}
+    // The Cubism core often exposes them here:
+    try {
+      const em = m.internalModel && m.internalModel.motionManager &&
+                 m.internalModel.motionManager.expressionManager;
+      if (em && Array.isArray(em.deferred)) exprs = exprs.concat(em.deferred.map(x => x && x.name).filter(Boolean));
+    } catch (e) {}
+    state.modelExpressions = Array.from(new Set(exprs.filter(Boolean)));
+
+    state.emotionMode = state.modelExpressions.length ? 'native' : 'synthetic';
+
+    console.log('[Live2D] capabilities:', JSON.stringify({
+      mode: state.emotionMode,
+      paramCount: state.modelParams.size,
+      sampleParams: Array.from(state.modelParams).slice(0, 60),
+      nativeExpr: state.modelExpressions,
+    }));
+  }
+
+  async function applyExpression(name, intensity) {
+    if (!state.model) return;
+
+    // Normal / reset (works in both modes)
+    if (name === 'normal' || name === 'default') {
+      state.activeEmotion = 'normal';
+      state.activeProperty = 'default';
+      resetEmotion();
+      $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === 'normal'));
+      console.log('[Live2D] Expression reset -> normal');
+      return;
+    }
+
+    // NATIVE mode: the model has its own .exp3 expressions.
+    //   • Universal emotions are driven via params (supportedEmotions)
+    //   • Model's own .exp3 names are played directly via model.expression().
+    if (state.emotionMode === 'native') {
+      // universal emotion preset?
+      if (state.supportedEmotions.hasOwnProperty(name)) {
+        if (state.activeEmotion === name && intensity === undefined) {
+          state.activeEmotion = 'normal'; state.activeProperty = 'default';
+          resetEmotion();
+          $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === 'normal'));
+          return;
+        }
+        state.activeEmotion = name; state.activeProperty = 'default';
+        const preset = state.supportedEmotions[name];
+        setEmotionTargets(preset, intensity);
+        // Punctuate the emotion change with a clip whose verb matches it, so the
+        // BODY agrees with the face instead of drifting on the old gesture.
+        playEmotionClip(name);
+        $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
+        console.log('[Live2D] Universal emotion (native) ->', name, 'intensity:', intensity);
+        return;
+      }
+      // otherwise treat as a native .exp3 name
+      if (state.activeEmotion === name || state.activeProperty === name) {
+        // toggle off back to normal
+        state.activeEmotion = 'normal'; state.activeProperty = 'default';
+        resetEmotion();
+        $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === 'normal'));
+        return;
+      }
+      state.activeEmotion = name; state.activeProperty = 'default';
+      resetEmotion();
+      try {
+        await state.model.expression(name);
+        $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
+        console.log('[Live2D] Native expression ->', name);
+      } catch (err) {
+        console.warn('[Live2D] Native expression error:', err);
+      }
+      return;
+    }
+
+    // SYNTHETIC mode: drive facial params the model actually has.
+    if (state.supportedEmotions.hasOwnProperty(name)) {
+      if (state.activeEmotion === name && intensity === undefined) {
+        name = 'normal';
+      }
+      state.activeEmotion = name;
+      state.activeProperty = 'default';
+      if (name === 'normal') {
+        resetEmotion();
+      } else {
+        const preset = state.supportedEmotions[name];
+        setEmotionTargets(preset, intensity);
+        playEmotionClip(name);   // body follows the face (see native branch)
+      }
+      $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
+      console.log('[Live2D] Synthetic emotion ->', name, 'intensity:', intensity);
+    }
+  }
+
+  // ─── Accessory Toggle ─────────────────────────────────────────
+  function toggleAccessory(paramId, val) {
+    if (!state.model) return;
+    const current = state.accessoryValues[paramId] || 0;
+    const next = current > 0.5 ? 0 : val;
+    state.accessoryValues[paramId] = next;
+    if (next > 0.5) setSticky(paramId, next, 1);
+    else delete state.overrides[paramId];   // turn off -> stop holding
+    pokeParam(paramId, next, 1);
+
+    $$('.acc-btn').forEach(btn => {
+      if (btn.dataset.param === paramId) {
+        btn.classList.toggle('active', next > 0.5);
+      }
+    });
+  }
+
+  // ─── Bubble Chat ──────────────────────────────────────────────
+  let bubbleTimeout = null;
+  function showBubble(text, duration = 4000) {
+    const bubble = $('#bubble');
+    const textEl = $('#bubble-text');
+    if (bubbleTimeout) clearTimeout(bubbleTimeout);
+    textEl.textContent = text;
+    bubble.classList.remove('hidden');
+    bubbleTimeout = setTimeout(() => bubble.classList.add('hidden'), duration);
+  }
+  function hideBubble() {
+    const bubble = $('#bubble');
+    if (bubbleTimeout) clearTimeout(bubbleTimeout);
+    bubble.classList.add('hidden');
+  }
+
+  // ─── Speech (TTS + lip-sync) ───────────────────────────────────
+  // Drives the browser SpeechSynthesis voice (id-ID) and animates the mouth
+  // (ParamMouthOpenY) via a timer-driven oscillation so lip-sync works even
+  // where audio is unavailable. Agent layer can call speak() directly later.
+   // speak(text, onDone) — TTS + lip-sync. Calls onDone() when speech finishes.
+
+  // ─── Remote TTS (Colab/Gradio) — URL diambil dari config.json (tts.endpoint) ───
+  // Edit config.json, bukan file ini. Kosongkan ('') untuk pakai browser SpeechSynthesis bawaan.
+  let TTS_ENDPOINT = '';
+  let EVENTS = { idleSpeak: true, idleMs: 1800000, idleRepeatMs: 1800000, awaySpeak: true, returnSpeak: true, awayHiddenMs: 10000 };
+  let CAMERA = { enabled: false, fps: 0.4, presenceThreshold: 0.4, device: 'webgpu', model: 'Xenova/facial_emotions_image_detection' };
+  let MOTION = { enabled: false, gain: 1.5 };
+  async function loadAppConfig() {
+    try {
+      const r = await fetch('http://127.0.0.1:8310/api/config');
+      const d = await r.json();
+      TTS_ENDPOINT = (d.tts && d.tts.endpoint) || '';
+      window.__ttsEndpoint = TTS_ENDPOINT; // debug: cek di console (window.__ttsEndpoint)
+      if (d.events) Object.assign(EVENTS, d.events);
+      if (d.camera) Object.assign(CAMERA, d.camera);
+      if (d.motion) {
+        MOTION.enabled = !!d.motion.enabled;
+        if (typeof d.motion.gain === 'number') MOTION.gain = d.motion.gain;
+      }
+    } catch (e) { /* pakai default */ }
+  }
+  loadAppConfig();
+
+  // ── Reactive presence + idle (agent-driven events) ──
+  let presence = null;          // true=hadir, false=pergi, null=tidak tahu
+  let agentIdleTimer = null;
+  let agentIdleRepeat = null;
+
+  function resetAgentIdle() {
+    if (agentIdleTimer) clearTimeout(agentIdleTimer);
+    if (agentIdleRepeat) { clearTimeout(agentIdleRepeat); agentIdleRepeat = null; }
+    if (!EVENTS.idleSpeak) return;
+    const fire = () => {
+      if (window.__agent && presence === true) window.__agent.reactEvent('idle');
+      agentIdleRepeat = setInterval(() => {
+        if (window.__agent && presence === true) window.__agent.reactEvent('idle');
+      }, EVENTS.idleRepeatMs);
+    };
+    agentIdleTimer = setTimeout(fire, EVENTS.idleMs);
+  }
+
+  function applyFallbackPresence(p) {
+    if (window.__cameraActive) return;   // kamera yang pegang kendali presence
+    if (window.__agent) window.__agent.setPresence(p);
+    presence = p;
+    if (p === true) resetAgentIdle();
+  }
+  document.addEventListener('visibilitychange', () => applyFallbackPresence(!document.hidden));
+  window.addEventListener('blur', () => applyFallbackPresence(false));
+  window.addEventListener('focus', () => applyFallbackPresence(!document.hidden));
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', () => applyFallbackPresence(!document.hidden));
+  } else {
+    applyFallbackPresence(!document.hidden);
+  }
+
+  function browserTTS(text, markDone, fallbackTimer) {
+    if (fallbackTimer) clearTimeout(fallbackTimer);
+    try {
+      if (typeof speechSynthesis === 'undefined') { markDone(); return; }
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'id-ID'; u.rate = 1; u.pitch = 1.15; u.volume = 1;
+      u.onend = markDone;
+      u.onerror = markDone;
+      const pickVoice = () => {
+        const vs = speechSynthesis.getVoices() || [];
+        const v = vs.find(x => /id-ID/i.test(x.lang)) || vs.find(x => /indonesia/i.test(x.name)) || vs.find(x => /^id/i.test(x.lang));
+        if (v) u.voice = v;
+        speechSynthesis.speak(u);
+      };
+      if (speechSynthesis.getVoices().length) pickVoice();
+      else speechSynthesis.addEventListener('voiceschanged', pickVoice, { once: true });
+    } catch (e) { markDone(); }
+  }
+
+  async function doRemoteTTS(text, markDone, fallbackTimer, reveal) {
+    if (!TTS_ENDPOINT) { reveal && reveal(); browserTTS(text, markDone, fallbackTimer); return; }
+    try {
+      // Lewat proxy lokal (server.js /api/tts) → Colab → balik audio same-origin.
+      // Hindari CORS/autoplay cross-origin yang bikin remote gagal & fallback browser.
+      const resp = await fetch('http://127.0.0.1:8310/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      // Baru reveal teks + mulai mulut saat audio BENAR-BENAR siap main (canplay),
+      // bukan pas teks diterima — biar nggak kelihatan "baca duluan".
+      audio.oncanplay = () => { reveal && reveal(); };
+      audio.onplaying = () => { reveal && reveal(); };
+      audio.onended = () => { clearTimeout(fallbackTimer); markDone(); };
+      audio.onerror = () => { reveal && reveal(); browserTTS(text, markDone, fallbackTimer); };
+      audio.play().catch(() => { reveal && reveal(); browserTTS(text, markDone, fallbackTimer); });
+    } catch (e) {
+      console.warn('[TTS] remote gagal, fallback ke browser:', e && e.message);
+      reveal && reveal();
+      browserTTS(text, markDone, fallbackTimer);
+    }
+  }
+
+  function speak(text, onDone) {
+    if (!state.model) { showBubble(text); if (onDone) setTimeout(onDone, 500); return; }
+    let ttsDone = false, revealed = false;
+    const markDone = () => {
+      if (ttsDone) return;
+      ttsDone = true;
+      hideBubble();                 // sembunyikan teks pas audio selesai
+      state.talking = false;        // hentikan mulut
+      const mId = roleId('mouthOpenY');
+      if (mId) { delete state.overrides[mId]; pokeParam(mId, state.mouthRest, 1); }
+      if (onDone) onDone();
+    };
+    // Reveal teks + mulai gerak mulut HANYA saat audio benar-benar mulai main.
+    const reveal = () => {
+      if (revealed) return;
+      revealed = true;
+      showBubble(text, 1e9);        // tetap tampil sampai markDone sembunyikan
+      state.talking = true;
+      if (state.mouthTimer) clearTimeout(state.mouthTimer);
+      const dur = Math.max(1400, text.length * 75);
+      state.mouthTimer = setTimeout(() => {
+        state.talking = false;
+        const mId = roleId('mouthOpenY');
+        if (mId) { delete state.overrides[mId]; pokeParam(mId, state.mouthRest, 1); }
+      }, dur);
+    };
+    // Indikator "menyiapkan suara" — baru teks asli & mulut jalan pas audio siap.
+    showBubble('…', 1e9);
+    const fallbackTimer = setTimeout(markDone, TTS_ENDPOINT ? 45000 : Math.max(1400, text.length * 75) + 800);
+    if (TTS_ENDPOINT) {
+      doRemoteTTS(text, markDone, fallbackTimer, reveal);
+    } else {
+      reveal();
+      browserTTS(text, markDone, fallbackTimer);
+    }
+  }
+
+  // ─── UI Event Wiring ───────────────────────────────────────────
+  function wireUI() {
+    // ── Sidebar controls toggle + tabs + frame controls ──
+    $('#btn-toggle-controls').addEventListener('click', () => {
+      $('#controls-panel').classList.toggle('hidden');
+    });
+
+    // Tabs inside controls panel
+    $$('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        $$('.tab').forEach(t => t.classList.remove('active'));
+        $$('.tab-pane').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        const pane = tab.dataset.tab;
+        const el = document.querySelector('.tab-pane[data-pane="' + pane + '"]');
+        if (el) el.classList.add('active');
+      });
+    });
+
+    // ── Full Body button (only after manual zoom/drag) ──
+    const fbBtn = $('#btn-fullbody');
+    function showFullBtn() {
+      if (state.fullBody) return;            // already in full-body mode → keep label
+      if (fbBtn) fbBtn.classList.remove('hidden');
+    }
+    function setFullBody(on) {
+      state.fullBody = on;
+      if (!fbBtn) return;
+      if (on) {
+        // save current (manual) position so we can return to it
+        state.preFull = { x: state.model.x, y: state.model.y, scale: state.model.scale.x };
+        frameModel('full');                  // whole body, centered (NOT face zoom)
+        fbBtn.textContent = '⤡ Kembali';
+        fbBtn.classList.add('active');
+      } else {
+        // restore the manual position the user had
+        if (state.preFull) {
+          state.model.scale.set(state.preFull.scale);
+          state.model.x = state.preFull.x;
+          state.model.y = state.preFull.y;
+          state.basePos.x = state.preFull.x;
+          state.basePos.y = state.preFull.y;
+          state.scale = state.preFull.scale;
+        } else {
+          frameModel('upper');
+        }
+        fbBtn.textContent = '⤢ Full Body';
+        fbBtn.classList.remove('active');
+        fbBtn.classList.add('hidden');       // hide again until next manual interaction
+      }
+    }
+    if (fbBtn) fbBtn.addEventListener('click', () => setFullBody(!state.fullBody));
+    // expose for wheel/drag handlers
+    state._showFullBtn = showFullBtn;
+
+    function addChat(role, text) {
+      const log = $('#chat-log');
+      if (!log) return;
+      const msg = document.createElement('div');
+      msg.className = 'msg ' + role;
+      const av = document.createElement('div');
+      av.className = 'msg-avatar';
+      av.textContent = role === 'user' ? '🙂' : '白';
+      const bb = document.createElement('div');
+      bb.className = 'msg-bubble';
+      bb.textContent = text;
+      msg.appendChild(av);
+      msg.appendChild(bb);
+      log.appendChild(msg);
+      log.scrollTop = log.scrollHeight;
+    }
+    // expose for agent.js to append the character's reply
+    window.__addChat = addChat;
+
+    // Debug/QA handle: lets an automated check drive the animation internals
+    // (taxonomy load, clip selection, guard state) from the browser console
+    // without exporting the whole module. Read-only in practice — nothing in the
+    // app itself reads this back.
+    window.__l2dDebug = {
+      state,
+      loadMotionTaxonomy,
+      buildTaxonomyFromNames,
+      playEmotionClip,
+      clipIsPlaying,
+      applyExpression,
+    };
+
+    function sendBubble() {
+      const input = $('#bubble-input');
+      const text = input.value.trim();
+      if (!text) return;
+      addChat('user', text);                              // show what you typed (in chat log)
+      showBubble(text);                                   // + bubble over character
+      resetAgentIdle();
+      const brainOn = $('#toggle-brain') && $('#toggle-brain').checked;
+      input.value = '';
+      // Mood dari teks ketikan (gabung dgn kamera)
+      const g = (window.__agent && window.__agent.guessEmotion) ? window.__agent.guessEmotion(text) : '';
+      const moodMap = { senang: 'senang', tersenyum: 'senang', sedih: 'sedih', malu: 'normal', kaget: 'kaget', kesal: 'marah', bingung: 'normal' };
+      const m = moodMap[g] || 'normal';
+      if (m !== 'normal' && window.__agent) window.__agent.setUserMood(m);
+      if (brainOn && window.__agent) {
+        window.__agent.think(text);                      // route to the LLM brain
+      } else {
+        speak(text);                                      // TTS-only fallback
+      }
+    }
+    $('#btn-bubble').addEventListener('click', sendBubble);
+    $('#bubble-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendBubble();
+    });
+
+    $$('.phrase-btn').forEach(btn => {
+      btn.addEventListener('click', () => { const p = btn.dataset.phrase; resetAgentIdle(); showBubble(p, 3500); speak(p); });
+    });
+
+    // ── Kamera reactive toggle (opt-in) ──
+    const camToggle = document.getElementById('useCamera');
+    if (camToggle) {
+      camToggle.checked = !!CAMERA.enabled;
+      camToggle.addEventListener('change', async (e) => {
+        const on = e.target.checked;
+        if (on) {
+          if (!window.cameraPresence) { e.target.checked = false; alert('Modul kamera belum dimuat.'); return; }
+          try {
+            await window.cameraPresence.start(CAMERA);
+          } catch (err) {
+            console.error('[camera] start gagal:', err);
+            e.target.checked = false;
+            alert('Gagal akses kamera: ' + (err && err.message ? err.message : err));
+          }
+        } else {
+          if (window.cameraPresence) window.cameraPresence.stop();
+          applyFallbackPresence(!document.hidden);   // kembalikan ke fallback visibility
+        }
+      });
+    }
+
+    // ── AI Connections manager (9router-style) ──
+    const connList = $('#conn-list');
+    const modal = $('#conn-modal');
+    let editingId = null;
+
+    async function loadConns() {
+      try {
+        const r = await fetch('http://127.0.0.1:8310/api/config');
+        const d = await r.json();
+        renderConns(d.connections || [], d.activeId);
+      } catch (e) { console.error('[conn] load', e); }
+    }
+    function badgeClass(s) {
+      if (s === 'success') return 'success';
+      if (s === 'error') return 'error';
+      return 'default';
+    }
+    function renderConns(conns, activeId) {
+      connList.innerHTML = '';
+      if (!conns.length) {
+        connList.innerHTML = '<div class="conn-hint">Belum ada connection. Klik ＋ untuk tambah.</div>';
+        return;
+      }
+      for (const c of conns) {
+        const card = document.createElement('div');
+        card.className = 'conn-card' + (c.id === activeId ? ' active' : '');
+        const status = c.testStatus || 'untested';
+        const badgeText = status === 'success' ? '✓ connected' : status === 'error' ? '✕ error' : '○ untested';
+        card.innerHTML = `
+          <div class="conn-head">
+            <span class="conn-name">${esc(c.name || c.id)}</span>
+            <span class="conn-badge ${badgeClass(status)}">${badgeText}</span>
+          </div>
+          <div class="conn-meta">${esc((c.provider||''))} · ${esc((c.model||''))}</div>
+          ${c.lastError ? `<div class="conn-err">${esc(c.lastError)}</div>` : ''}
+          <div class="conn-actions">
+            <button data-act="active" class="${c.id === activeId ? 'act-active' : ''}">${c.id === activeId ? '● Active' : 'Set Active'}</button>
+            <button data-act="edit">Edit</button>
+            <button data-act="test">Test</button>
+            <button data-act="delete">Delete</button>
+          </div>`;
+        card.querySelector('[data-act="active"]').addEventListener('click', () => setActive(c.id));
+        card.querySelector('[data-act="edit"]').addEventListener('click', () => openModal(c));
+        card.querySelector('[data-act="test"]').addEventListener('click', (e) => testConn(c, e.target));
+        card.querySelector('[data-act="delete"]').addEventListener('click', () => delConn(c.id));
+        connList.appendChild(card);
+      }
+    }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+    function openModal(c) {
+      editingId = c ? c.id : null;
+      $('#m-name').value = c ? (c.name || '') : '';
+      $('#m-provider').value = c ? (c.provider || 'openai-compatible') : 'openai-compatible';
+      $('#m-baseurl').value = c ? (c.baseUrl || '') : '';
+      $('#m-apikey').value = c ? (c.apiKey && !c.apiKey.startsWith('•') ? '' : '') : '';  // keep existing key hidden
+      $('#m-model').value = c ? (c.model || '') : '';
+      $('#m-system').value = c ? (c.systemPrompt || '') : '';
+      modal.classList.remove('hidden');
+    }
+    function closeModal() { modal.classList.add('hidden'); editingId = null; }
+    $('#m-cancel').addEventListener('click', closeModal);
+    $('#btn-add-conn').addEventListener('click', () => openModal(null));
+
+    $('#m-save').addEventListener('click', async () => {
+      const k = $('#m-apikey').value.trim();
+      const conn = {
+        name: $('#m-name').value.trim() || 'connection',
+        provider: $('#m-provider').value,
+        baseUrl: $('#m-baseurl').value.trim(),
+        apiKey: k,
+        model: $('#m-model').value.trim(),
+        systemPrompt: $('#m-system').value,
+      };
+      const body = { action: editingId ? 'update' : 'add' };
+      // Kalau edit dan field key kosong, jangan kirim key (server pertahankan yang lama).
+      // Jangan kirim key yang di-mask ('•…') karena itu bukan key asli.
+      if (editingId && !k) delete conn.apiKey;
+      if (editingId) { body.id = editingId; body.connection = conn; }
+      else body.connection = conn;
+
+      await fetch('http://127.0.0.1:8310/api/config', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      closeModal();
+      loadConns();
+    });
+
+    async function setActive(id) {
+      await fetch('http://127.0.0.1:8310/api/config', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ action: 'setActive', id }),
+      });
+      loadConns();
+    }
+    async function delConn(id) {
+      if (!confirm('Hapus connection ini?')) return;
+      await fetch('http://127.0.0.1:8310/api/config', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ action: 'delete', id }),
+      });
+      loadConns();
+    }
+    async function testConn(c, btn) {
+      btn.disabled = true; btn.textContent = 'testing…';
+      const r = await fetch('http://127.0.0.1:8310/api/test', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ connection: c }),
+      });
+      const d = await r.json();
+      btn.disabled = false; btn.textContent = 'Test';
+      alert(d.valid ? '✓ Connection OK: ' + (d.reply || '') : '✕ ' + (d.error || 'gagal'));
+      loadConns();
+    }
+
+    // ── Model import / switch (user-imported Live2D models) ──
+    const drop = $('#model-drop');
+    const pickBtn = $('#btn-pick-model');
+    const folderInput = $('#input-model-folder');
+    const nameInput = $('#input-model-name');
+    const modelList = $('#model-list');
+
+    async function refreshModels() {
+      try {
+        const r = await fetch(API + '/api/models');
+        const d = await r.json();
+        modelList.innerHTML = '';
+        const models = d.models || [];
+        if (!models.length) {
+          modelList.innerHTML = '<div class="conn-hint">Belum ada model. Upload lewat drop box di atas.</div>';
+        }
+        for (const name of models) {
+          const item = document.createElement('div');
+          item.className = 'model-item';
+          item.innerHTML = `<span class="m-name">${esc(name)}</span>
+            <span class="m-actions">
+              <button class="load" data-name="${esc(name)}">Load</button>
+              <button class="del" data-name="${esc(name)}">🗑</button>
+            </span>`;
+          item.querySelector('.load').addEventListener('click', () => loadUserModel(name));
+          item.querySelector('.del').addEventListener('click', async () => {
+            if (!confirm('Hapus model "' + name + '"?')) return;
+            await fetch(API + '/api/model/' + encodeURIComponent(name), { method: 'DELETE' });
+            deleteCharacterSheet(name);  // clean up saved character sheet
+            refreshModels();
+          });
+          modelList.appendChild(item);
+        }
+      } catch (e) { console.error('[model] list', e); }
+    }
+
+    // Guard / heads-up: the bundled Cubism 4.2.2 core only natively accepts moc
+    // versions <= 4. Cubism 3 models (model3.json "Version": 3) are often stamped
+    // moc version 5 but use a v4-compatible layout; the moc version-stamp shim at
+    // the top of this file rewrites that stamp so they still load. We only warn —
+    // loading proceeds and the core will report a real error if a model is truly
+    // incompatible.
+    async function assertCubism4(path) {
+      try {
+        const r = await fetch(API + '/' + path);
+        if (!r.ok) return true;
+        const j = await r.json();
+        if (j && j.Version === 3) {
+          console.warn('[model] "' + path + '" is Cubism 3 — applying moc version-stamp shim (no Editor needed).');
+        }
+      } catch (e) { /* non-JSON — let loadModel report */ }
+      return true;
+    }
+
+    async function loadUserModel(name) {
+      showLoader('Memuat model: ' + name + '...');
+      try {
+        const path = await resolveModel3(name);
+        if (!path) throw new Error('tidak ada *.model3.json');
+        if (!(await assertCubism4(path))) { hideLoader(); return; }
+        await loadModel(path);
+        refreshModels();
+      } catch (e) {
+        console.error('[model] load', e);
+        alert('Gagal memuat model: ' + e.message);
+      } finally {
+        hideLoader();
+      }
+    }
+
+    // Ask the server for the model3.json path inside a folder.
+    async function resolveModel3(name) {
+      const r = await fetch(API + '/api/model/path?name=' + encodeURIComponent(name));
+      if (r.ok) { const d = await r.json(); return d.path || null; }
+      return null;
+    }
+
+    // Encode an ArrayBuffer to base64 in safe chunks. The naive
+    // btoa(String.fromCharCode(...bytes)) spreads every byte as a function
+    // argument and throws "Maximum call stack size exceeded" on files larger
+    // than ~65k bytes — i.e. ANY real Live2D texture. Chunk it instead.
+    function abToBase64(buf) {
+      const u = new Uint8Array(buf);
+      let s = '';
+      const CH = 0x8000;
+      for (let i = 0; i < u.length; i += CH) {
+        s += String.fromCharCode.apply(null, u.subarray(i, i + CH));
+      }
+      return btoa(s);
+    }
+
+    async function uploadFolder(files, name) {
+      if (!name) name = prompt('Nama model?', 'MyModel') || 'MyModel';
+      name = name.trim().replace(/[^\w\-]+/g, '_');
+      const payload = { name, files: [] };
+      for (const f of files) {
+        const rel = f.webkitRelativePath || f.relativePath || f.name;
+        const buf = await f.arrayBuffer();
+        payload.files.push({ path: rel, base64: abToBase64(buf) });
+      }
+      showLoader('Mengupload ' + payload.files.length + ' file...');
+      const r = await fetch(API + '/api/model/upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'upload gagal');
+      return name;
+    }
+
+    function showLoader(text) {
+      const p = $('#loader p'); if (p) p.textContent = text;
+      $('#loader').classList.remove('done', 'fade-out', 'hidden');
+    }
+    function hideLoader() {
+      $('#loader').classList.add('done');
+      setTimeout(() => $('#loader').classList.add('fade-out'), 300);
+      setTimeout(() => $('#loader').classList.add('hidden'), 950);
+    }
+
+    if (pickBtn) pickBtn.addEventListener('click', () => folderInput && folderInput.click());
+    if (folderInput) folderInput.addEventListener('change', async () => {
+      if (!folderInput.files || !folderInput.files.length) return;
+      try { const n = await uploadFolder(folderInput.files, nameInput.value); await refreshModels(); loadUserModel(n); }
+      catch (e) { alert('Upload gagal: ' + e.message); hideLoader(); }
+    });
+
+    // ── .zip upload (auto-extract on server, nested-safe) ──
+    const zipBtn = $('#btn-pick-zip');
+    const zipInput = $('#input-model-zip');
+    if (zipBtn) zipBtn.addEventListener('click', () => zipInput && zipInput.click());
+    if (zipInput) zipInput.addEventListener('change', async () => {
+      const f = zipInput.files && zipInput.files[0];
+      if (!f) return;
+      try {
+        const nameFromZip = (f.name.replace(/\.zip$/i, '') || 'MyModel');
+        const buf = await f.arrayBuffer();
+        const b64 = abToBase64(buf);
+        showLoader('Mengekstrak ' + f.name + '...');
+        const r = await fetch(API + '/api/model/import-zip', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nameFromZip, base64: b64 }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'extract gagal');
+        await refreshModels();
+        if (!(await assertCubism4(d.path))) { hideLoader(); return; }
+        await loadModel(d.path);     // switch active stage to the new model
+      } catch (e) {
+        alert('Import .zip gagal: ' + e.message);
+      } finally {
+        hideLoader();
+        zipInput.value = '';
+      }
+    });
+    if (drop) {
+      ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
+      ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+      drop.addEventListener('drop', async e => {
+        const items = e.dataTransfer && e.dataTransfer.items;
+        let files = e.dataTransfer && e.dataTransfer.files;
+        // webkitGetAsEntry lets us grab the whole dropped folder
+        if (items && items.length && items[0].webkitGetAsEntry) {
+          const entries = [];
+          for (const it of items) { const en = it.webkitGetAsEntry(); if (en) entries.push(en); }
+          const collected = [];
+          const walk = (entry, base) => new Promise(res => {
+            if (entry.isFile) {
+              entry.file(f => { f.relativePath = base + entry.name; collected.push(f); res(); });
+            } else if (entry.isDirectory) {
+              const reader = entry.createReader();
+              const read = () => reader.readEntries(async ents => {
+                if (!ents.length) return res();
+                for (const c of ents) await walk(c, base + entry.name + '/');
+                read();
+              });
+              read();
+            } else res();
+          });
+          for (const en of entries) await walk(en, '');
+          if (collected.length) {
+            try { const n = await uploadFolder(collected, nameInput.value); await refreshModels(); loadUserModel(n); }
+            catch (err) { alert('Upload gagal: ' + err.message); hideLoader(); }
+          }
+        } else if (files && files.length) {
+          try { const n = await uploadFolder(files, nameInput.value); await refreshModels(); loadUserModel(n); }
+          catch (err) { alert('Upload gagal: ' + err.message); hideLoader(); }
+        }
+      });
+    }
+    refreshModels();
+
+    // ── Inspect Model button ──
+    const inspectBtn = $('#btn-inspect');
+    if (inspectBtn) inspectBtn.addEventListener('click', () => {
+      if (!state.model) { alert('Load model dulu sebelum inspeksi.'); return; }
+      showLoader('🔍 Menganalisis model...');
+      setTimeout(() => {
+        const sheet = inspectModel();
+        hideLoader();
+        if (sheet) {
+          alert(`✅ Character Sheet generated!\n\n` +
+            `📋 ${sheet.paramCount} parameter ditemukan\n` +
+            `😊 ${Object.keys(sheet.supportedEmotions).length} emosi didukung\n` +
+            `✨ ${sheet.accessories.length} aksesoris terdeteksi\n` +
+            `🎭 ${sheet.nativeExpressions.length} expression bawaan\n` +
+            `🎬 ${sheet.motionGroups.length} motion group\n\n` +
+            `Tersimpan di localStorage. AI akan pakai data ini saat chat.`);
+        } else {
+          alert('❌ Gagal inspeksi model.');
+        }
+      }, 100);
+    });
+
+    loadConns();
+  }
+
+  // ─── Boot ─────────────────────────────────────────────────────
+  wireUI();
+  // Optional ?model=NAME lets you open a user-imported model directly in the
+  // URL (handy for debugging / sharing). Falls back to the bundled default.
+  (async () => {
+    const q = new URLSearchParams(location.search).get('model');
+    if (q) {
+      try {
+        const r = await fetch(API + '/api/model/path?name=' + encodeURIComponent(q));
+        if (r.ok) { const d = await r.json(); if (d.path) { await loadModel(d.path); return; } }
+      } catch (e) { console.warn('[boot] ?model load failed, using default', e); }
+    }
+    // Auto-detect: load the first model the server actually has, so we never
+    // fail on a hard-coded default path that doesn't exist on this machine.
+    try {
+      const r = await fetch(API + '/api/models');
+      if (r.ok) {
+        const d = await r.json();
+        const first = (d.models && d.models[0]) || null;
+        if (first) {
+          const rp = await fetch(API + '/api/model/path?name=' + encodeURIComponent(first));
+          if (rp.ok) { const dp = await rp.json(); if (dp.path) { await loadModel(dp.path); return; } }
+        }
+      }
+    } catch (e) { console.warn('[boot] model auto-detect failed', e); }
+    loadModel();
+  })();
+
+  app.ticker.add(() => {
+    if (state.model && !$('#loader').classList.contains('done')) {
+      $('#loader').classList.add('done');
+      setTimeout(() => {
+        $('#loader').classList.add('fade-out');
+        setTimeout(() => $('#loader').classList.add('hidden'), 650);
+      }, 600);
+    }
+  });
+
+  // ─── Public Agent API (used by the agent layer later) ─────────
+  // The future agent (LLM/mic/STT) calls these directly instead of clicking
+  // buttons. Keeps the UI as a thin shell over controllable state.
+  // ── Gesture Library ("gesture verbs") ──────────────────────────
+  // Why: asking the LLM to freehand numeric coordinates ([HEAD:x,y] etc) for
+  // every clause is unreliable — a language model reasons much better about
+  // picking a NAME from a short list than about choreographing raw numbers,
+  // and free-drift numeric poses tend to blur into one continuous "wobble"
+  // instead of reading as a distinct, recognizable motion (a nod that
+  // actually looks like nodding). So we predefine a small set of named
+  // pose-delta sequences built ONLY from the same semantic pose fields
+  // setAIPose() already uses (ax/ay/ex/ey/bodyX/bodyY/bodyZ/mouthForm) — so
+  // they stay 100% model-agnostic; they play through roleId() same as always.
+  // Each step's delta composes ON TOP of whatever [HEAD]/[EMOTION] set right
+  // before the gesture, so a "senang" head-tilt + a "nod" gesture blend
+  // together instead of fighting.
+  const GESTURE_LIBRARY = {
+    nod:              [ { d:{ ay:-8 }, ms:160 }, { d:{ ay:6 }, ms:160 }, { d:{ ay:-5 }, ms:140 }, { d:{}, ms:160 } ],
+    shake:            [ { d:{ ax:-10 }, ms:150 }, { d:{ ax:10 }, ms:150 }, { d:{ ax:-7 }, ms:140 }, { d:{}, ms:160 } ],
+    tilt_curious:     [ { d:{ bodyZ:10, ax:6, ex:0.15 }, ms:260 }, { d:{ bodyZ:8, ax:5 }, ms:500 } ],
+    lean_excited:     [ { d:{ bodyY:-6, ay:-6 }, ms:180 }, { d:{ bodyY:3, ay:2 }, ms:220 }, { d:{}, ms:260 } ],
+    recoil_surprised: [ { d:{ ay:-12, bodyY:6, ex:-0.1, ey:-0.15 }, ms:140 }, { d:{ ay:-4 }, ms:260 }, { d:{}, ms:300 } ],
+    look_away_shy:    [ { d:{ ax:-14, ex:-0.35, ay:6 }, ms:320 }, { d:{ ax:-8, ex:-0.2 }, ms:500 } ],
+    laugh_bounce:     [ { d:{ ay:-6, bodyY:-5 }, ms:120 }, { d:{ ay:4, bodyY:3 }, ms:120 }, { d:{ ay:-4, bodyY:-3 }, ms:120 }, { d:{ ay:2, bodyY:2 }, ms:120 }, { d:{}, ms:160 } ],
+    think:            [ { d:{ bodyZ:-8, ax:-5, ay:4, ex:-0.2, ey:-0.1 }, ms:300 }, { d:{ bodyZ:-6, ax:-4 }, ms:700 } ],
+    wave_hi:          [ { d:{ ax:8, ay:-4, bodyX:4 }, ms:200 }, { d:{ ax:-6 }, ms:200 }, { d:{ ax:4 }, ms:200 }, { d:{}, ms:200 } ],
+  };
+  // Emotion → default gesture, used by the fallback path when the LLM gave
+  // no explicit [GESTURE:...] (keeps the "no directive at all" case lively
+  // instead of falling back to plain idle).
+  const EMOTION_GESTURE = { senang: 'lean_excited', sedih: 'look_away_shy', malu: 'look_away_shy', kaget: 'recoil_surprised', normal: 'nod' };
+
+  let gestureToken = 0;
+  function playGesture(name) {
+    if (!state.model || !name) return;
+
+    // Check if it's a native motion group request
+    if (typeof name === 'string') {
+      const g = name.replace(/^motion_/, '');
+      if (state.caps && state.caps.motionGroups && state.caps.motionGroups.includes(g)) {
+        try {
+          state.model.motion(g, -1, 2);
+          state.impulse = Math.min(1.0, state.impulse + 0.3);
+          console.log('[Live2D] Playing native motion gesture:', g);
+          return;
+        } catch (e) { console.warn('[Live2D] Failed to play native motion:', e); }
+      }
+    }
+
+    const steps = GESTURE_LIBRARY[name];
+    if (!steps) return;
+    const P = state.aiPose;
+    // Snapshot the CURRENT target (whatever EMOTION/HEAD just set) so every
+    // delta composes on top of it, not on top of a previous gesture's leftovers.
+    const base = { ax:P.ax||0, ay:P.ay||0, ex:P.ex||0, ey:P.ey||0, bodyX:P.bodyX||0, bodyY:P.bodyY||0, bodyZ:P.bodyZ||0, mouthForm:P.mouthForm||0 };
+    const myToken = ++gestureToken;
+    let t = 0;
+    for (const step of steps) {
+      setTimeout(() => {
+        if (myToken !== gestureToken) return;   // a newer gesture superseded this one
+        const d = step.d || {};
+        for (const k in base) P[k] = base[k] + (d[k] || 0);
+        state.impulse = Math.min(1.0, state.impulse + 0.22);
+      }, t);
+      t += step.ms;
+    }
+  }
+
+  window.__live2dAgent = {
+    speak,
+    setExpression: applyExpression,
+    setAccessory: (paramId, val) => toggleAccessory(paramId, val),
+    setParameter: (id, v) => { setSticky(id, v, 1); },
+    isReady: () => !!state.model,
+    getMouth: () => { const mId = roleId('mouthOpenY'); return (mId && state.overrides[mId] != null ? state.overrides[mId] : state.mouthRest); },
+    frameModel,
+    zoom: setScaleAroundCenter,
+    _getSupportedEmotions: () => state.supportedEmotions || {},
+    // ── AI Lock: pause user interaction while AI controls the character ──
+    lockAI: () => {
+      state.aiLock = true;
+      state.fidgetT = 0;                       // restart fidget clock each turn
+      state.fidgetSeed = Math.random() * 1000;  // fresh flavour every reply
+      // Re-center the AI pose target on where the character currently is, so
+      // the first eased frame doesn't yank it back to neutral. Only read body
+      // params that the model actually owns (otherwise 0 — no body lean).
+      const readSafe = (id) => state.caps.params && state.caps.params.has(id) ? readParam(id) : 0;
+      state.aiPose = {
+        ax: readParam(roleId('angleX') || 'ParamAngleX'), ay: readParam(roleId('angleY') || 'ParamAngleY'),
+        ex: readParam(roleId('eyeBallX') || 'ParamEyeBallX'), ey: readParam(roleId('eyeBallY') || 'ParamEyeBallY'),
+        mouthForm: readParam(roleId('mouthForm') || 'ParamMouthForm'),
+        bodyX: readSafe(roleId('bodyAngleX') || 'ParamBodyAngleX'),
+        bodyY: readSafe(roleId('bodyAngleY') || 'ParamBodyAngleY'),
+        bodyZ: readSafe(roleId('bodyAngleZ') || 'ParamBodyAngleZ'), breath: 0.45,
+      };
+      // Kick off the micro-gesture scheduler for that "always alive" feel.
+      startGestureScheduler();
+      console.log('[Live2D] AI lock ON — user interaction paused');
+    },
+    unlockAI: () => {
+      state.aiLock = false;
+      // Stop the AI micro-gesture scheduler; user is back in control.
+      stopGestureScheduler();
+      // Reset head/eye look targets back to neutral
+      state.look.tax = state.look.tay = 0;
+      state.look.tex = state.look.tey = 0;
+      // Clear all AI-set emotion params, restore neutral
+      resetEmotion();
+      console.log('[Live2D] AI lock OFF — user control restored');
+    },
+    // ── Set the AI pose TARGET (eased by the engine, not snapped) ──
+    // Called by the agent layer per dialog segment. Values are the EXPLICIT
+    // pose the character should ease toward; the engine adds ambient fidget.
+    // head {x,y}, eyes {x,y}, mouth {form}, body {x,y,z} (all optional).
+    setAIPose: (pose) => {
+      if (!pose || typeof pose !== 'object') return;
+      const P = state.aiPose;
+      if (pose.head) { if (pose.head.x != null) P.ax = pose.head.x; if (pose.head.y != null) P.ay = pose.head.y; }
+      if (pose.eyes) { if (pose.eyes.x != null) P.ex = pose.eyes.x; if (pose.eyes.y != null) P.ey = pose.eyes.y; }
+      if (pose.mouth) { if (pose.mouth.form != null) P.mouthForm = pose.mouth.form; }
+      if (pose.body) {
+        if (pose.body.x != null) P.bodyX = pose.body.x;
+        if (pose.body.y != null) P.bodyY = pose.body.y;
+        if (pose.body.z != null) P.bodyZ = pose.body.z;
+      }
+      // Fire a gentle "pop" — she bounces/lurches with life at the start of each
+      // clause/gesture, like a VTuber reacting. Decays over ~1s in the ticker.
+      // Kept small so streaming many per-clause poses stays smooth, not jittery.
+      state.impulse = Math.min(1.0, state.impulse + 0.3);
+      state.energyBoost = Math.min(0.9, state.energyBoost + 0.22);
+    },
+    // ── Play a named gesture ("gesture verb") — see GESTURE_LIBRARY above.
+    playGesture,
+    gestureNames: () => Object.keys(GESTURE_LIBRARY),
+    // ── Capability profile: describes what this model can do ──
+    getCapabilityProfile,
+  };
+
+  // ─── Character Sheet System ───
+  // Deep-inspect a model once, save the profile to localStorage, and reuse
+  // it for all future AI interactions — no hardcoding needed.
+
+  function characterSheetKey() { return 'live2d_sheet_' + currentModelKey(); }
+
+  // Deep-inspect the loaded model: read every parameter's actual range from
+  // Cubism Core (min/max/default), list native expressions, detect accessory
+  // params, and build a complete "character sheet" the AI can reference.
+  function inspectModel() {
+    if (!state.model) return null;
+    const cm = coreModel();
+    const m = state.model;
+
+    // 1) Enumerate all parameters with REAL ranges from Cubism Core
+    const rawParams = [];
+    try {
+      const gm = (cm && cm.getModel) ? cm.getModel() : null;
+      const count = gm ? gm.getParameterCount() : (cm ? cm.getParameterCount() : 0);
+      for (let i = 0; i < count; i++) {
+        let id = '', min = -1, max = 1, def = 0;
+        try {
+          // Try to get ID string
+          if (gm && typeof gm.getParameterIds === 'function') {
+            const ids = gm.getParameterIds();
+            id = ids[i] || '';
+          } else if (gm && gm._parameterIds && gm._parameterIds[i]) {
+            id = gm._parameterIds[i];
+          } else if (gm && gm._model && gm._model.parameters && gm._model.parameters.ids) {
+            id = gm._model.parameters.ids[i] || '';
+          }
+          // Get actual min/max/default from Cubism
+          if (gm) {
+            min = gm.getParameterMinimumValue(i);
+            max = gm.getParameterMaximumValue(i);
+            def = gm.getParameterDefaultValue(i);
+          } else if (cm) {
+            min = cm.getParameterMinimumValue(i);
+            max = cm.getParameterMaximumValue(i);
+            def = cm.getParameterDefaultValue(i);
+          }
+        } catch (e) {}
+        if (id) rawParams.push({ id, min, max, def });
+      }
+    } catch (e) { console.warn('[inspect] param enumeration failed:', e.message); }
+
+    // Fallback: use state.modelParams if raw enumeration failed
+    if (!rawParams.length && state.modelParams) {
+      for (const pid of state.modelParams) {
+        const meta = findParamMeta(pid);
+        rawParams.push({ id: pid, min: meta ? meta.min : -1, max: meta ? meta.max : 1, def: meta ? meta.def : 0 });
+      }
+    }
+
+    // 2) Classify params into groups — but ALWAYS keep the model's REAL id as
+    // the label. We must NOT translate/rename (e.g. "ParamAngleX2" -> "AngleX2")
+    // or apply PARAM_META English labels: the user wants the model's own
+    // parameter names shown directly (mix of human names like "Buka Mata Kiri"
+    // and physics ids like "ParamHeadPhysicsY1_1" — both are the model's truth).
+    const classified = [];
+    const used = new Set();
+    for (const rp of rawParams) {
+      const label = rp.id;            // real model id, verbatim
+      let group = 'Lainnya';
+      if (/physics/i.test(rp.id)) {
+        group = 'Physics';            // model-driven physics outputs, kept apart
+      } else {
+        for (const gname in PARAM_META) {
+          if (PARAM_META[gname][rp.id]) { group = gname; break; }
+        }
+        if (group === 'Lainnya') {
+          if (/^ParamAngle/.test(rp.id)) group = 'Sudut (Angle)';
+          else if (/^ParamEye/.test(rp.id)) group = 'Mata (Eye)';
+          else if (/^ParamBrow/.test(rp.id)) group = 'Alis (Eyebrow)';
+          else if (/^ParamMouth/.test(rp.id)) group = 'Mulut (Mouth)';
+          else if (/^ParamBody/.test(rp.id)) group = 'Badan (Body)';
+          else if (/^ParamHair/.test(rp.id)) group = 'Rambut (Hair)';
+          else group = 'Kustom';
+        }
+      }
+      classified.push({ id: rp.id, min: rp.min, max: rp.max, def: rp.def, group, label });
+      used.add(rp.id);
+    }
+
+    // 2b) Parts — a separate opacity system from Parameters. Many riggers
+    // toggle accessories/outfits via Part opacity rather than a custom Param,
+    // so we enumerate these too (tagged type:'part' so the UI/AI know to use
+    // setPartOpacity, not setParameterValue, when driving them).
+    const parts = enumerateParts().map(p => ({ ...p, type: 'part' }));
+
+    // 3) Detect accessory params (custom ParamXX with 0-1 range) + accessory
+    // Parts (opacity toggles that default to 0/hidden — i.e. "off by default").
+    const accessories = classified.filter(p =>
+      p.group === 'Aksesoris (Accessory)' ||
+      (p.id.match(/^Param\d+$/) && p.min >= 0 && p.max <= 1 && p.def === 0)
+    ).map(p => p.id).concat(
+      parts.filter(p => p.def === 0).map(p => p.id)
+    );
+
+    // 4) Role map so the AI + animation can reference the model's REAL ids
+    // regardless of naming language (English / Japanese / Chinese / etc.).
+    const roleIds = mapRoles(new Set(rawParams.map(p => p.id)), getOfficialGroups(m));
+
+    // 5) Emotions: the Emosi settings panel was removed, so no synthetic
+    //    emotion templates are generated here. The autonomous motion engine
+    //    (face/body idle + look-at) still drives the character naturally.
+    const supportedEmotions = {};
+
+    // 6) Native expressions (.exp3)
+    const nativeExprs = state.modelExpressions || [];
+
+    // 7) Motion groups
+    let motionGroups = [];
+    try {
+      const mm = m.internalModel && m.internalModel.motionManager;
+      if (mm && mm.definitions) motionGroups = Object.keys(mm.definitions);
+    } catch (e) {}
+
+    // 8) True range per param (from Cubism Core) for accurate clamping + sliders.
+    const paramRange = {};
+    for (const p of classified) paramRange[p.id] = { min: p.min, max: p.max, def: p.def };
+
+    const sheet = {
+      modelName: currentModelKey(),
+      inspectedAt: new Date().toISOString(),
+      paramCount: rawParams.length,
+      params: classified,
+      parts: parts,
+      paramRange: paramRange,
+      roleIds: roleIds,
+      accessories: accessories,
+      supportedEmotions: supportedEmotions,
+      nativeExpressions: nativeExprs,
+      motionGroups: motionGroups,
+      controls: {
+        head: !!(roleIds.angleX || roleIds.angleY),
+        eyes: !!(roleIds.eyeBallX || roleIds.eyeBallY || roleIds.eyeLOpen || roleIds.eyeROpen),
+        eyebrows: !!(roleIds.browLForm || roleIds.browRForm),
+        mouth: !!(roleIds.mouthOpenY || roleIds.mouthForm),
+        body: !!(roleIds.bodyAngleX || roleIds.bodyAngleY || roleIds.bodyAngleZ),
+        hair: classified.some(p => /hair/i.test(p.id)),
+      },
+    };
+
+    // Trigger AI classification for unmapped parameters in background
+    triggerAIParamClassification(sheet, classified, roleIds);
+
+    // Save to localStorage (fast reuse, no network)
+    try {
+      localStorage.setItem(characterSheetKey(), JSON.stringify(sheet));
+      console.log('[inspect] character sheet saved:', sheet.paramCount, 'params,',
+        accessories.length, 'accessories,', nativeExprs.length, 'expressions');
+    } catch (e) { console.warn('[inspect] failed to save sheet:', e.message); }
+
+    // Also persist to a FILE via the server (sheets/<modelKey>.json) so the
+    // AI profile survives across browsers / clears and is reusable without
+    // re-inspecting the model every time.
+    try {
+      fetch(API + '/api/sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelName: sheet.modelName, sheet }),
+      }).then(r => r.json().catch(() => ({}))).then(j =>
+        console.log('[inspect] character sheet file saved:', j.path || j.error || '(unknown)')
+      ).catch(() => {});
+    } catch (e) { console.warn('[inspect] failed to push sheet to server:', e.message); }
+
+    return sheet;
+  }
+
+  // Asynchronously classify unmapped parameters using the LLM (runs once per model)
+  async function triggerAIParamClassification(sheet, classified, roleIds) {
+    try {
+      const mappedParamIds = new Set(Object.values(roleIds || {}));
+      const unmapped = classified.filter(p => !mappedParamIds.has(p.id) && !p.id.toLowerCase().includes('physics'));
+      if (!unmapped.length) return;
+
+      const res = await fetch(API + '/api/model/classify-params', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          params: unmapped.map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def })),
+          currentRoles: roleIds,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = data.classifications || [];
+      if (!items.length) return;
+
+      let changed = false;
+      for (const item of items) {
+        if (!item || !item.id) continue;
+        if (item.role && !sheet.roleIds[item.role]) {
+          sheet.roleIds[item.role] = item.id;
+          changed = true;
+        }
+        const pObj = sheet.params.find(p => p.id === item.id);
+        if (pObj) {
+          if (item.group) pObj.group = item.group;
+          if (item.label) pObj.label = item.label;
+        }
+        if (item.isAccessory && !sheet.accessories.includes(item.id)) {
+          sheet.accessories.push(item.id);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        console.log('[inspect] AI classified', items.length, 'parameters successfully!');
+        hydrateCaps(sheet);
+        localStorage.setItem(characterSheetKey(), JSON.stringify(sheet));
+        fetch(API + '/api/sheet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelName: sheet.modelName, sheet }),
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[inspect] AI param classification skipped/failed:', e.message);
+    }
+  }
+
+  // Load saved character sheet (returns null if none)
+  function loadCharacterSheet() {
+    try {
+      const raw = localStorage.getItem(characterSheetKey());
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  // Delete character sheet (called when model is deleted)
+  function deleteCharacterSheet(modelKey) {
+    try {
+      localStorage.removeItem('live2d_sheet_' + modelKey);
+    } catch (e) {}
+  }
+
+  // Cubism-style parameter catalog used for human labels / grouping in the
+  // live inspect engine (findParamMeta). NOT a settings UI — kept because the
+  // autonomous motion/inspect code references it.
+  const PARAM_META = {
+    'Sudut (Angle)': {
+      ParamAngleX:  { min: -30, max: 30, def: 0, label: 'Kepala Kiri/Kanan' },
+      ParamAngleY:  { min: -30, max: 30, def: 0, label: 'Kepala Atas/Bawah' },
+      ParamAngleZ:  { min: -30, max: 30, def: 0, label: 'Kepala Miring' },
+    },
+    'Mata (Eye)': {
+      ParamEyeLOpen:  { min: 0, max: 1, def: 1, label: 'Buka Mata Kiri' },
+      ParamEyeROpen:  { min: 0, max: 1, def: 1, label: 'Buka Mata Kanan' },
+      ParamEyeLSmile: { min: -1, max: 1, def: 0, label: 'Senyum Mata Kiri' },
+      ParamEyeRSmile: { min: -1, max: 1, def: 0, label: 'Senyum Mata Kanan' },
+      ParamEyeBallX:  { min: -1, max: 1, def: 0, label: 'Bola Mata Kiri/Kanan' },
+      ParamEyeBallY:  { min: -1, max: 1, def: 0, label: 'Bola Mata Atas/Bawah' },
+      ParamEyeForm:   { min: -1, max: 1, def: 0, label: 'Bentuk Mata' },
+    },
+    'Alis (Eyebrow)': {
+      ParamBrowLX:     { min: -1, max: 1, def: 0, label: 'Alis Kiri Geser' },
+      ParamBrowRX:     { min: -1, max: 1, def: 0, label: 'Alis Kanan Geser' },
+      ParamBrowLY:     { min: -1, max: 1, def: 0, label: 'Alis Kiri Naik/Turun' },
+      ParamBrowRY:     { min: -1, max: 1, def: 0, label: 'Alis Kanan Naik/Turun' },
+      ParamBrowLAngle: { min: -1, max: 1, def: 0, label: 'Alis Kiri Angle' },
+      ParamBrowRAngle: { min: -1, max: 1, def: 0, label: 'Alis Kanan Angle' },
+      ParamBrowLForm:  { min: -1, max: 1, def: 0, label: 'Alis Kiri Bentuk' },
+      ParamBrowRForm:  { min: -1, max: 1, def: 0, label: 'Alis Kanan Bentuk' },
+    },
+    'Mulut (Mouth)': {
+      ParamMouthForm:  { min: -1, max: 1, def: 0, label: 'Bentuk Mulut' },
+      ParamMouthOpenY: { min: 0, max: 1, def: 0, label: 'Buka Mulut' },
+      ParamMouthOpenX: { min: -1, max: 1, def: 0, label: 'Mulut Lebar' },
+    },
+    'Badan (Body)': {
+      ParamBodyAngleX: { min: -20, max: 20, def: 0, label: 'Badan Kiri/Kanan' },
+      ParamBodyAngleY: { min: -20, max: 20, def: 0, label: 'Badan Atas/Bawah' },
+      ParamBodyAngleZ: { min: -20, max: 20, def: 0, label: 'Badan Miring' },
+      ParamBreath:     { min: 0, max: 1, def: 0, label: 'Napas' },
+    },
+    'Rambut (Hair)': {
+      ParamHairFront: { min: -1, max: 1, def: 0, label: 'Rambut Depan' },
+      ParamHairSide:  { min: -1, max: 1, def: 0, label: 'Rambut Samping' },
+      ParamHairBack:  { min: -1, max: 1, def: 0, label: 'Rambut Belakang' },
+    },
+    'Aksesoris (Accessory)': {
+      Param91: { min: 0, max: 1, def: 0, label: 'Aksesoris 91' },
+      Param92: { min: 0, max: 1, def: 0, label: 'Aksesoris 92' },
+      Param93: { min: 0, max: 1, def: 0, label: 'Aksesoris 93' },
+      Param94: { min: 0, max: 1, def: 0, label: 'Aksesoris 94' },
+      Param52: { min: 0, max: 1, def: 0, label: 'Aksesoris 52' },
+      Param55: { min: 0, max: 1, def: 0, label: 'Aksesoris 55' },
+      Param68: { min: 0, max: 1, def: 0, label: 'Aksesoris 68' },
+      Param76: { min: 0, max: 1, def: 0, label: 'Aksesoris 76' },
+      Param96: { min: 0, max: 1, def: 0, label: 'Aksesoris 96' },
+    },
+  };
+
+  // Find meta info for a param by ID (from PARAM_META)
+  function findParamMeta(pid) {
+    for (const g in PARAM_META) {
+      if (PARAM_META[g][pid]) return PARAM_META[g][pid];
+    }
+    return null;
+  }
+
+  // ── Capability profile: builds from saved sheet or live inspection ──
+  // RECOMMENDATION A: the character sheet FILE (sheets/<modelKey>.json, served
+  // by the backend at GET /api/sheet) is now the PRIMARY source. We fetch it
+  // first, fall back to localStorage, then finally live-inspect. This means the
+  // file the user generated is genuinely reused every chat — not just cached in
+  // localStorage (which is wiped on clear). After resolving the sheet we also
+  // hydrate state.caps so the AI engine only drives parameters the model owns.
+  async function fetchSheetFile() {
+    try {
+      const key = characterSheetKey().replace('live2d_sheet_', '');
+      const res = await fetch(API + '/api/sheet?name=' + encodeURIComponent(key));
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      return data && data.params ? data : null;
+    } catch (e) { return null; }
+  }
+
+  function hydrateCaps(sheet) {
+    if (!sheet) return;
+    const set = new Set((sheet.params || []).map(p => p.id));
+    state.caps.params = set;
+    // Persisted role→id map (so AI/animation work even before live re-detection).
+    if (sheet.roleIds && typeof sheet.roleIds === 'object') state.caps.ids = sheet.roleIds;
+    const c = sheet.controls || {};
+    state.caps.hasHead    = !!c.head;
+    state.caps.hasEyes    = !!c.eyes;
+    state.caps.hasMouth   = !!c.mouth;
+    state.caps.hasBody    = !!c.body;
+    state.caps.hasBrow    = !!c.eyebrows;
+    state.caps.hasHair    = !!c.hair;
+    state.caps.motionGroups = Array.isArray(sheet.motionGroups) ? sheet.motionGroups : [];
+    console.log('[caps] hydrated:', {
+      count: set.size, head: state.caps.hasHead, eyes: state.caps.hasEyes,
+      mouth: state.caps.hasMouth, body: state.caps.hasBody, brow: state.caps.hasBrow,
+      gestures: state.caps.motionGroups.length,
+    });
+  }
+
+  async function getCapabilityProfile() {
+    if (!state.model) return null;
+
+    // PRIMARY source: the backend file sheet (the user-generated file).
+    let sheet = await fetchSheetFile();
+
+    // Fallback to localStorage (fast) if the file fetch failed.
+    if (!sheet) sheet = loadCharacterSheet();
+
+    // Auto-inspect if no sheet exists yet (first-ever load).
+    if (!sheet) sheet = inspectModel();
+
+    if (!sheet) return null;
+
+    // Hydrate engine capability flags from the sheet so AI moves respect the
+    // model's real parameters.
+    hydrateCaps(sheet);
+
+    // Build concise profile for LLM
+    return {
+      modelParams: sheet.params.map(p => p.id),
+      // Role → REAL model parameter id (head/eye/mouth/body/breath...). The AI
+      // should use THESE ids when it wants to drive a specific part, so it works
+      // for any model regardless of how the creator named its parameters.
+      roleIds: sheet.roleIds || {},
+      paramGroups: [],
+      paramDetails: sheet.params,
+      emotions: Object.keys(sheet.supportedEmotions),
+      nativeExpressions: sheet.nativeExpressions,
+      accessories: sheet.accessories,
+      // Named gesture verbs — model-agnostic + native motion groups from model
+      gestures: Object.keys(GESTURE_LIBRARY).concat(
+        Array.isArray(sheet.motionGroups) ? sheet.motionGroups.map(g => 'motion_' + g) : []
+      ),
+      hasHeadControl: sheet.controls.head,
+      hasEyeControl: sheet.controls.eyes,
+      hasMouthControl: sheet.controls.mouth,
+      hasBodyControl: sheet.controls.body,
+      hasBrowControl: sheet.controls.eyebrows,
+      sheet: sheet,  // full sheet for reference
+    };
+  }
+
+  // ── Motion clip taxonomy: load + emotion-aware selection ──────
+  // The server classifies every .motion3.json into a semantic verb by reading
+  // its curves (js/motion-taxonomy.js). We fetch that once per model, then use
+  // it to pick clips that fit what she's feeling.
+  //
+  // WHY: the old code did
+  //     const g = motionGroups[Math.floor(Math.random() * motionGroups.length)]
+  // every ~1.5s. On Ichika (306 groups: 17 sad, 7 angry, 49 happy) that means
+  // roughly 1 in 12 gestures actively contradicted her mood — the single most
+  // visible cause of "animasinya nggak sesuai konteks".
+  async function loadMotionTaxonomy() {
+    state.motionTaxonomy = null;
+    // The server keys taxonomies by MODEL FOLDER name, which is the directory
+    // component of the loaded model3.json path (e.g. 'model/lumine/lumine.model3.json'
+    // -> 'lumine'). Deriving it here means it works for the bundled default and
+    // for user-imported models without any extra bookkeeping.
+    const parts = String(state.modelPath || '').split('/');
+    const folder = parts.length >= 2 ? parts[parts.length - 2] : null;
+    if (!folder) return null;
+    try {
+      const r = await fetch(API + '/api/model/motion-taxonomy?name=' + encodeURIComponent(folder));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      if (!data || !data.byVerb) throw new Error('malformed taxonomy');
+
+      // Zero clips means the model folder ships no .motion3.json files (or they
+      // aren't where the sheet says). The sheet may still list motion group
+      // names, so try the name-only classifier before giving up entirely.
+      if (!data.clipCount) {
+        console.log('[taxonomy] server found 0 clips for', folder, '— trying sheet names');
+        return buildTaxonomyFromNames();
+      }
+
+      // Index clip -> metadata so playback can use the declared group/index
+      // (model.motion(group, index)) rather than guessing from the name.
+      const clipMeta = {};
+      for (const c of data.clips || []) clipMeta[c.name] = c;
+      state.motionTaxonomy = { byVerb: data.byVerb, clipMeta, stats: data.stats || {} };
+      console.log('[taxonomy]', data.clipCount, 'clips ->',
+        Object.entries(data.byVerb).map(([v, l]) => `${v}:${l.length}`).join(' '));
+      return state.motionTaxonomy;
+    } catch (e) {
+      console.warn('[taxonomy] unavailable, falling back to name-only classification:', e.message);
+      // FALLBACK: classify the sheet's group NAMES in-browser. Lower quality
+      // than curve analysis but still far better than uniform random, and it
+      // keeps emotion gating working when the model folder is gone.
+      return buildTaxonomyFromNames();
+    }
+  }
+
+  // Name-only taxonomy from whatever motion groups the sheet knows about.
+  // Uses the SAME classifier as the server, so verbs are consistent.
+  function buildTaxonomyFromNames() {
+    const groups = (state.caps && state.caps.motionGroups) || [];
+    if (!groups.length || typeof MotionTaxonomy === 'undefined') return null;
+    const built = MotionTaxonomy.buildTaxonomy(groups.map(g => ({ name: g, motion3: null })));
+    const clipMeta = {};
+    for (const c of built.clips) clipMeta[c.name] = { name: c.name, verb: c.verb, group: c.name, index: -1 };
+    state.motionTaxonomy = { byVerb: built.byVerb, clipMeta, stats: built.stats, nameOnly: true };
+    console.log('[taxonomy] name-only fallback:',
+      Object.entries(built.byVerb).map(([v, l]) => `${v}:${l.length}`).join(' '));
+    return state.motionTaxonomy;
+  }
+
+  // True while a native motion clip owns the rig. The eased AI pose and the
+  // micro-gesture scheduler both stand down during this window so only ONE
+  // writer drives the head/body params.
+  function clipIsPlaying() {
+    return state.clipUntil > performance.now();
+  }
+
+  /**
+   * Play a motion clip appropriate to `emotion`. Returns the clip name, or null
+   * when the model has nothing emotionally compatible (caller should then use a
+   * synthetic gesture rather than playing something contradictory).
+   */
+  function playEmotionClip(emotion) {
+    const T = state.motionTaxonomy;
+    if (!T || !state.model || typeof MotionTaxonomy === 'undefined') return null;
+    if (clipIsPlaying()) return null;   // don't interrupt a clip mid-way
+
+    const pick = MotionTaxonomy.pickClipForEmotion(T.byVerb, emotion || state.activeEmotion || 'normal');
+    if (!pick) return null;
+
+    const meta = T.clipMeta[pick.name] || {};
+    try {
+      // Prefer the declared group+index (exact clip). Fall back to the name as
+      // a group with random index, which is what pixi-live2d does for models
+      // whose model3.json has no Motions block.
+      if (meta.group && typeof meta.index === 'number' && meta.index >= 0) {
+        state.model.motion(meta.group, meta.index, 1);
+      } else {
+        state.model.motion(meta.group || pick.name, -1, 1);
+      }
+    } catch (e) {
+      console.warn('[clip] play failed', pick.name, e.message);
+      return null;
+    }
+
+    // Hold the guard for the clip's real duration when we know it, otherwise a
+    // conservative default. +250ms so the pose ease resumes AFTER the clip's
+    // own fade-out instead of yanking the head mid-blend.
+    const dur = (meta.duration && meta.duration > 0 ? meta.duration * 1000 : 2200) + 250;
+    state.clipStartedAt = performance.now();
+    state.clipUntil = state.clipStartedAt + dur;
+    state.clipName = pick.name;
+    console.log(`[clip] ${pick.name} (verb=${pick.verb}, emotion=${emotion}) for ${Math.round(dur)}ms`);
+    return pick.name;
+  }
+
+  // ── Micro-gesture scheduler (RECOMMENDATION C) ──
+  // While the AI has the lock, fire small random "gestures" every 1.5–2.8s so
+  // the character is never frozen between sentences — the neuro-sama "alive"
+  // feel. A gesture nudges the AI pose target (which the engine eases toward),
+  // so transitions stay smooth. For models that SHIP motion groups we also
+  // occasionally play one of their own motion clips (RECOMMENDATION D).
+  function startGestureScheduler() {
+    stopGestureScheduler();
+    const tick = () => {
+      if (!state.aiLock || !state.model) { stopGestureScheduler(); return; }
+
+      // A native clip is driving the rig right now. Nudging the pose target
+      // here would make the engine ease the head toward a DIFFERENT place than
+      // the clip is animating it — two writers on one parameter, which reads as
+      // fighting/twitching. Stand down and re-check shortly after it ends.
+      if (clipIsPlaying()) {
+        const wait = Math.max(120, state.clipUntil - performance.now() + 80);
+        state.gesture.timer = setTimeout(tick, wait);
+        return;
+      }
+
+      const P = state.aiPose;
+      const r = (a, b) => a + Math.random() * (b - a);
+      // Pick a gesture "personality" each time, WEIGHTED by the currently
+      // active emotion so idle drift stays consistent with what she's feeling
+      // instead of being pure random noise. [t1, t2] = cutoffs for
+      // [look-around, tilt/thinking, wiggle] shares of the roll.
+      const MIX = {
+        senang: [0.30, 0.55], kaget: [0.45, 0.60], malu: [0.20, 0.85],
+        sedih:  [0.15, 0.90], normal: [0.45, 0.80],
+      };
+      const [t1, t2] = MIX[state.activeEmotion] || MIX.normal;
+      const calm = (state.activeEmotion === 'sedih' || state.activeEmotion === 'malu') ? 0.55 : 1; // smaller amplitude when subdued
+      const kind = Math.random();
+      if (kind < t1) {
+        // Look-around: a bigger head/eye sweep.
+        P.ax = clamp((P.ax || 0) + r(-16, 16) * calm, -34, 34);
+        P.ay = clamp((P.ay || 0) + r(-10, 10) * calm, -26, 26);
+        P.ex = clamp((P.ex || 0) + r(-0.2, 0.2), -1, 1);
+        P.ey = clamp((P.ey || 0) + r(-0.2, 0.2), -1, 1);
+      } else if (kind < t2) {
+        // Head tilt / thinking lean.
+        P.ax = clamp((P.ax || 0) + r(-10, 10), -30, 30);
+        P.ay = clamp((P.ay || 0) + r(-8, 8), -24, 24);
+        if (state.caps.hasBody && roleId('bodyAngleX')) {
+          P.bodyZ = clamp((P.bodyZ || 0) + r(-8, 8), -20, 20);
+        } else {
+          P.bodyZ = clamp((P.bodyZ || 0) + r(-6, 6), -30, 30);
+        }
+      } else {
+        // Excited wiggle — a short burst of energy so she "vibrates" with glee.
+        state.energyBoost = Math.min(1.2, state.energyBoost + 0.7);
+        state.impulse = Math.min(1.3, state.impulse + 0.5);
+        P.ax = clamp((P.ax || 0) + r(-12, 12), -34, 34);
+        P.ay = clamp((P.ay || 0) + r(-7, 7), -26, 26);
+      }
+      // Occasionally play one of the model's own motion clips — but ONLY one
+      // whose semantic verb matches her current emotion. Previously this picked
+      // uniformly at random from every group the model shipped, which is why a
+      // crying clip could fire mid-happy-sentence.
+      //
+      // Probability is deliberately below 1: native clips are strong, full-body
+      // statements. Firing one on every tick reads as twitchy, so most ticks
+      // stay with the subtle synthetic drift above.
+      if (Math.random() < 0.35) {
+        playEmotionClip(state.activeEmotion);
+      }
+      // A blink nudge for liveliness.
+      if (Math.random() < 0.6) {
+        try {
+          const lo = roleId('eyeLOpen'), ro = roleId('eyeROpen');
+          if (lo) pokeParam(lo, 0, 1); if (ro) pokeParam(ro, 0, 1);
+          setTimeout(() => { if (lo) pokeParam(lo, 1, 1); if (ro) pokeParam(ro, 1, 1); }, 130);
+        } catch (e) {}
+      }
+      // Schedule next gesture at a randomized interval (organic, not metronomic).
+      const next = 1100 + Math.random() * 1500;
+      state.gesture.timer = setTimeout(tick, next);
+    };
+    state.gesture.timer = setTimeout(tick, 1200 + Math.random() * 800);
+    state.gesture.seed = Math.random() * 1000;
+  }
+  function stopGestureScheduler() {
+    if (state.gesture && state.gesture.timer) {
+      clearTimeout(state.gesture.timer);
+      state.gesture.timer = null;
+    }
+  }
+
+})();

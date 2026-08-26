@@ -1,0 +1,26 @@
+# ── Secrets / local config ──
+config.json
+*.log
+.DS_Store
+
+# ── Dependencies ──
+node_modules/
+
+# ── Live2D model assets (licensed binaries, ~76MB) ──
+# The app expects models under model/<name>/<file>.model3.json.
+# These are NOT committed — keep them local or fetch separately.
+model/
+
+# ── Scratch / test dirs ──
+_broken_backup/
+_dummymodel/
+_dummymodel.zip
+
+# ── Stale duplicate ──
+js/agent.js
+
+# ── Generated data / agent tooling (not core source) ──
+sheets/
+.agents/
+.claude/
+skills-lock.json

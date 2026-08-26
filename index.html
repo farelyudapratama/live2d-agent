@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>神宫白子 — Live2D Agent</title>
+  <link rel="stylesheet" href="css/app.css" />
+  <!-- Cubism Core HARUS dimuat duluan sebelum pixi-live2d -->
+  <script src="js/live2dcubismcore.min.js"></script>
+</head>
+<body>
+
+  <!-- ===================== KIRI: STAGE KARAKTER ===================== -->
+  <div id="stage">
+    <div id="stage-glow"></div>
+    <canvas id="live2d-canvas"></canvas>
+    <div id="stage-shadow"></div>
+
+    <!-- Bubble chat muncul di atas karakter -->
+    <div id="bubble" class="bubble hidden">
+      <span id="bubble-text"></span>
+      <div id="bubble-tail"></div>
+    </div>
+
+    <!-- Full Body button: only shows after the user manually zooms/drags -->
+    <button id="btn-fullbody" class="hidden" title="Tampilkan full body">⤢ Full Body</button>
+
+    <div id="hint">💡 Drag · Scroll = zoom · Double-click = reset</div>
+  </div>
+
+  <!-- ===================== KANAN: SIDEBAR CHAT ===================== -->
+  <div id="sidebar">
+
+    <!-- Header -->
+    <div class="sb-header">
+      <div class="sb-avatar">白</div>
+      <div class="sb-id">
+        <div class="sb-name">神宫白子</div>
+        <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
+      </div>
+      <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
+    </div>
+
+    <!-- Chat history -->
+    <div id="chat-log">
+      <div class="msg agent">
+        <div class="msg-avatar">白</div>
+        <div class="msg-bubble">Halo! Aku 神宫白子~ Ada yang bisa kubantu? 😊</div>
+      </div>
+    </div>
+
+    <!-- Thinking indicator -->
+    <div id="thinking" class="thinking hidden">🧠 lagi mikir...</div>
+
+    <!-- Input -->
+    <div class="chat-input">
+      <button id="btn-mic" title="Voice (segera hadir)" disabled>🎤</button>
+      <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
+      <button id="btn-bubble">➤</button>
+    </div>
+    <div class="quick-phrases">
+      <button class="phrase-btn" data-phrase="Halo~">Halo~</button>
+      <button class="phrase-btn" data-phrase="Apa kabar?">Apa kabar?</button>
+      <button class="phrase-btn" data-phrase="Yay~!">Yay~!</button>
+      <button class="phrase-btn" data-phrase="Hmmm...">Hmmm...</button>
+      <button class="phrase-btn" data-phrase="Maaf ya...">Maaf ya...</button>
+    </div>
+    <label class="brain-toggle">
+      <input type="checkbox" id="toggle-brain" checked />
+      🧠 Mode Otak (LLM mikir & balas sendiri)
+    </label>
+
+    <!-- Collapsible control panel -->
+    <div id="controls-panel" class="hidden">
+        <div class="tabs">
+          <button class="tab active" data-tab="model">📁 Model</button>
+          <button class="tab" data-tab="ai">⚙️ AI</button>
+        </div>
+      <div class="tab-body">
+
+        <!-- Model (import / switch user models) -->
+        <div class="tab-pane" data-pane="model">
+          <div class="section-title">📁 Model Live2D</div>
+          <div id="model-drop" class="model-drop">
+            <p>Drag &amp; drop folder model ke sini,<br />atau</p>
+            <button id="btn-pick-model" class="mini-btn">📂 Pilih Folder Model</button>
+            <input id="input-model-folder" type="file" webkitdirectory directory multiple hidden />
+            <p style="margin:8px 0 2px">Atau upload <b>.zip</b> model:</p>
+            <button id="btn-pick-zip" class="mini-btn">🗜️ Pilih File .zip</button>
+            <input id="input-model-zip" type="file" accept=".zip,application/zip" hidden />
+            <p class="hint">Terima folder <i>atau</i> .zip. Folder bersarang (mis. <code>lumine_l2d/lumine/</code>) &amp; otomatis dibaca. Nama model = nama folder/zip.</p>
+          </div>
+          <div class="model-name-row">
+            <input id="input-model-name" type="text" placeholder="nama model (mis. Hatsune)" />
+          </div>
+          <div id="model-list" class="model-list"></div>
+          <div style="margin-top:10px">
+            <button id="btn-inspect" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">🔍 Inspeksi Model (Generate Character Sheet)</button>
+            <p class="hint" style="margin-top:4px">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
+          </div>
+        </div>
+
+        <!-- AI Connections (9router-style) -->
+        <div class="tab-pane" data-pane="ai">
+          <div class="section-title">⚙️ AI Connections
+            <button id="btn-add-conn" class="mini-btn" title="Tambah connection">＋</button>
+          </div>
+          <div id="conn-list" class="conn-list"></div>
+          <div class="conn-hint">Router otomatis pakai connection <b>Active</b>; kalau gagal (quota/limit) fallback ke berikutnya.</div>
+        </div>
+
+      </div>
+    </div><!-- /controls-panel -->
+  </div><!-- /sidebar -->
+
+  <!-- § Connection editor modal -->
+  <div id="conn-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-title">Connection</div>
+      <div class="api-form">
+        <label>Name
+          <input type="text" id="m-name" placeholder="mis. dahl inference" />
+        </label>
+        <label>Provider
+          <select id="m-provider">
+            <option value="openai-compatible">OpenAI-Compatible (router)</option>
+            <option value="gemini">Gemini</option>
+            <option value="groq">Groq</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="mock">Mock (tes lokal)</option>
+          </select>
+        </label>
+        <label>Base URL
+          <input type="text" id="m-baseurl" placeholder="https://inference.dahl.global/v1" />
+        </label>
+        <label>API Key
+          <input type="password" id="m-apikey" placeholder="isi api key" autocomplete="off" />
+        </label>
+        <label>Model
+          <input type="text" id="m-model" placeholder="MiniMaxAI/MiniMax-M2.7" />
+        </label>
+        <label>System Prompt
+          <textarea id="m-system" rows="3" placeholder="Karakter apa dia?"></textarea>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="m-save">💾 Simpan</button>
+        <button id="m-cancel">Batal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- § Load indicator -->
+  <div id="loader">
+    <div class="loader-inner">
+      <div class="loader-spinner"></div>
+      <p>Memuat model...</p>
+    </div>
+  </div>
+
+  <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
+  <script src="js/pixi.6.5.10.min.js"></script>
+  <script src="js/pixi-live2d-0.4.0.js"></script>
+  <!-- Semantic motion-clip classifier (verb taxonomy + emotion gating).
+       Must load BEFORE app.js: app.js reads window.MotionTaxonomy at startup to
+       decide which of the model's own clips are safe to play for a given
+       emotion. Without it app.js silently falls back to synthetic gestures. -->
+  <script src="js/motion-taxonomy.js"></script>
+  <script src="js/app.js"></script>
+  <script src="agent.js"></script>
+  <script type="module" src="js/camera-presence.js"></script>
+</body>
+</html>

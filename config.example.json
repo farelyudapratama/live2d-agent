@@ -1,0 +1,34 @@
+{
+  "activeId": "conn_default",
+  "connections": [
+    {
+      "id": "conn_default",
+      "testStatus": "idle",
+      "provider": "gemini",
+      "name": "Gemini Default",
+      "baseUrl": "",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "model": "gemini-1.5-flash",
+      "systemPrompt": "You are a friendly Live2D AI assistant."
+    }
+  ],
+  "tts": {
+    "endpoint": ""
+  },
+  "events": {
+    "idleSpeak": true,
+    "idleMs": 1800000,
+    "idleRepeatMs": 1800000,
+    "awaySpeak": true,
+    "returnSpeak": true,
+    "awayHiddenMs": 10000
+  },
+  "camera": {
+    "enabled": false,
+    "fps": 0.4,
+    "presenceThreshold": 0.4,
+    "device": "webgpu",
+    "model": "Xenova/facial_emotions_image_detection"
+  },
+  "motion": { "enabled": false, "gain": 2.5 }
+}

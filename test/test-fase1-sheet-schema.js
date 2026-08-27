@@ -49,6 +49,16 @@ const normGroupMapSrc = extractFn(appSrc, 'normalizeGroupMap');
 const normParamGroupsSrc = extractFn(appSrc, 'normalizeParamGroups');
 const resolveGroupSrc = extractFn(appSrc, 'resolveParamGroup');
 const resolvePresetsSrc = extractFn(appSrc, 'resolvePresets');
+// Gesture-namespace collision guards. migrateSheet() now calls
+// deshadowGerakPresets(), so these are hard deps of the migration path — a stub
+// would let a broken collision check pass the whole suite.
+const reservedNamesSrc = extractFn(appSrc, 'reservedGestureNames');
+const checkGerakSrc = extractFn(appSrc, 'checkGerakName');
+const suggestGerakSrc = extractFn(appSrc, 'suggestGerakName');
+const deshadowSrc = extractFn(appSrc, 'deshadowGerakPresets');
+// The real builtin gesture table, so the reserved-name set under test is the one
+// the app actually resolves against.
+const gestureLibMatch = appSrc.match(/const GESTURE_LIBRARY = \{[\s\S]*?\n  \};/);
 const catsMatch = appSrc.match(/const PRESET_CATEGORIES = \[[^\]]*\];/);
 const boundsMatch = appSrc.match(/const STEP_FIELD_BOUNDS = \{[\s\S]*?\n  \};/);
 const stepLimitsMatch = appSrc.match(/const STEP_MS_MIN = \d+;[\s\S]*?const STEP_TOTAL_MS_MAX = \d+;/);
@@ -87,7 +97,11 @@ if (!migrateSrc || !versionMatch || !normalizeSrc || !defaultsMatch || !clampMat
 
 // ── run the real migrateSheet in a sandbox ─────────────────────────
 const CURRENT = Number(versionMatch[1]);
-const sandbox = { console: { log() {}, warn() {} }, SHEET_SCHEMA_VERSION: CURRENT };
+const sandbox = { console: { log() {}, warn() {} }, SHEET_SCHEMA_VERSION: CURRENT,
+  // reservedGestureNames() falls back to state.lastSheet when no sheet is passed;
+  // give it an empty one so the sandbox mirrors "no model loaded" rather than
+  // throwing on a missing global.
+  state: { lastSheet: null } };
 vm.createContext(sandbox);
 vm.runInContext([
   clampMatch[0],
@@ -98,6 +112,7 @@ vm.runInContext([
   catsMatch ? catsMatch[0] : '',
   boundsMatch ? boundsMatch[0] : '',
   stepLimitsMatch ? stepLimitsMatch[0] : '',
+  gestureLibMatch ? gestureLibMatch[0] : 'const GESTURE_LIBRARY = {};',
   normalizeSrc,
   sanitizeStepsSrc || '',
   normPresetSrc || '',
@@ -107,6 +122,10 @@ vm.runInContext([
   normParamGroupsSrc || '',
   resolveGroupSrc || '',
   resolvePresetsSrc || '',
+  reservedNamesSrc || '',
+  suggestGerakSrc || '',
+  checkGerakSrc || '',
+  deshadowSrc || '',
   migrateSrc,
   'this.migrateSheet = migrateSheet; this.normalizeModelConfig = normalizeModelConfig;',
   'this.MODEL_CONFIG_DEFAULTS = MODEL_CONFIG_DEFAULTS;',
@@ -115,6 +134,11 @@ vm.runInContext([
   'this.resolveParamGroup = typeof resolveParamGroup === "function" ? resolveParamGroup : null;',
   'this.resolvePresets = typeof resolvePresets === "function" ? resolvePresets : null;',
   'this.STEP_FIELD_BOUNDS = typeof STEP_FIELD_BOUNDS === "object" ? STEP_FIELD_BOUNDS : null;',
+  'this.GESTURE_LIBRARY = typeof GESTURE_LIBRARY === "object" ? GESTURE_LIBRARY : null;',
+  'this.reservedGestureNames = typeof reservedGestureNames === "function" ? reservedGestureNames : null;',
+  'this.checkGerakName = typeof checkGerakName === "function" ? checkGerakName : null;',
+  'this.suggestGerakName = typeof suggestGerakName === "function" ? suggestGerakName : null;',
+  'this.deshadowGerakPresets = typeof deshadowGerakPresets === "function" ? deshadowGerakPresets : null;',
 ].join('\n'), sandbox);
 const migrateSheet = sandbox.migrateSheet;
 const normalizeModelConfig = sandbox.normalizeModelConfig;
@@ -573,6 +597,155 @@ ok('the .ai branch is reset per classify run',
   /sheet\.paramGroups\.ai = \{\};/.test(appSrc));
 ok('classify still refuses to touch numeric ranges',
   /never touched here/.test(appSrc));
+
+// ── Gesture-namespace collisions prevented at creation ─────────────
+section('15. gerak name collisions: prevented at the source, not by precedence');
+
+const reservedGestureNames = sandbox.reservedGestureNames;
+const checkGerakName = sandbox.checkGerakName;
+const suggestGerakName = sandbox.suggestGerakName;
+const deshadowGerakPresets = sandbox.deshadowGerakPresets;
+const LIB = sandbox.GESTURE_LIBRARY;
+
+ok('reservedGestureNames() was extractable', typeof reservedGestureNames === 'function');
+ok('checkGerakName() was extractable', typeof checkGerakName === 'function');
+ok('suggestGerakName() was extractable', typeof suggestGerakName === 'function');
+ok('deshadowGerakPresets() was extractable', typeof deshadowGerakPresets === 'function');
+ok('the real GESTURE_LIBRARY was extracted (not an empty stub)',
+  !!LIB && Object.keys(LIB).length >= 8, LIB ? Object.keys(LIB).length + ' builtins' : 'null');
+
+if (typeof checkGerakName === 'function' && typeof deshadowGerakPresets === 'function') {
+  const modelSheet = { motionGroups: ['Idle', 'TapBody'], presets: { user: [], ai: [] } };
+
+  // The lookup order in playGesture() is native → preset → builtin, so BOTH
+  // native motion and builtin verbs shadow a preset. Both must be reserved.
+  const reserved = reservedGestureNames(modelSheet);
+  ok('native motion group names are reserved', reserved.has('idle'));
+  ok('the motion_ prefixed spelling is reserved too', reserved.has('motion_idle'),
+    'playGesture strips the prefix, so both spellings resolve to the group');
+  ok('builtin GESTURE_LIBRARY verbs are reserved', reserved.has('nod'));
+  ok('reserved lookup is case-insensitive',
+    !!reservedGestureNames(modelSheet).get('IDLE'.toLowerCase()));
+
+  // Rejection, not override: the native motion keeps its name.
+  const vsMotion = checkGerakName('Idle', modelSheet);
+  ok('a preset named after a native motion group is REJECTED', vsMotion.ok === false);
+  ok('the rejection is classified as a motion-group clash', vsMotion.code === 'motion-group');
+  ok('the rejection names the conflicting motion group', vsMotion.conflictWith === 'Idle');
+  ok('the rejection message is user-facing Indonesian',
+    /sudah dipakai motion bawaan model/.test(vsMotion.message || ''), vsMotion.message);
+  ok('the rejection offers a non-colliding alternative',
+    !!vsMotion.suggestion && !reserved.has(String(vsMotion.suggestion).toLowerCase()),
+    vsMotion.suggestion);
+
+  const vsPrefixed = checkGerakName('motion_TapBody', modelSheet);
+  ok('the prefixed spelling is rejected as well', vsPrefixed.ok === false,
+    'otherwise "motion_TapBody" would be swallowed by the group TapBody');
+
+  const vsBuiltin = checkGerakName('nod', modelSheet);
+  ok('a preset named after a builtin gesture is REJECTED', vsBuiltin.ok === false);
+  ok('the builtin clash is classified separately', vsBuiltin.code === 'builtin-gesture',
+    'different remedy text: the clash is with the app, not the model');
+
+  ok('an empty name is rejected before any collision check',
+    checkGerakName('   ', modelSheet).code === 'empty');
+
+  const fine = checkGerakName('  Nari Pelan  ', modelSheet);
+  ok('a free name is accepted', fine.ok === true);
+  ok('the accepted name is trimmed', fine.name === 'Nari Pelan');
+
+  // A model with no motions at all must still block builtin clashes, and must
+  // not invent collisions that don't exist.
+  const bare = { motionGroups: [], presets: { user: [], ai: [] } };
+  ok('with no native motions, a model-name clash cannot happen',
+    checkGerakName('Idle', bare).ok === true);
+  ok('with no native motions, builtin clashes are still caught',
+    checkGerakName('shake', bare).ok === false);
+
+  // suggestGerakName must dodge the user's OWN presets too: a suggestion that
+  // landed on an existing preset name would be silently overwritten as an edit.
+  const withMine = {
+    motionGroups: ['Idle'],
+    presets: { user: [{ name: 'Idle 2', category: 'gerak' }], ai: [] },
+  };
+  const sug = suggestGerakName('Idle', withMine);
+  ok('a suggestion skips an existing user preset of the same name',
+    sug !== 'Idle 2' && sug.toLowerCase() !== 'idle', sug);
+
+  // ── already-on-disk collisions ──
+  // saveUserPreset() blocks new ones, but a hand-edited file or a model that
+  // GAINED a motion group after the fact can still produce a stored collision.
+  const dirty = {
+    schemaVersion: 4,
+    modelName: 'x',
+    params: [],
+    motionGroups: ['Idle'],
+    presets: {
+      user: [
+        { name: 'Idle', category: 'gerak', steps: [{ d: { ay: -5 }, ms: 120 }], source: 'user' },
+        { name: 'Melirik', category: 'gerak', steps: [{ d: { ax: 5 }, ms: 120 }], source: 'user' },
+      ],
+      ai: [],
+    },
+  };
+  const cleaned = migrateSheet(dirty);
+  const names = cleaned.presets.user.map(p => p.name);
+  ok('migrateSheet() de-shadows a stored gerak collision',
+    !names.some(n => n.toLowerCase() === 'idle'), JSON.stringify(names));
+  ok('the de-shadowed preset keeps its keyframes (renamed, not dropped)',
+    cleaned.presets.user.length === 2 &&
+    cleaned.presets.user.every(p => Array.isArray(p.steps) && p.steps.length === 1));
+  const renamed = cleaned.presets.user.find(p => p.renamedFrom);
+  ok('the rename records its original name for the UI',
+    !!renamed && renamed.renamedFrom === 'Idle',
+    renamed ? renamed.renamedFrom + ' -> ' + renamed.name : 'no renamedFrom');
+  ok('a non-colliding preset is left completely alone',
+    cleaned.presets.user.some(p => p.name === 'Melirik' && !p.renamedFrom));
+  ok('renamedFrom survives a normalize round-trip',
+    !!(sandbox.normalizePresets({ user: [renamed], ai: [] }).user[0] || {}).renamedFrom);
+
+  // Idempotency: a second load must not keep appending suffixes.
+  const twice = migrateSheet(JSON.parse(JSON.stringify(cleaned)));
+  ok('de-shadowing is idempotent across reloads',
+    JSON.stringify(twice.presets.user.map(p => p.name)) === JSON.stringify(names),
+    JSON.stringify(twice.presets.user.map(p => p.name)));
+
+  // The native motion must remain reachable — that is the whole point of
+  // rejecting instead of letting the preset win.
+  ok('the native motion group is untouched by de-shadowing',
+    Array.isArray(cleaned.motionGroups) && cleaned.motionGroups.includes('Idle'));
+}
+
+// The rejected alternative, asserted so nobody "fixes" the order later: user
+// presets must NOT be looked up before native motion in playGesture().
+//
+// Scoped to playGesture's own body on purpose. A whole-file indexOf finds the
+// `function findGerakPreset(name)` DEFINITION, which sits above playGesture, and
+// would report the order backwards no matter what the real lookup does.
+const playGestureSrc = extractFn(appSrc, 'playGesture');
+ok('playGesture() was extractable', !!playGestureSrc);
+if (playGestureSrc) {
+  ok('playGesture still resolves native motion BEFORE user presets',
+    playGestureSrc.indexOf('motionGroups.includes(g)') !== -1 &&
+    playGestureSrc.indexOf('motionGroups.includes(g)') < playGestureSrc.indexOf('findGerakPreset(name)'),
+    'native .motion3.json data is intrinsic, not an overridable suggestion');
+  ok('playGesture returns early on a native motion hit',
+    /includes\(g\)\)\s*\{[\s\S]{0,300}return;/.test(playGestureSrc),
+    'without the early return the preset branch would run too');
+  ok('user presets are still resolved before the builtin table',
+    playGestureSrc.indexOf('findGerakPreset(name)') < playGestureSrc.indexOf('GESTURE_LIBRARY[name]'));
+}
+ok('the reason the lookup order is not flipped is documented',
+  /INTRINSIC data, the same class as \.exp3/.test(appSrc));
+ok('saveUserPreset() rejects a colliding gerak name instead of writing it',
+  /const verdict = checkGerakName\(p\.name, sheet\);/.test(appSrc) &&
+  /if \(!verdict\.ok\) \{[\s\S]{0,200}throw err;/.test(appSrc));
+ok('saveUserPreset() writes only to the user branch',
+  /const list = sheet\.presets\.user;/.test(appSrc) &&
+  !/sheet\.presets\.ai\.push/.test(appSrc));
+ok('saving a preset invalidates the cached capability profile',
+  (appSrc.match(/invalidateCapabilityProfile/g) || []).length >= 2,
+  'otherwise a just-saved preset is uncallable until the next reload');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

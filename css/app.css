@@ -667,6 +667,68 @@ input[type="range"] {
 .cfg-check-inline .cfg-check { margin: 0; }
 #use-camera:focus-visible { outline: 2px solid var(--accent-glow); outline-offset: 2px; }
 
+/* ===== SHEET / PRESET (tab 📋 Sheet) ===== */
+.sheet-summary { font-size: 11px; color: var(--text-dim); }
+/* Grid dua kolom: label kiri, nilai kanan. Sengaja bukan tabel karena isinya
+   pasangan key/value, bukan data tabular yang bisa disortir. */
+.sheet-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; }
+.sheet-facts dt { color: var(--text-dim); }
+.sheet-facts dd { color: var(--text); font-variant-numeric: tabular-nums; }
+/* Peringatan range hasil taksiran (bukan hasil ukur dari Cubism). Warna sama
+   dengan .note-status.busy supaya tidak menambah token warna baru. */
+.sheet-warn { color: #ffd479; margin-top: 6px; }
+
+.sheet-cats { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.sheet-cat {
+  background: rgba(124,111,255,0.12); border: 1px solid rgba(124,111,255,0.3);
+  color: var(--text-dim); font-size: 10px; padding: 4px 8px;
+  border-radius: 999px; cursor: pointer;
+}
+.sheet-cat.active { background: rgba(124,111,255,0.35); color: var(--text); border-color: var(--accent); }
+
+.preset-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.preset-item {
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 8px; background: rgba(255,255,255,0.03);
+  font-size: 11px;
+}
+/* Saran AI dibedakan lewat garis kiri, bukan lewat warna latar penuh: entri ini
+   belum aktif, jadi tidak boleh tampak sekuat preset milik user. */
+.preset-item.is-ai { border-left: 3px solid #ffd479; }
+.preset-item .p-name { flex: 1 1 auto; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-item .p-badge { flex: 0 0 auto; font-size: 10px; color: var(--text-dim); }
+.preset-item .p-act {
+  flex: 0 0 auto; background: transparent; border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: 6px; padding: 3px 7px;
+  font-size: 10px; cursor: pointer; font-family: inherit;
+}
+.preset-item .p-act:hover { border-color: var(--accent); color: var(--text); }
+.preset-item .p-act.danger:hover { border-color: var(--pink); color: var(--pink); }
+.preset-empty { font-size: 10px; color: var(--text-dim); padding: 4px 0; }
+
+/* Ringkasan nilai yang tertangkap. max-height + scroll karena satu pose bisa
+   memuat puluhan parameter dan panel ini sudah dibatasi 46vh. */
+.preset-values {
+  font-size: 10px; color: var(--text-dim);
+  max-height: 96px; overflow-y: auto;
+  font-variant-numeric: tabular-nums;
+}
+.preset-values .pv-row { display: flex; justify-content: space-between; gap: 8px; }
+.preset-values .pv-row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-row input[type="text"] {
+  flex: 1 1 auto; min-width: 0; padding: 6px 8px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: rgba(10,8,24,0.6); color: var(--text);
+  font-size: 12px; font-family: inherit;
+}
+.cfg-row input[type="text"]:focus { border-color: var(--accent); outline: none; }
+.sheet-cat:focus-visible,
+.preset-item .p-act:focus-visible,
+.cfg-row input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent-glow); outline-offset: 2px;
+}
+
 /* ===== FOCUS / SELECTION ===== */
 ::selection { background: rgba(124,111,255,0.35); color: #fff; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

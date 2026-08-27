@@ -145,6 +145,10 @@
   // loadModel() must re-sync the panel on every model swap, and it runs outside
   // wireUI()'s scope. No-op until wired, so an early model load can't throw.
   let refreshConfigForm = () => {};
+  // Same contract for the Sheet pane: preset lists belong to ONE model, so a
+  // model swap must repaint them or the user would be editing model A's presets
+  // while looking at model B.
+  let refreshSheetUI = () => {};
 
   // ─── Parameter helpers (CORRECT API for pixi-live2d-display@0.4.0) ──
   // The public Live2DModel has NO setParameter* method; the real setter lives
@@ -262,15 +266,39 @@
     }
   });
 
+  // Ask the server which models exist and return a loadable path for the first
+  // one. Extracted from the boot block so loadModel() with no argument and boot
+  // share ONE fallback policy — previously boot auto-detected but loadModel()
+  // fell back to a hardcoded path, so the two disagreed about what "default"
+  // means. Returns null when the server has no models at all.
+  async function resolveAnyModelPath() {
+    try {
+      const r = await fetch(API + '/api/models');
+      if (!r.ok) return null;
+      const d = await r.json();
+      const first = (d.models && d.models[0]) || null;
+      if (!first) return null;
+      const rp = await fetch(API + '/api/model/path?name=' + encodeURIComponent(first));
+      if (!rp.ok) return null;
+      const dp = await rp.json();
+      return dp.path || null;
+    } catch (e) {
+      console.warn('[model] auto-detect failed:', e.message);
+      return null;
+    }
+  }
+
   // ─── Load Model ───────────────────────────────────────────────
-  // modelPath is OPTIONAL. When omitted we load the bundled default
-  // (神宫白子). When a user imports their own model we pass the path
-  // under model/<name>/<file>.model3.json. autoInteract is OFF so the
-  // library's built-in pointer-follow does NOT fight our own mouse handler.
+  // modelPath is OPTIONAL. When omitted we ask the server for whatever model it
+  // actually has (there is no bundled default any more — a hardcoded path is a
+  // guaranteed 404 on a machine with a different model installed).
+  // autoInteract is OFF so the library's built-in pointer-follow does NOT fight
+  // our own mouse handler.
   async function loadModel(modelPath) {
     try {
       if (typeof modelPath !== 'string' || !modelPath) {
-        modelPath = 'model/神宫白子/面饼0.model3.json';
+        modelPath = await resolveAnyModelPath();
+        if (!modelPath) throw new Error('Belum ada model terpasang. Upload model lewat tab 📁 Model.');
       }
       state.modelPath = modelPath;
       // Reset per-model derived state so a previous model's clips can't leak.
@@ -340,6 +368,10 @@
       // Same for the config panel: it shows the PREVIOUS model's values until
       // repainted, which would let a Save write them onto the new model.
       try { refreshConfigForm(); } catch (e) { console.warn('[config] UI refresh failed:', e.message); }
+
+      // Sheet pane too: preset lists belong to one model, so leaving the old
+      // model's presets on screen would let a Terap/Hapus hit the wrong sheet.
+      try { refreshSheetUI(); } catch (e) { console.warn('[sheet] UI refresh failed:', e.message); }
 
     } catch (err) {
       console.error('[Live2D] Failed to load model:', err);
@@ -1201,6 +1233,43 @@
       return;
     }
 
+    // ── Preset 'properti' / 'aksesoris' ──
+    // Checked BEFORE the native .exp3 lookup so a user preset wins over a
+    // built-in expression name (the documented user > ai > builtin precedence),
+    // but AFTER supportedEmotions so a 'properti' preset that happens to share a
+    // name with an emotion cannot silently disable the emotion engine — that
+    // has a far bigger blast radius than losing one name to the other side.
+    //
+    // This is what gives the 'properti' category an execution path at all;
+    // before this, a saved 'properti' preset was inert.
+    if (!state.supportedEmotions.hasOwnProperty(name)) {
+      const propPreset = findPreset(name, 'properti') || findPreset(name, 'aksesoris');
+      if (propPreset) {
+        // Toggle semantics match the rest of this function: pressing the active
+        // property again returns to default instead of re-applying it.
+        if (state.activeProperty === name && intensity === undefined) {
+          state.activeProperty = 'default';
+          resetEmotion();
+          $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === 'normal'));
+          console.log('[Live2D] Property preset toggled off ->', name);
+          return;
+        }
+        const ok = applyPreset(propPreset, propPreset.category);
+        if (ok) {
+          // activeEmotion is deliberately left alone: a property (glasses on,
+          // collar changed) is orthogonal to the face, so applying one must not
+          // clear the emotion the character is currently wearing.
+          state.activeProperty = name;
+          $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
+          console.log('[Live2D] Property preset ->', name, '(' + propPreset.source + ')');
+          return;
+        }
+        // applyPreset() returning false means every id in the preset was stale
+        // for THIS model. Fall through rather than reporting success.
+        console.warn('[Live2D] Property preset had no valid target for this model:', name);
+      }
+    }
+
     // NATIVE mode: the model has its own .exp3 expressions.
     //   • Universal emotions are driven via params (supportedEmotions)
     //   • Model's own .exp3 names are played directly via model.expression().
@@ -1561,7 +1630,7 @@
       msg.className = 'msg ' + role;
       const av = document.createElement('div');
       av.className = 'msg-avatar';
-      av.textContent = role === 'user' ? '🙂' : '白';
+      av.textContent = role === 'user' ? '🙂' : characterInitial();
       const bb = document.createElement('div');
       bb.className = 'msg-bubble';
       bb.textContent = text;
@@ -1983,6 +2052,7 @@
           // the textarea can't drift from what was actually persisted.
           refreshUserNoteUI();
           try { refreshConfigForm(); } catch (e) {}
+          try { refreshSheetUI(); } catch (e) {}
           alert(`✅ Character Sheet generated!\n\n` +
             `📋 ${sheet.paramCount} parameter ditemukan\n` +
             `😊 ${Object.keys(sheet.supportedEmotions).length} emosi didukung\n` +
@@ -2037,6 +2107,7 @@
 
     // ── Pengaturan per-model (config) ──
     const cfgEls = {
+      displayName: $('#cfg-display-name'),
       blink: $('#cfg-blink'),
       idle: $('#cfg-idle'),
       framing: $('#cfg-framing'),
@@ -2058,6 +2129,12 @@
     // a model swap can re-sync the panel.
     function paintConfigForm(cfg) {
       const c = normalizeModelConfig(cfg);
+      if (cfgEls.displayName) {
+        cfgEls.displayName.value = c.displayName;
+        // Placeholder shows what the empty field will actually resolve to, so
+        // "blank" does not read as "no name".
+        try { cfgEls.displayName.placeholder = '(otomatis: ' + characterName() + ')'; } catch (e) {}
+      }
       if (cfgEls.blink) cfgEls.blink.checked = c.blink;
       if (cfgEls.idle) cfgEls.idle.checked = c.idle;
       if (cfgEls.framing) cfgEls.framing.value = c.framing;
@@ -2083,6 +2160,7 @@
 
     function readConfigForm() {
       return {
+        displayName: cfgEls.displayName ? cfgEls.displayName.value : undefined,
         blink: cfgEls.blink ? !!cfgEls.blink.checked : undefined,
         idle: cfgEls.idle ? !!cfgEls.idle.checked : undefined,
         framing: cfgEls.framing ? cfgEls.framing.value : undefined,
@@ -2156,6 +2234,405 @@
     }
 
     refreshConfigForm();
+
+    // ── Tab 📋 Sheet: baca sheet + kelola preset ──
+    const shEls = {
+      summary: $('#sheet-summary'),
+      cats: $('#sheet-cats'),
+      list: $('#sheet-preset-list'),
+      status: $('#sheet-status'),
+      analyze: $('#btn-sheet-analyze'),
+      name: $('#preset-name'),
+      cat: $('#preset-cat'),
+      capture: $('#btn-preset-capture'),
+      captureInfo: $('#preset-capture-info'),
+      values: $('#preset-values'),
+      save: $('#btn-preset-save'),
+      clear: $('#btn-preset-clear'),
+      pStatus: $('#preset-status'),
+    };
+    // Which category the preset LIST is filtered to. Independent of the editor's
+    // category dropdown: the user may be browsing 'gerak' while authoring an
+    // 'emosi', and forcing those to move together would fight the user.
+    let sheetCatFilter = 'emosi';
+    // Values captured from the live model, held here until Save. Kept out of the
+    // DOM because a Part opacity and a Parameter value are different engine
+    // calls (setPartOpacityById vs setParameterValueById) and must not be merged
+    // into one bag of numbers — same split as normalizePreset().
+    let draft = { values: {}, parts: {} };
+
+    function setSheetStatus(msg, kind) {
+      if (!shEls.status) return;
+      shEls.status.textContent = msg;
+      shEls.status.className = 'note-status' + (kind ? ' ' + kind : '');
+    }
+    function setPresetStatus(msg, kind) {
+      if (!shEls.pStatus) return;
+      shEls.pStatus.textContent = msg;
+      shEls.pStatus.className = 'note-status' + (kind ? ' ' + kind : '');
+    }
+
+    // textContent everywhere below, never innerHTML: preset names come from a
+    // hand-editable sheets/*.json and from LLM output, so treating them as
+    // markup would be an injection sink in the user's own panel.
+    function paintSheetSummary(sheet) {
+      const box = shEls.summary;
+      if (!box) return;
+      box.textContent = '';
+      if (!sheet) {
+        const p = document.createElement('p');
+        p.className = 'hint';
+        p.textContent = 'Belum ada sheet untuk model ini. Buka tab 📁 Model → Inspeksi Model.';
+        box.appendChild(p);
+        return;
+      }
+      const dl = document.createElement('dl');
+      dl.className = 'sheet-facts';
+      const facts = [
+        ['Model', sheet.modelName || '(tanpa nama)'],
+        ['Parameter', String(sheet.paramCount || (sheet.params || []).length)],
+        ['Parts', String((sheet.parts || []).length)],
+        ['Emosi', String(Object.keys(sheet.supportedEmotions || {}).length)],
+        ['Expression', String((sheet.nativeExpressions || []).length)],
+        ['Motion group', String((sheet.motionGroups || []).length)],
+        ['Skema', 'v' + (sheet.schemaVersion || 0)],
+      ];
+      for (const [k, v] of facts) {
+        const dt = document.createElement('dt'); dt.textContent = k;
+        const dd = document.createElement('dd'); dd.textContent = v;
+        dl.appendChild(dt); dl.appendChild(dd);
+      }
+      box.appendChild(dl);
+      // rangesEstimated means the numbers are guesses, not measurements from
+      // Cubism. Saving a preset against guessed ranges clamps to the wrong
+      // bounds, so this warning is not cosmetic.
+      if (sheet.rangesEstimated) {
+        const w = document.createElement('p');
+        w.className = 'hint sheet-warn';
+        w.textContent = '⚠ Rentang parameter masih taksiran (' +
+          (sheet.rangeSource || 'estimated') + '). Inspeksi ulang model agar nilai preset akurat.';
+        box.appendChild(w);
+      }
+    }
+
+    function paintSheetCats(sheet) {
+      const box = shEls.cats;
+      if (!box) return;
+      box.textContent = '';
+      for (const cat of PRESET_CATEGORIES) {
+        const n = resolvePresets(sheet, cat).length;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sheet-cat' + (cat === sheetCatFilter ? ' active' : '');
+        b.textContent = cat + ' (' + n + ')';
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-selected', cat === sheetCatFilter ? 'true' : 'false');
+        b.addEventListener('click', () => {
+          sheetCatFilter = cat;
+          const s = state.lastSheet || loadCharacterSheet();
+          paintSheetCats(s); paintPresetList(s);
+        });
+        box.appendChild(b);
+      }
+    }
+
+    function paintPresetList(sheet) {
+      const box = shEls.list;
+      if (!box) return;
+      box.textContent = '';
+      const items = resolvePresets(sheet, sheetCatFilter);
+      if (!items.length) {
+        const p = document.createElement('div');
+        p.className = 'preset-empty';
+        p.textContent = 'Belum ada preset kategori "' + sheetCatFilter + '".';
+        box.appendChild(p);
+        return;
+      }
+      for (const p of items) {
+        const row = document.createElement('div');
+        // resolvePresets() marks an AI entry shadowed by a same-named user preset
+        // with suggestion:true. Both are listed so the user can see what the AI
+        // proposed, but only the user's is live.
+        const isAI = p.source === 'ai';
+        row.className = 'preset-item' + (isAI ? ' is-ai' : '');
+
+        const nm = document.createElement('span');
+        nm.className = 'p-name';
+        nm.textContent = p.name;
+        if (p.renamedFrom) nm.title = 'Otomatis diganti nama dari "' + p.renamedFrom + '" karena bentrok dengan motion bawaan.';
+        row.appendChild(nm);
+
+        const badge = document.createElement('span');
+        badge.className = 'p-badge';
+        badge.textContent = isAI ? (p.suggestion ? '🤖 tertutup' : '🤖 saran') : '👤';
+        badge.title = isAI
+          ? (p.suggestion
+              ? 'Saran AI, tapi kamu sudah punya preset dengan nama sama — punyamu yang dipakai.'
+              : 'Saran AI. Belum aktif sampai kamu tekan Pakai.')
+          : 'Preset milikmu (aktif).';
+        row.appendChild(badge);
+
+        // Only a user preset is callable. Applying an AI entry directly would
+        // make an unapproved suggestion behave exactly like an approved one, so
+        // the AI row offers Pakai (promote to .user) instead of Terap.
+        if (!isAI) {
+          const applyBtn = document.createElement('button');
+          applyBtn.type = 'button'; applyBtn.className = 'p-act';
+          applyBtn.textContent = 'Terap';
+          applyBtn.addEventListener('click', () => {
+            if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
+            const ok = applyPreset(p, p.category);
+            setSheetStatus(ok ? 'diterapkan: ' + p.name : 'tidak ada target valid di preset ini',
+              ok ? 'ok' : 'err');
+          });
+          row.appendChild(applyBtn);
+
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button'; editBtn.className = 'p-act';
+          editBtn.textContent = 'Edit';
+          editBtn.addEventListener('click', () => {
+            if (shEls.name) shEls.name.value = p.name;
+            if (shEls.cat) shEls.cat.value = p.category;
+            // Copy, not reference: editing the draft must not mutate the stored
+            // preset before the user presses Save.
+            draft = {
+              values: Object.assign({}, p.values || {}),
+              parts: Object.assign({}, p.parts || {}),
+            };
+            paintDraft();
+            setPresetStatus('dimuat untuk diedit', '');
+          });
+          row.appendChild(editBtn);
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button'; delBtn.className = 'p-act danger';
+          delBtn.textContent = 'Hapus';
+          delBtn.addEventListener('click', async () => {
+            if (!confirm('Hapus preset "' + p.name + '" (' + p.category + ')?')) return;
+            delBtn.disabled = true;
+            setSheetStatus('menghapus…');
+            try {
+              await deleteUserPreset(p.category, p.name);
+              setSheetStatus('dihapus: ' + p.name, 'ok');
+              refreshSheetUI();
+            } catch (e) {
+              setSheetStatus('gagal: ' + e.message, 'err');
+              delBtn.disabled = false;
+            }
+          });
+          row.appendChild(delBtn);
+        } else {
+          const useBtn = document.createElement('button');
+          useBtn.type = 'button'; useBtn.className = 'p-act';
+          useBtn.textContent = 'Pakai';
+          useBtn.addEventListener('click', async () => {
+            useBtn.disabled = true;
+            setSheetStatus('menyetujui saran…');
+            try {
+              await applyAISuggestion(p.category, p.name);
+              setSheetStatus('saran dipakai: ' + p.name, 'ok');
+              refreshSheetUI();
+            } catch (e) {
+              // A 'gerak' suggestion can collide with a native motion name —
+              // applyAISuggestion() routes through saveUserPreset(), so the
+              // rejection surfaces here rather than silently writing.
+              setSheetStatus('gagal: ' + e.message, 'err');
+              useBtn.disabled = false;
+            }
+          });
+          row.appendChild(useBtn);
+        }
+        box.appendChild(row);
+      }
+    }
+
+    function paintDraft() {
+      const box = shEls.values;
+      if (!box) return;
+      box.textContent = '';
+      const rows = Object.entries(draft.values).map(([k, v]) => [k, v, 'param'])
+        .concat(Object.entries(draft.parts).map(([k, v]) => [k, v, 'part']));
+      if (!rows.length) {
+        const p = document.createElement('div');
+        p.className = 'preset-empty';
+        p.textContent = 'Belum ada nilai. Atur pose model lalu tekan 📸 Ambil Pose Sekarang.';
+        box.appendChild(p);
+        return;
+      }
+      for (const [id, v, kind] of rows) {
+        const r = document.createElement('div');
+        r.className = 'pv-row';
+        const a = document.createElement('span');
+        a.textContent = (kind === 'part' ? '◧ ' : '') + id;
+        a.title = kind === 'part' ? 'Part (opacity)' : 'Parameter';
+        const b = document.createElement('span');
+        b.textContent = Number(v).toFixed(2);
+        r.appendChild(a); r.appendChild(b);
+        box.appendChild(r);
+      }
+    }
+
+    // Capture the pose the user has actually arranged on screen. Only params
+    // that DIFFER from their sheet default are stored: snapshotting all ~90
+    // parameters would freeze the whole model, killing blink and idle motion the
+    // moment the preset is applied.
+    function captureCurrentPose() {
+      const sheet = state.lastSheet || loadCharacterSheet();
+      if (!sheet) return { ok: false, message: 'Belum ada sheet. Inspeksi model dulu.' };
+      if (!state.model) return { ok: false, message: 'Load model dulu.' };
+      const values = {};
+      let skipped = 0;
+      for (const p of (sheet.params || [])) {
+        if (!p || !p.id) continue;
+        const cur = readParam(p.id);
+        const def = Number.isFinite(p.def) ? p.def : 0;
+        // 1e-3: Cubism values are floats and idle/physics jitter constantly, so
+        // an exact !== comparison would capture dozens of meaningless deltas.
+        if (Math.abs(cur - def) > 1e-3) values[p.id] = Number(cur.toFixed(3));
+        else skipped++;
+      }
+      const parts = {};
+      const cm = coreModel();
+      const gm = (cm && cm.getModel) ? cm.getModel() : cm;
+      for (const pt of (sheet.parts || [])) {
+        const id = pt && pt.id ? pt.id : pt;
+        if (!id) continue;
+        let cur = null;
+        try {
+          if (gm && typeof gm.getPartOpacityById === 'function') cur = gm.getPartOpacityById(id);
+        } catch (e) { cur = null; }
+        if (cur === null || !Number.isFinite(cur)) continue;
+        const def = (pt && Number.isFinite(pt.def)) ? pt.def : 1;
+        if (Math.abs(cur - def) > 1e-3) parts[id] = Number(cur.toFixed(3));
+      }
+      return { ok: true, values, parts, skipped };
+    }
+
+    if (shEls.capture) {
+      shEls.capture.addEventListener('click', () => {
+        const res = captureCurrentPose();
+        if (!res.ok) {
+          if (shEls.captureInfo) {
+            shEls.captureInfo.textContent = res.message;
+            shEls.captureInfo.className = 'note-status err';
+          }
+          return;
+        }
+        draft = { values: res.values, parts: res.parts };
+        paintDraft();
+        const n = Object.keys(res.values).length + Object.keys(res.parts).length;
+        if (shEls.captureInfo) {
+          shEls.captureInfo.textContent = n
+            ? n + ' nilai diambil (' + res.skipped + ' param default dilewati)'
+            : 'model masih di pose default — tidak ada yang diambil';
+          shEls.captureInfo.className = 'note-status' + (n ? ' ok' : '');
+        }
+      });
+    }
+
+    if (shEls.clear) {
+      shEls.clear.addEventListener('click', () => {
+        draft = { values: {}, parts: {} };
+        if (shEls.name) shEls.name.value = '';
+        paintDraft();
+        setPresetStatus('editor dikosongkan', '');
+        if (shEls.captureInfo) { shEls.captureInfo.textContent = ''; shEls.captureInfo.className = 'note-status'; }
+      });
+    }
+
+    // Pre-flight the gerak name check so the user learns about a collision
+    // BEFORE filling in a pose, not after pressing Save.
+    if (shEls.name && shEls.cat) {
+      const preflight = () => {
+        if (shEls.cat.value !== 'gerak') { setPresetStatus(''); return; }
+        const nm = shEls.name.value.trim();
+        if (!nm) { setPresetStatus(''); return; }
+        const chk = checkGerakName(nm, state.lastSheet);
+        if (!chk.ok) setPresetStatus(chk.message + ' Usul: "' + chk.suggestion + '"', 'err');
+        else setPresetStatus('nama boleh dipakai', 'ok');
+      };
+      shEls.name.addEventListener('input', preflight);
+      shEls.cat.addEventListener('change', preflight);
+    }
+
+    if (shEls.save) {
+      shEls.save.addEventListener('click', async () => {
+        const name = shEls.name ? shEls.name.value.trim() : '';
+        const category = shEls.cat ? shEls.cat.value : 'properti';
+        if (!name) { setPresetStatus('nama preset wajib diisi', 'err'); return; }
+        // A 'gerak' preset is driven by timed keyframes (steps), which this
+        // editor does not author — capturing a frozen pose and calling it a
+        // motion would save something that plays as a single static frame.
+        if (category === 'gerak') {
+          setPresetStatus('kategori gerak butuh keyframe (steps) — belum didukung editor ini', 'err');
+          return;
+        }
+        if (!Object.keys(draft.values).length && !Object.keys(draft.parts).length) {
+          setPresetStatus('belum ada nilai — tekan 📸 Ambil Pose Sekarang', 'err');
+          return;
+        }
+        shEls.save.disabled = true;
+        setPresetStatus('menyimpan…');
+        try {
+          const saved = await saveUserPreset({
+            name, category,
+            values: draft.values,
+            parts: draft.parts,
+          });
+          setPresetStatus('tersimpan: ' + saved.name, 'ok');
+          sheetCatFilter = saved.category;
+          refreshSheetUI();
+        } catch (e) {
+          setPresetStatus('gagal: ' + e.message, 'err');
+        } finally {
+          shEls.save.disabled = false;
+        }
+      });
+    }
+
+    if (shEls.analyze) {
+      shEls.analyze.addEventListener('click', async () => {
+        shEls.analyze.disabled = true;
+        setSheetStatus('menganalisa… (bisa belasan detik)', 'busy');
+        // Two independent analyses. Run with allSettled, not sequential awaits:
+        // parameter labelling failing must not deny the user preset suggestions,
+        // and vice versa. Each outcome is reported separately below.
+        const [labels, presets] = await Promise.allSettled([
+          triggerAIParamClassification(),
+          analyzeSheetPresets(),
+        ]);
+        try {
+          const parts = [];
+          if (presets.status === 'fulfilled') {
+            const n = presets.value && presets.value.count ? presets.value.count : 0;
+            parts.push(n ? n + ' saran preset (🤖)' : 'tidak ada saran preset baru');
+          } else {
+            parts.push('preset gagal: ' + presets.reason.message);
+          }
+          if (labels.status === 'fulfilled') {
+            const n = labels.value && labels.value.count ? labels.value.count : 0;
+            if (n) parts.push(n + ' parameter dilabeli');
+          } else {
+            parts.push('label gagal: ' + labels.reason.message);
+          }
+          const bad = presets.status === 'rejected' || labels.status === 'rejected';
+          setSheetStatus(parts.join(' · '), bad ? 'err' : 'ok');
+          refreshSheetUI();
+        } finally {
+          shEls.analyze.disabled = false;
+        }
+      });
+    }
+
+    // Assigned to the module-scope hook so loadModel() can repaint on swap.
+    refreshSheetUI = () => {
+      const sheet = state.lastSheet || loadCharacterSheet();
+      paintSheetSummary(sheet);
+      paintSheetCats(sheet);
+      paintPresetList(sheet);
+      paintDraft();
+    };
+    refreshSheetUI();
 
     loadConns();
   }
@@ -2256,6 +2733,10 @@
     ttsRate: 1,
     ttsPitch: 1.15,       // the old hardcoded value, now just the default
     ttsLang: 'id-ID',
+    // Empty means "derive from the model folder name". Storing '' rather than a
+    // baked-in character name is what makes the app model-agnostic: importing
+    // someone else's model must not leave another character's name in the UI.
+    displayName: '',
   };
 
   const FRAMING_MODES = ['upper', 'full'];
@@ -2283,19 +2764,13 @@
         if (r.ok) { const d = await r.json(); if (d.path) { await loadModel(d.path); return; } }
       } catch (e) { console.warn('[boot] ?model load failed, using default', e); }
     }
-    // Auto-detect: load the first model the server actually has, so we never
-    // fail on a hard-coded default path that doesn't exist on this machine.
-    try {
-      const r = await fetch(API + '/api/models');
-      if (r.ok) {
-        const d = await r.json();
-        const first = (d.models && d.models[0]) || null;
-        if (first) {
-          const rp = await fetch(API + '/api/model/path?name=' + encodeURIComponent(first));
-          if (rp.ok) { const dp = await rp.json(); if (dp.path) { await loadModel(dp.path); return; } }
-        }
-      }
-    } catch (e) { console.warn('[boot] model auto-detect failed', e); }
+    // Auto-detect: load the first model the server actually has. Delegated to
+    // resolveAnyModelPath() so this path and loadModel()'s own no-arg fallback
+    // cannot drift apart.
+    const auto = await resolveAnyModelPath();
+    if (auto) { await loadModel(auto); return; }
+    // Nothing installed: loadModel() surfaces a proper "upload a model" error
+    // instead of failing on a path that was never going to exist.
     loadModel();
   })();
 
@@ -2362,6 +2837,237 @@
   }
 
   function findGerakPreset(name) { return findPreset(name, 'gerak'); }
+
+  // ── Gesture namespace: collision prevention at the point of CREATION ────
+  //
+  // playGesture() resolves in the order: native motion group → user 'gerak'
+  // preset → GESTURE_LIBRARY. That order is deliberate and stays: a model's own
+  // .motion3.json groups are INTRINSIC data, the same class as .exp3 native
+  // expressions — not an "AI suggestion" that a user preset is allowed to beat.
+  // The user must never lose access to the model's real motions.
+  //
+  // The user > ai precedence rule does NOT apply here: that rule is for two
+  // sources competing for the SAME slot (presets.user vs presets.ai). Native
+  // motion is a different namespace entirely.
+  //
+  // So instead of letting either side win a name fight, we make the fight
+  // impossible: a 'gerak' preset may not be SAVED under a name that already
+  // resolves to something else. Then both remain callable, under distinct names,
+  // and no lookup is ever silently shadowed.
+  //
+  // Both spellings of a motion group are reserved because playGesture() strips
+  // the prefix — a preset called "motion_Idle" would be swallowed by the group
+  // "Idle" just as surely as one called "Idle".
+  //
+  // GESTURE_LIBRARY names are reserved for the same reason in the opposite
+  // direction: a preset IS checked before the builtin table, so allowing the
+  // name "nod" would shadow the builtin verb that agent.js advertises to the
+  // LLM in every prompt. Same silent-shadowing bug, mirrored.
+  function reservedGestureNames(sheet) {
+    const s = sheet || state.lastSheet || {};
+    const out = new Map();   // lowercased name -> { kind, display }
+    for (const k of Object.keys(GESTURE_LIBRARY)) {
+      out.set(k.toLowerCase(), { kind: 'builtin', display: k });
+    }
+    // Native motion last so it wins the description when a model happens to name
+    // a group after a builtin verb — native is what playGesture() would reach.
+    for (const g of (Array.isArray(s.motionGroups) ? s.motionGroups : [])) {
+      if (!g) continue;
+      const disp = String(g);
+      out.set(disp.toLowerCase(), { kind: 'motion', display: disp });
+      out.set(('motion_' + disp).toLowerCase(), { kind: 'motion', display: 'motion_' + disp });
+    }
+    return out;
+  }
+
+  // Validate a candidate 'gerak' preset name. Returns a plain result object
+  // rather than throwing, because the caller is a UI field that wants to show a
+  // message next to the input, not an exception.
+  function checkGerakName(name, sheet) {
+    const clean = String(name == null ? '' : name).trim().slice(0, 60);
+    if (!clean) return { ok: false, code: 'empty', message: 'Nama preset tidak boleh kosong.' };
+    const hit = reservedGestureNames(sheet).get(clean.toLowerCase());
+    if (hit) {
+      return {
+        ok: false,
+        code: hit.kind === 'motion' ? 'motion-group' : 'builtin-gesture',
+        conflictWith: hit.display,
+        message: hit.kind === 'motion'
+          ? 'Nama "' + clean + '" sudah dipakai motion bawaan model ("' + hit.display + '"). Pilih nama lain.'
+          : 'Nama "' + clean + '" sudah dipakai gerakan bawaan aplikasi ("' + hit.display + '"). Pilih nama lain.',
+        suggestion: suggestGerakName(clean, sheet),
+      };
+    }
+    return { ok: true, name: clean };
+  }
+
+  // Offered alongside the rejection so the UI can present a one-click fix. The
+  // user is never silently renamed — they still have to accept it.
+  //
+  // Dodges existing user 'gerak' preset names too, not just reserved ones: a
+  // suggestion that landed on another preset's name would be accepted by
+  // saveUserPreset() as an in-place edit and quietly overwrite that preset's
+  // keyframes.
+  function suggestGerakName(name, sheet) {
+    const base = String(name == null ? '' : name).trim().slice(0, 55) || 'Gerak';
+    const reserved = reservedGestureNames(sheet);
+    const s = sheet || state.lastSheet || {};
+    const mine = new Set(
+      (((s.presets || {}).user) || [])
+        .filter(p => p && p.category === 'gerak' && typeof p.name === 'string')
+        .map(p => p.name.toLowerCase())
+    );
+    const taken = (n) => reserved.has(n.toLowerCase()) || mine.has(n.toLowerCase());
+    if (!taken(base)) return base;
+    for (let i = 2; i <= 99; i++) {
+      const cand = base + ' ' + i;
+      if (!taken(cand)) return cand;
+    }
+    return base + ' ' + Date.now();
+  }
+
+  // Repair pass for collisions that are ALREADY on disk. Called from
+  // migrateSheet(), i.e. at the single boundary where a sheet enters the app, so
+  // every downstream reader sees a collision-free gesture namespace.
+  //
+  // Renames rather than deletes, and records the original in `renamedFrom` so the
+  // UI can explain why a button's label changed instead of it looking like data
+  // loss. Only presets.user is touched: presets.ai is a suggestion cache that is
+  // rebuilt from scratch, and an AI suggestion is never callable anyway.
+  function deshadowGerakPresets(sheet) {
+    if (!sheet || !sheet.presets || !Array.isArray(sheet.presets.user)) return sheet;
+    const reserved = reservedGestureNames(sheet);
+    if (!reserved.size) return sheet;
+    for (const p of sheet.presets.user) {
+      if (!p || p.category !== 'gerak' || typeof p.name !== 'string') continue;
+      const hit = reserved.get(p.name.toLowerCase());
+      if (!hit) continue;
+      const from = p.name;
+      p.name = suggestGerakName(from, sheet);
+      p.renamedFrom = from;
+      console.warn('[sheet] gerak preset "' + from + '" collided with ' +
+        (hit.kind === 'motion' ? 'native motion group' : 'builtin gesture') +
+        ' "' + hit.display + '" — renamed to "' + p.name + '"');
+    }
+    return sheet;
+  }
+
+  // Resolve the sheet to write into, creating one by inspection if this model
+  // has never been inspected. Shared by every mutation below so they cannot
+  // drift apart on the "no sheet yet" path.
+  async function sheetForWrite() {
+    let sheet = state.lastSheet || loadCharacterSheet();
+    if (!sheet) sheet = await fetchSheetFile();
+    if (!sheet) {
+      if (!state.model) throw new Error('Load model dulu sebelum menyimpan preset.');
+      sheet = inspectModel();
+      if (!sheet) throw new Error('Gagal membuat character sheet.');
+    }
+    if (!sheet.presets) sheet.presets = { user: [], ai: [] };
+    if (!Array.isArray(sheet.presets.user)) sheet.presets.user = [];
+    if (!Array.isArray(sheet.presets.ai)) sheet.presets.ai = [];
+    return sheet;
+  }
+
+  // Persist a mutated sheet: localStorage first (synchronous, survives a dead
+  // server) then the sheet file, then drop the capability cache so the very next
+  // message already sees the change. Extracted from saveUserPreset() so delete
+  // and suggestion-approval write through exactly the same path — three
+  // hand-rolled copies of this is how one of them ends up forgetting to
+  // invalidate the cache.
+  async function persistSheet(sheet) {
+    sheet.schemaVersion = SHEET_SCHEMA_VERSION;
+    state.lastSheet = sheet;
+
+    let localOk = true;
+    try { localStorage.setItem(characterSheetKey(), JSON.stringify(sheet)); }
+    catch (e) { localOk = false; console.warn('[sheet] localStorage save failed:', e.message); }
+
+    const res = await fetch(API + '/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelName: sheet.modelName, sheet }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error((detail.error || ('server HTTP ' + res.status)) +
+        (localOk ? ' (tersimpan lokal saja)' : ''));
+    }
+    try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
+    return sheet;
+  }
+
+  // Save (create or overwrite) a preset in presets.user. Rejects a colliding
+  // 'gerak' name instead of writing it, so the shadowing case never reaches the
+  // sheet at all. Overwriting the user's OWN preset of the same name is normal
+  // editing and is allowed.
+  async function saveUserPreset(input) {
+    const p = normalizePreset(input, 'user');
+    if (!p) throw new Error('Preset tidak valid (nama wajib ada).');
+
+    const sheet = await sheetForWrite();
+
+    if (p.category === 'gerak') {
+      const verdict = checkGerakName(p.name, sheet);
+      if (!verdict.ok) {
+        const err = new Error(verdict.message);
+        err.code = verdict.code;
+        err.suggestion = verdict.suggestion;
+        throw err;
+      }
+    }
+
+    const list = sheet.presets.user;
+    const at = list.findIndex(x => x.category === p.category && x.name.toLowerCase() === p.name.toLowerCase());
+    if (at === -1) list.push(p); else list[at] = p;
+
+    // An 'emosi' preset must reach state.supportedEmotions immediately, or the
+    // just-saved emotion would not be callable until the next model load.
+    projectEmotionPresets(sheet);
+    await persistSheet(sheet);
+    return p;
+  }
+
+  // Remove one preset from presets.user. Only the user branch is deletable: an
+  // .ai entry is a suggestion cache that the next analysis rebuilds anyway, and
+  // "deleting" one would silently come back.
+  async function deleteUserPreset(category, name) {
+    const sheet = await sheetForWrite();
+    const want = String(name || '').trim().toLowerCase();
+    const at = sheet.presets.user.findIndex(
+      x => x.category === category && x.name.toLowerCase() === want);
+    if (at === -1) return false;
+    const [gone] = sheet.presets.user.splice(at, 1);
+    // A deleted 'emosi' preset must also leave the advertised vocabulary,
+    // otherwise the LLM keeps emitting an [EMOTION:] the engine can no longer
+    // resolve. projectEmotionPresets() only ADDS, so drop it by hand here.
+    if (gone.category === 'emosi') {
+      if (sheet.supportedEmotions) delete sheet.supportedEmotions[gone.name];
+      if (state.supportedEmotions) delete state.supportedEmotions[gone.name];
+    }
+    await persistSheet(sheet);
+    return true;
+  }
+
+  // Promote ONE AI suggestion into presets.user. This is the only way an .ai
+  // entry becomes callable, and it takes an explicit user click — that is the
+  // whole point of keeping the branches apart.
+  //
+  // The .ai entry is left in place rather than moved: analysis output is a cache
+  // keyed by name, and after promotion resolvePresets() already flags it
+  // `suggestion: true` (a user entry now owns the name), so the UI stops
+  // offering it without anything being deleted.
+  async function applyAISuggestion(category, name) {
+    const sheet = await sheetForWrite();
+    const want = String(name || '').trim().toLowerCase();
+    const src = sheet.presets.ai.find(
+      x => x.category === category && x.name.toLowerCase() === want);
+    if (!src) throw new Error('Saran AI "' + name + '" tidak ditemukan.');
+    // Round-trip through saveUserPreset() so the promoted copy goes through the
+    // same normalization, gerak-name check and persistence as anything the user
+    // typed by hand. source is forced to 'user' by normalizePreset().
+    return saveUserPreset(Object.assign({}, src, { source: 'user' }));
+  }
 
   // Apply a preset's static values. Parameters and Parts go through DIFFERENT
   // engine calls, so they are stored and applied separately — a Part id sent
@@ -2581,6 +3287,43 @@
     gestureNames: () => Object.keys(GESTURE_LIBRARY),
     // ── Capability profile: describes what this model can do ──
     getCapabilityProfile,
+
+    // ── Character sheet surface ────────────────────────────────
+    // The sheet editor UI (tab 📋 Sheet) is wired inside this same IIFE, so it
+    // does not strictly need these. They are exposed because the sheet is the
+    // model's semantic contract and everything outside app.js — agent.js, the
+    // console, tests, any future panel — has to reach it through one door
+    // instead of re-implementing precedence or the localStorage+file write.
+    //
+    // Namespaced under .sheet rather than flattened into this object: names like
+    // `save`/`remove` are far too generic at the top level of a public API that
+    // already carries speak/playGesture/frameModel.
+    sheet: {
+      // read
+      load: loadCharacterSheet,
+      fetchFile: fetchSheetFile,
+      inspect: inspectModel,
+      resolvePresets,
+      resolveParamGroup,
+      findPreset,
+      categories: () => PRESET_CATEGORIES.slice(),
+      builtinGestures: () => Object.keys(GESTURE_LIBRARY),
+      // validate — returns a verdict object instead of throwing, because the
+      // caller is a text field that has to render the message + suggestion.
+      checkGerakName,
+      suggestGerakName,
+      // write
+      savePreset: saveUserPreset,
+      deletePreset: deleteUserPreset,
+      applySuggestion: applyAISuggestion,
+      applyPreset,
+      saveNote: saveUserNote,
+      saveConfig: saveModelConfig,
+      // AI classification of raw params (writes paramGroups.ai only)
+      classifyParams: triggerAIParamClassification,
+      // AI-suggested presets (writes presets.ai only, never .user)
+      analyzePresets: analyzeSheetPresets,
+    },
   };
 
   // ─── Character Sheet System ───
@@ -2627,6 +3370,12 @@
     if (Number.isFinite(p)) c.ttsPitch = clamp(p, TTS_PITCH_RANGE.min, TTS_PITCH_RANGE.max);
     if (typeof raw.ttsLang === 'string' && /^[a-zA-Z]{2}(-[a-zA-Z0-9]{2,8})*$/.test(raw.ttsLang)) {
       c.ttsLang = raw.ttsLang;
+    }
+    // Control chars stripped: this string is written into the document title and
+    // chat header. textContent handles markup, but a stray \u0000 or newline in a
+    // title is just corruption.
+    if (typeof raw.displayName === 'string') {
+      c.displayName = raw.displayName.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 40);
     }
     return c;
   }
@@ -2696,6 +3445,13 @@
     // Timed keyframes only make sense for 'gerak'. A frozen {paramId: value}
     // map is a pose, not a motion.
     if (category === 'gerak') p.steps = sanitizeSteps(raw.steps);
+    // Provenance of an automatic de-shadow rename. Preserved through
+    // normalization so the note survives a save/load round-trip and the UI can
+    // keep explaining the changed label; purely informational, never used for
+    // lookup.
+    if (typeof raw.renamedFrom === 'string' && raw.renamedFrom.trim()) {
+      p.renamedFrom = raw.renamedFrom.trim().slice(0, 60);
+    }
     return p;
   }
 
@@ -2850,6 +3606,14 @@
     if (!Array.isArray(sheet.accessories)) sheet.accessories = [];
     if (!Array.isArray(sheet.nativeExpressions)) sheet.nativeExpressions = [];
     if (!Array.isArray(sheet.motionGroups)) sheet.motionGroups = [];
+    // Collisions can still ARRIVE on disk even though saveUserPreset() rejects
+    // them: the file is hand-editable, and a model can gain a motion group after
+    // the preset was saved (re-export from Cubism, or the preset was written
+    // before this check existed). Doing nothing here would restore the exact
+    // silent shadowing we set out to remove, so an already-stored collision is
+    // renamed on load and logged loudly. Renaming beats dropping — the user's
+    // keyframes survive and stay callable, just under a distinct name.
+    deshadowGerakPresets(sheet);
     if (!sheet.roleIds || typeof sheet.roleIds !== 'object') sheet.roleIds = {};
     if (!sheet.paramRange || typeof sheet.paramRange !== 'object') sheet.paramRange = {};
     if (!sheet.supportedEmotions || typeof sheet.supportedEmotions !== 'object') sheet.supportedEmotions = {};
@@ -2893,6 +3657,47 @@
     return carried;
   }
 
+  // ── Identitas karakter (model-agnostic) ─────────────────────────
+  // Source of truth, in order: config.displayName (user-set) → model folder
+  // name → generic fallback. Nothing here is hardcoded to one character, so
+  // importing any model produces a coherent UI without editing source.
+  function characterName() {
+    const cfg = currentModelConfig();
+    if (cfg.displayName) return cfg.displayName;
+    // state.modelPath looks like 'model/<folder>/<file>.model3.json'. The folder
+    // is the modeler's own name for the character and is the best automatic
+    // guess available.
+    const m = /^model\/([^/]+)\//.exec(state.modelPath || '');
+    if (m) { try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; } }
+    return 'Live2D Agent';
+  }
+
+  // One grapheme for the avatar circle. Array.from() (not [0]) because the name
+  // may start with an astral-plane char or an emoji — slicing by UTF-16 code
+  // unit would render half a surrogate pair as a replacement glyph.
+  function characterInitial() {
+    const n = characterName();
+    return Array.from(n)[0] || '?';
+  }
+
+  // Repaint every place the character's identity is shown. Called on model load
+  // and after a config save, so a rename takes effect without a reload.
+  function applyCharacterIdentity() {
+    const name = characterName();
+    const initial = characterInitial();
+    document.title = name + ' — Live2D Agent';
+    const nameEl = $('.sb-name');
+    if (nameEl) nameEl.textContent = name;
+    // Sidebar avatar + any agent bubbles ALREADY on screen. Bubbles rendered
+    // before the model resolved would otherwise keep the placeholder initial.
+    // Array.from() because $$ returns a NodeList — [x].concat(nodeList) would
+    // nest the list as a single element instead of spreading it.
+    const avatars = [$('.sb-avatar')].concat(Array.from($$('.msg.agent .msg-avatar')));
+    for (const el of avatars) { if (el) el.textContent = initial; }
+    const greet = $('#greeting-bubble');
+    if (greet) greet.textContent = 'Halo! Aku ' + name + '~ Ada yang bisa kubantu? 😊';
+  }
+
   // ── Live per-model config ───────────────────────────────────────
   // state.modelConfig is seeded in the constants block above the Boot call.
   // It must NOT be re-seeded here: this line sits below the boot call but still
@@ -2916,6 +3721,9 @@
     if (state.model) {
       try { frameModel(c.framing); } catch (e) { console.warn('[config] framing failed:', e.message); }
     }
+    // Identity lives in the same config object, so a save that changed
+    // displayName must repaint the header here rather than at every call site.
+    try { applyCharacterIdentity(); } catch (e) { console.warn('[identity] repaint failed:', e.message); }
     return c;
   }
 
@@ -3307,8 +4115,11 @@
     projectEmotionPresets(sheet);
     state.lastSheet = sheet;
 
-    // Trigger AI classification for unmapped parameters in background
-    triggerAIParamClassification(sheet, classified, roleIds);
+    // Trigger AI classification for unmapped parameters in background.
+    // .catch() is mandatory now that the function rethrows for the UI caller —
+    // without it a failed classify becomes an unhandled promise rejection.
+    triggerAIParamClassification(sheet, classified, roleIds)
+      .catch(e => console.warn('[inspect] classify failed:', e.message));
 
     // Save to localStorage (fast reuse, no network)
     try {
@@ -3334,7 +4145,25 @@
   }
 
   // Asynchronously classify unmapped parameters using the LLM (runs once per model)
+  // Callable two ways:
+  //   • from inspectModel() with the freshly built (sheet, classified, roleIds)
+  //   • from the Sheet tab with NO arguments, where everything is derived from
+  //     the sheet already in memory
+  // The second form exists because the UI button has no access to inspect's
+  // locals, and re-running a full inspect just to re-classify would throw away
+  // the user's current pose.
+  //
+  // Returns { count } so the UI can report how many suggestions came back;
+  // inspectModel() ignores the return value (fire-and-forget).
   async function triggerAIParamClassification(sheet, classified, roleIds) {
+    if (!sheet) {
+      sheet = state.lastSheet || loadCharacterSheet();
+      if (!sheet) throw new Error('Belum ada sheet. Inspeksi model dulu.');
+    }
+    if (!Array.isArray(classified)) classified = sheet.params || [];
+    if (!roleIds) roleIds = sheet.roleIds || {};
+    if (!sheet.roleIds) sheet.roleIds = {};
+    if (!Array.isArray(sheet.accessories)) sheet.accessories = [];
     try {
       // Defensive: this runs on a sheet that may have come from a v3 file whose
       // migration ran in a previous session, or from a caller that built one by
@@ -3347,7 +4176,7 @@
       sheet.paramGroups.ai = {};
       const mappedParamIds = new Set(Object.values(roleIds || {}));
       const unmapped = classified.filter(p => !mappedParamIds.has(p.id) && !p.id.toLowerCase().includes('physics'));
-      if (!unmapped.length) return;
+      if (!unmapped.length) return { count: 0 };
 
       const res = await fetch(API + '/api/model/classify-params', {
         method: 'POST',
@@ -3357,10 +4186,10 @@
           currentRoles: roleIds,
         }),
       });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('server menolak (HTTP ' + res.status + ')');
       const data = await res.json();
       const items = data.classifications || [];
-      if (!items.length) return;
+      if (!items.length) return { count: 0 };
 
       let changed = false;
       // The LLM may only add SEMANTIC meaning (role / group / label / accessory
@@ -3405,9 +4234,75 @@
           body: JSON.stringify({ modelName: sheet.modelName, sheet }),
         }).catch(() => {});
       }
+      return { count: items.length, changed };
     } catch (e) {
       console.warn('[inspect] AI param classification skipped/failed:', e.message);
+      // Rethrown, not swallowed: the Sheet tab shows this in #sheet-status, and
+      // the inspect path passes fire-and-forget with its own .catch(). Swallowing
+      // here would make the UI button report success on a failed request.
+      throw e;
     }
+  }
+
+  // Ask the server for PRESET suggestions and park them in sheet.presets.ai.
+  //
+  // Deliberately separate from triggerAIParamClassification(): that one enriches
+  // individual parameters (role/label/group), this one proposes whole poses. They
+  // fail independently, so the Analyze button runs both and reports each.
+  //
+  // Everything written here goes to the .ai branch ONLY. .user is never touched,
+  // which is what makes an unwanted suggestion a no-op rather than data loss.
+  async function analyzeSheetPresets(sheet) {
+    if (!sheet) {
+      sheet = state.lastSheet || loadCharacterSheet();
+      if (!sheet) throw new Error('Belum ada sheet. Inspeksi model dulu.');
+    }
+    if (!sheet.presets || typeof sheet.presets !== 'object') sheet.presets = { user: [], ai: [] };
+    if (!Array.isArray(sheet.presets.user)) sheet.presets.user = [];
+    if (!Array.isArray(sheet.presets.ai)) sheet.presets.ai = [];
+
+    const params = (sheet.params || [])
+      .filter(p => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max))
+      .map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def, label: p.label || '' }));
+    if (!params.length) return { count: 0 };
+
+    const parts = (sheet.parts || []).map(p => (p && p.id) || p).filter(Boolean);
+    // Sent so the LLM does not waste its budget re-proposing what the user owns.
+    const existingNames = sheet.presets.user.map(p => p.name);
+
+    const res = await fetch(API + '/api/model/analyze-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params, parts, existingNames }),
+    });
+    if (!res.ok) throw new Error('server menolak (HTTP ' + res.status + ')');
+    const data = await res.json();
+    if (data.warning) console.warn('[analyze-sheet]', data.warning);
+
+    // normalizePresetList() is reused rather than trusting the response shape:
+    // it strips unknown fields, forces source='ai', and — because category is
+    // not 'gerak' — drops any steps the payload carried.
+    const incoming = normalizePresetList(
+      (data.presets || []).filter(p => p && p.category !== 'gerak'), 'ai');
+    if (!incoming.length) return { count: 0 };
+
+    // Full replace, not merge: .ai is a regenerable cache, and merging would let
+    // suggestions from an older model linger after a re-analyse.
+    sheet.presets.ai = incoming;
+    projectEmotionPresets(sheet);   // no-op for .ai, but keeps the sheet coherent
+    localStorage.setItem(characterSheetKey(), JSON.stringify(sheet));
+    try {
+      await fetch(API + '/api/sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelName: sheet.modelName, sheet }),
+      });
+    } catch (e) {
+      // localStorage already has it; the file write is best-effort.
+      console.warn('[analyze-sheet] file write failed, kept locally:', e.message);
+    }
+    invalidateCapabilityProfile();
+    return { count: incoming.length };
   }
 
   // Load saved character sheet (returns null if none)

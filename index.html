@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>神宫白子 — Live2D Agent</title>
+  <title>Live2D Agent</title>
   <link rel="stylesheet" href="css/app.css" />
   <!-- Cubism Core HARUS dimuat duluan sebelum pixi-live2d -->
   <script src="js/live2dcubismcore.min.js"></script>
@@ -32,10 +32,13 @@
   <div id="sidebar">
 
     <!-- Header -->
+    <!-- Avatar/nama/greeting diisi applyCharacterIdentity() saat model dimuat.
+         Placeholder di sini netral (bukan nama karakter tertentu) supaya app
+         tidak pernah menampilkan identitas model lain. -->
     <div class="sb-header">
-      <div class="sb-avatar">白</div>
+      <div class="sb-avatar">?</div>
       <div class="sb-id">
-        <div class="sb-name">神宫白子</div>
+        <div class="sb-name">Live2D Agent</div>
         <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
       </div>
       <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
@@ -44,8 +47,8 @@
     <!-- Chat history -->
     <div id="chat-log">
       <div class="msg agent">
-        <div class="msg-avatar">白</div>
-        <div class="msg-bubble">Halo! Aku 神宫白子~ Ada yang bisa kubantu? 😊</div>
+        <div class="msg-avatar">?</div>
+        <div class="msg-bubble" id="greeting-bubble">Halo! Ada yang bisa kubantu? 😊</div>
       </div>
     </div>
 
@@ -74,6 +77,7 @@
     <div id="controls-panel" class="hidden">
         <div class="tabs">
           <button class="tab active" data-tab="model">📁 Model</button>
+          <button class="tab" data-tab="sheet">📋 Sheet</button>
           <button class="tab" data-tab="ai">⚙️ AI</button>
         </div>
       <div class="tab-body">
@@ -115,6 +119,12 @@
           <!-- Pengaturan per-model: dulu hardcode & reset tiap reload -->
           <div class="section-title" style="margin-top:14px">🎛️ Pengaturan Model Ini</div>
           <div class="cfg-box">
+            <label class="cfg-row" for="cfg-display-name">
+              <span class="cfg-label">Nama karakter</span>
+              <input id="cfg-display-name" type="text" maxlength="40"
+                placeholder="(otomatis dari nama folder model)" aria-describedby="cfg-hint" />
+            </label>
+
             <label class="cfg-check">
               <input id="cfg-blink" type="checkbox" /> <span>Kedip mata otomatis</span>
             </label>
@@ -160,6 +170,58 @@
               <span id="cfg-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
             <p class="hint" id="cfg-hint">Disimpan per-model di dalam character sheet. Pitch &amp; kecepatan langsung terasa saat karakter bicara.</p>
+          </div>
+        </div>
+
+        <!-- ===== Sheet: baca character sheet + kelola preset ===== -->
+        <!-- Pane ini satu-satunya tempat presets.ai bisa dilihat & disetujui.
+             Tanpa dia, hasil analisa AI cuma menumpuk di sheets/*.json tanpa
+             pernah bisa dipakai atau ditolak user. -->
+        <div class="tab-pane" data-pane="sheet">
+          <div class="section-title">📋 Character Sheet</div>
+          <div id="sheet-summary" class="sheet-summary">
+            <p class="hint">Belum ada sheet. Buka tab 📁 Model → <b>Inspeksi Model</b> dulu.</p>
+          </div>
+
+          <!-- Daftar preset per kategori. Entri user dan saran AI tampil
+               berdampingan; yang AI diberi badge 🤖 supaya asalnya jelas. -->
+          <div class="section-title" style="margin-top:14px">🎭 Preset</div>
+          <div class="sheet-cats" id="sheet-cats" role="tablist" aria-label="Kategori preset"></div>
+          <div id="sheet-preset-list" class="preset-list"></div>
+          <div class="note-row">
+            <button id="btn-sheet-analyze" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">🤖 Analisa AI</button>
+            <span id="sheet-status" class="note-status" role="status" aria-live="polite"></span>
+          </div>
+          <p class="hint">Saran AI (🤖) tidak aktif sampai kamu tekan <b>Pakai</b>. Preset milikmu selalu menang atas saran AI dan atas nama bawaan.</p>
+
+          <!-- Editor preset: nilai diambil dari pose model yang sedang tampil,
+               jadi user tidak perlu mengetik angka parameter satu per satu. -->
+          <div class="section-title" style="margin-top:14px">✏️ Editor Preset</div>
+          <div class="cfg-box">
+            <label class="cfg-row" for="preset-name">
+              <span class="cfg-label">Nama</span>
+              <input id="preset-name" type="text" maxlength="60" placeholder="mis. Senang, Kacamata, Melambai" />
+            </label>
+            <label class="cfg-row" for="preset-cat">
+              <span class="cfg-label">Kategori</span>
+              <select id="preset-cat">
+                <option value="emosi">emosi</option>
+                <option value="properti">properti</option>
+                <option value="aksesoris">aksesoris</option>
+                <option value="gerak">gerak</option>
+              </select>
+            </label>
+            <div class="note-row">
+              <button id="btn-preset-capture" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">📸 Ambil Pose Sekarang</button>
+              <span id="preset-capture-info" class="note-status"></span>
+            </div>
+            <div id="preset-values" class="preset-values"></div>
+            <div class="note-row">
+              <button id="btn-preset-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Preset</button>
+              <button id="btn-preset-clear" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">✖ Kosongkan</button>
+              <span id="preset-status" class="note-status" role="status" aria-live="polite"></span>
+            </div>
+            <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
           </div>
         </div>
 

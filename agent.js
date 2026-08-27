@@ -12,6 +12,14 @@
   const history = [];
   let busy = false;
 
+  // Backend origin — same derivation as js/app.js. agent.js is a separate IIFE so
+  // it cannot see app.js's constant; duplicating the ONE-LINE derivation is safer
+  // than duplicating a literal port, which is what used to be here (3 copies of
+  // :8310, all of which broke silently whenever server.js ran on process.env.PORT).
+  const API = (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
+    ? location.origin
+    : 'http://127.0.0.1:8310';
+
   // ── Capability profile ──
   // Cached because building it re-reads the sheet, but the cache is per-MODEL:
   // it MUST be dropped when a different model is loaded, otherwise the agent
@@ -440,7 +448,7 @@ Contoh pendek:
   // Request AI Animation Director (Two-Pass Architecture)
   async function animateTextViaDirector(text, profile) {
     try {
-      const res = await fetch('http://127.0.0.1:8310/api/animate-text', {
+      const res = await fetch(API + '/api/animate-text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -495,7 +503,7 @@ Contoh pendek:
     setThinking(true);
     try {
       // Pass 1: Character text response generation
-      const resp = await fetch('http://127.0.0.1:8310/api/chat', {
+      const resp = await fetch(API + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history, system: buildSystemPrompt('') + moodSuffix() }),
@@ -710,7 +718,7 @@ Contoh pendek:
       const synthetic = '(' + type + ')';
       const messages = history.slice(-6).concat([{ role: 'user', content: synthetic }]);
 
-      const resp = await fetch('http://127.0.0.1:8310/api/chat', {
+      const resp = await fetch(API + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, system }),

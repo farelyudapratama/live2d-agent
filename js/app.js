@@ -101,6 +101,10 @@
       motionGroups: [],      // model's own motion groups (if any)
     },
     paramRange: {},          // id -> {min,max,def} from Cubism Core (true ranges)
+    // Most recently resolved character sheet for the CURRENT model. Kept so
+    // user-authored fields (userNote) can be carried across a re-inspection
+    // even when localStorage is unavailable. Reset on model load.
+    lastSheet: null,
     // Micro-gesture scheduler state (neuro-sama-ish "always alive" feel).
     gesture: { timer: null, nextAt: 0, seed: Math.random() * 1000 },
     // ── Motion-clip taxonomy (semantic verbs) ──
@@ -126,11 +130,21 @@
     // Intrinsic (scale-1) model size, cached at framing so we can do breathing
     // squash/stretch and bob around a stable center every frame.
     natW: 0, natH: 0,
+    // Current framing mode flag, read by the resize handler so a resize keeps
+    // whichever framing the user chose instead of reverting to 'upper'.
+    // Declared here (not implicitly created in setFullBody) so it is never
+    // `undefined` on the first resize.
+    fullBody: false,
   };
 
   // ─── DOM helpers ──────────────────────────────────────────────
   const $  = (s) => document.querySelector(s);
   const $$ = (s) => document.querySelectorAll(s);
+
+  // Assigned by wireUI() once the config panel exists. Declared here because
+  // loadModel() must re-sync the panel on every model swap, and it runs outside
+  // wireUI()'s scope. No-op until wired, so an early model load can't throw.
+  let refreshConfigForm = () => {};
 
   // ─── Parameter helpers (CORRECT API for pixi-live2d-display@0.4.0) ──
   // The public Live2DModel has NO setParameter* method; the real setter lives
@@ -236,10 +250,15 @@
   window.addEventListener('resize', () => {
     fitCanvas();
     if (state.model) {
-      state.basePos.x = app.screen.width / 2;
-      state.basePos.y = app.screen.height / 2;
-      state.model.x = state.basePos.x;
-      state.model.y = state.basePos.y;
+      // Re-frame through frameModel() instead of slamming the model to the raw
+      // screen CENTER. The model's anchor is top-left (0,0), so assigning
+      // x/y = screen/2 places its top-left corner at the middle of the canvas
+      // and pushes the whole body off the bottom edge — only the top of the
+      // head stays visible. frameModel() measures real bounds and centers the
+      // ART, and it also refreshes state.basePos, which the idle loop restores
+      // m.x/m.y from every frame (so a wrong basePos here is permanent).
+      state.stageArea = { width: Math.max(280, app.screen.width - 380) };
+      frameModel(state.fullBody ? 'full' : 'upper');
     }
   });
 
@@ -268,7 +287,20 @@
         state.activeProperty = 'default';
         if (state.idleMotionTimer) { clearInterval(state.idleMotionTimer); state.idleMotionTimer = null; }
         state.lookFrame = { eyeX:0, eyeY:0, w:1, h:1 };
+        // state.caps describes the OLD model's parameters/roles. hydrateCaps()
+        // refills it after the new sheet loads, but until then nothing may read
+        // stale capabilities — a role id from the previous model would resolve
+        // to a parameter the new model doesn't have.
+        state.caps = {};
+        state.modelParams = null;
+        // Belongs to the model being replaced; carrying it over would leak the
+        // previous character's userNote into the new model's sheet.
+        state.lastSheet = null;
       }
+      // The agent memoizes the capability profile; that cache belongs to the
+      // model being replaced, so drop it here regardless of whether a model was
+      // previously loaded.
+      try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
       state.model = await PIXI.live2d.Live2DModel.from(modelPath, {
         autoInteract: false,
       });
@@ -282,7 +314,11 @@
       // so the character is centered within the full visible canvas.
       state.stageArea = { width: app.screen.width };
 
-      frameModel('upper');   // default framing: head + shoulders, centered in stage
+      // Per-model config must be resolved BEFORE framing and before blink/idle
+      // start, otherwise the model briefly renders with the previous character's
+      // settings. loadModelConfigLocal() is synchronous (localStorage only), and
+      // applyModelConfig() does the framing itself (was a hardcoded 'upper').
+      applyModelConfig(loadModelConfigLocal());
 
       console.log('[Live2D] Model loaded:', state.model);
 
@@ -297,6 +333,14 @@
       // taxonomy as "synthetic gestures only", so nothing breaks while it loads.
       loadMotionTaxonomy().catch(e => console.warn('[taxonomy] load error', e));
 
+      // The note is per-model, so the textarea must follow the model swap.
+      // Fire-and-forget: it only reads storage, nothing depends on it.
+      refreshUserNoteUI().catch(e => console.warn('[note] UI refresh failed:', e));
+
+      // Same for the config panel: it shows the PREVIOUS model's values until
+      // repainted, which would let a Save write them onto the new model.
+      try { refreshConfigForm(); } catch (e) { console.warn('[config] UI refresh failed:', e.message); }
+
     } catch (err) {
       console.error('[Live2D] Failed to load model:', err);
       const p = $('#loader p');
@@ -310,12 +354,14 @@
     const blinkOnce = () => {
       if (!state.model || !state.blinkEnabled) return;
       try {
-        const lo = roleId('eyeLOpen'), ro = roleId('eyeROpen');
-        if (lo) pokeParam(lo, 0, 1);
-        if (ro) pokeParam(ro, 0, 1);
+        // Blink in ROLE space: fully-closed / fully-open are the ENDS of the
+        // model's own eyeOpen range, not the literals 0 and 1. A rig using
+        // 0..100 (or an inverted range) still blinks correctly this way.
+        pokeRoleNorm('eyeLOpen', 0);
+        pokeRoleNorm('eyeROpen', 0);
         setTimeout(() => {
-          if (lo) pokeParam(lo, 1, 1);
-          if (ro) pokeParam(ro, 1, 1);
+          pokeRoleNorm('eyeLOpen', 1);
+          pokeRoleNorm('eyeROpen', 1);
         }, 140);
       } catch (e) { /* swallow */ }
     };
@@ -459,8 +505,8 @@
       }
 
       // Breathing drives the chest/body param directly (smooth controller).
-      if (state.hasBreath && roleId('breath'))
-        pokeParam(roleId('breath'), clamp(breath, 0, 1), 1);
+      // `breath` is authored 0..1 (none..full) so it maps through role space.
+      if (state.hasBreath) pokeRoleNorm('breath', clamp(breath, 0, 1));
 
       // ── EASED EMOTION (morph the face instead of snapping) ──
       if (state.emoCur) {
@@ -482,7 +528,13 @@
         if (mId) {
           const base = 0.35 + 0.4 * Math.abs(Math.sin(t * 9));   // syllable rhythm
           const jitter = Math.random() < 0.25 ? 0.25 : 0;         // occasional wider open
-          state.overrides[mId] = Math.min(1, base + jitter);
+          // The rhythm above is authored as a 0..1 OPENNESS fraction; map it into
+          // the model's real mouthOpen range instead of writing 0..1 literally.
+          // On a rig using 0..100 a raw 0.75 would be a 0.75% open mouth — i.e.
+          // visually shut while "talking".
+          const openness = Math.min(1, base + jitter);
+          const r = roleRange('mouthOpenY');
+          state.overrides[mId] = r ? r.min + openness * (r.max - r.min) : openness;
         }
       }
       applyOverrides();
@@ -546,32 +598,60 @@
       if (state.isDragging || !state.model || state.aiLock) return;
       const m = state.model;
 
-      // Recompute the look reference frame only when it's stale (per load),
-      // not every mousemove — getLocalBounds() can return a slightly different
-      // box after re-framing, which made the gain feel "held back".
-      // Use FRESH local bounds every move so the gain reference never goes
-      // stale after a re-frame (zoom / full-body / resize). A stale reference
-      // box was shrinking the normalized dx/dy, which made the head feel
-      // "held back" and reduced how far it travelled.
+      // ── Look mapping, normalized against the REACHABLE cursor area ──
+      //
+      // The eye line is the neutral reference: cursor on her eyes -> looks
+      // straight ahead. But normalizing the offset by the model's LOCAL height
+      // (lb.height, the whole body ≈ 8000 units) is what made her unable to
+      // look up: in upper-body framing her eye line sits only ~129px below the
+      // canvas top but ~495px above the bottom, so the cursor could only ever
+      // produce ~36% of the upward range while downward saturated past 100%.
+      // The container really was clipping her gaze — exactly the asymmetry.
+      //
+      // Fix: normalize each direction by the space ACTUALLY available on that
+      // side of the eye line inside the canvas. Cursor at the top edge now
+      // means "full look up", bottom edge "full look down", on any framing,
+      // zoom level or window size.
       const lb = m.getLocalBounds();
-      const curLocal = m.toLocal(new PIXI.Point(e.clientX, e.clientY));
       const eyeLocalX = lb.x + lb.width / 2;
       const eyeLocalY = lb.y + lb.height * 0.22;
-      const dx = (curLocal.x - eyeLocalX) / lb.width;
-      const dy = (curLocal.y - eyeLocalY) / lb.height;
+      const eye = m.toGlobal(new PIXI.Point(eyeLocalX, eyeLocalY));
+      const W = app.screen.width, H = app.screen.height;
 
-      // Gain: head travels a wide, proportional range. Y sign MATCHES the
-      // eyeball convention (eyeballs use -dy) so the head tilts the SAME way
-      // the eyes look — fixes the "head/body goes the opposite way" bug
-      // (mouse down used to tilt the head UP instead of down).
-      state.look.tax =  dx * 55;    // head turn L/R (same sign as eyeball X)
-      state.look.tay =  dy * -55;   // head tilt up/down (sign matches eyeball Y)
-      state.look.tex =  dx * 4;     // eye ball x
-      state.look.tey =  dy * -4;    // eye ball y
-      // Body follows the cursor too (25% of head gain) so the whole upper body
-      // leans toward the pointer, not just the head — fixes "only the head moves".
-      state.look.tbx =  dx * 55 * 0.25;
-      state.look.tby =  dy * -55 * 0.25;
+      // Keep the reference point inside the canvas with a guaranteed margin on
+      // every side. When zoomed in far enough that her eye line sits ABOVE the
+      // top edge, the raw eye point would leave zero room above it — the cursor
+      // could then only ever be "below her eyes" and she'd be stuck looking
+      // down. Clamping to a 15% margin trades a slightly offset neutral point
+      // at extreme zoom for gaze that always reaches full travel both ways.
+      const MARGIN = 0.15;
+      const refX = clamp(eye.x, W * MARGIN, W * (1 - MARGIN));
+      const refY = clamp(eye.y, H * MARGIN, H * (1 - MARGIN));
+
+      const upRoom    = Math.max(1, refY);
+      const downRoom  = Math.max(1, H - refY);
+      const leftRoom  = Math.max(1, refX);
+      const rightRoom = Math.max(1, W - refX);
+
+      const rawY = e.clientY - refY;
+      const rawX = e.clientX - refX;
+      // ny/nx are -1..+1 where POSITIVE = UP / RIGHT, independent of framing.
+      const ny = clamp(-rawY / (rawY < 0 ? upRoom : downRoom), -1, 1);
+      const nx = clamp(rawX / (rawX < 0 ? leftRoom : rightRoom), -1, 1);
+
+      // Cubism sign convention (verified against this rig): ParamAngleY and
+      // ParamEyeBallY are POSITIVE when looking UP, so ny maps straight across.
+      // Gains use the role reference scale (REF_HALF for degree roles, ±1 for
+      // normalized ones) so ±1 input = full travel without clamping. The old
+      // gains (55 for angles, 4 for eyeballs) overshot the reference range and
+      // clamped, which is why the gaze felt like it snapped between extremes.
+      state.look.tax =  nx * REF_HALF;    // head turn L/R
+      state.look.tay =  ny * REF_HALF;    // head tilt up/down (+ = up)
+      state.look.tex =  nx;               // eye ball x (±1 = full)
+      state.look.tey =  ny;               // eye ball y (+ = up)
+      // Body leans with her (25% of head travel) so it isn't just the head.
+      state.look.tbx =  nx * REF_HALF * 0.25;
+      state.look.tby =  ny * REF_HALF * 0.25;
     });
 
     canvas.addEventListener('pointerdown', onPointerDown);
@@ -728,7 +808,15 @@
     browRY:     ['ParamBrowRY','BrowRY','brow_r_y','右眉Y','右眉上下'],
     browLAngle: ['ParamBrowLAngle','BrowLAngle','brow_l_angle','左眉角'],
     browRAngle: ['ParamBrowRAngle','BrowRAngle','brow_r_angle','右眉角'],
-    blush:      ['Param91','ParamBlush','Blush','blush','頬紅','脸红','害羞','ParamCheek'],
+    // MODEL-AGNOSTIC RULE: never list a NUMBERED id (Param91, Param92, ...) here.
+    // Numbered ids are arbitrary per-rigger slots — 'Param91' is blush on ONE
+    // model and could be a tail/button/prop on the next, so matching it would
+    // silently animate a random body part whenever the character blushes.
+    // Only real semantic tokens belong in this table.
+    // 'cheekpuff'/'puff' is EXCLUDED on purpose: puffing the cheeks (mouth full
+    // of air) is a different action from blushing (skin reddening).
+    blush:      ['ParamBlush','Blush','blush','ParamCheekRed','CheekRed',
+                 '頬紅','ほお染め','照れ','脸红','腮红','害羞'],
   };
 
   // ── Official ground-truth from model3.json "Groups" ──
@@ -757,10 +845,38 @@
     return out;
   }
 
+  // Pick the member of an official Groups array that matches a semantic intent,
+  // instead of trusting ARRAY ORDER. The order inside model3.json "Groups" is
+  // authored arbitrarily by the rigger: on some models LipSync[0] is
+  // ParamMouthForm, not ParamMouthOpenY. Taking index 0 therefore aliases
+  // mouthOpenY onto mouthForm and three writers (lip-sync, pose easing, emotion
+  // morph) fight over ONE param every frame -> the mouth never opens.
+  // Strategy: score by name tokens (multi-language), fall back to null so the
+  // caller can continue to the canonical-id / keyword tiers rather than
+  // committing to a wrong id.
+  function pickFromGroup(list, patterns) {
+    if (!Array.isArray(list) || !list.length) return null;
+    for (const re of patterns) {
+      const hit = list.find(id => typeof id === 'string' && re.test(id));
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // Intent patterns for members of the official Groups arrays. Ordered
+  // most-specific first. Deliberately NO numbered ids and no positional
+  // assumptions — these are semantic tokens only (EN / JA / ZH).
+  const GROUP_PATTERNS = {
+    mouthOpenY: [/openy$/i, /mouthopen/i, /open/i, /口開|開口|口を開/, /张口|张嘴|开口/],
+    eyeLOpen:   [/eyelopen/i, /^parameyel.*open/i, /_l_?open/i, /left.*open/i, /左目|左眼/],
+    eyeROpen:   [/eyeropen/i, /^parameyer.*open/i, /_r_?open/i, /right.*open/i, /右目|右眼/],
+  };
+
   // Build the role→actualId map for a set of owned param ids.
   // `official` (optional) = { eyeBlinkIds, lipSyncIds } read straight from the
-  // model3.json Groups metadata — when present it overrides naming heuristics
-  // for eyeLOpen/eyeROpen/mouthOpenY, since it's authored truth, not a guess.
+  // model3.json Groups metadata — authored truth about WHICH params belong to a
+  // group, but NOT about their order. We therefore use it as a candidate pool
+  // and select by name intent (pickFromGroup), never by index.
   function mapRoles(paramSet, official) {
     const ids = {};
     if (!paramSet || !paramSet.size) return ids;
@@ -768,14 +884,20 @@
     const lowerToReal = {};
     Array.from(paramSet).forEach((id, i) => { lowerToReal[list[i]] = id; });
     for (const role in ROLE_KEYWORDS) {
-      // 0) OFFICIAL model3.json Groups — authored by the model creator, so it
-      // beats both exact-name and keyword guessing when it's available.
-      if (official && official.eyeBlinkIds && official.eyeBlinkIds.length) {
-        if (role === 'eyeLOpen') { ids[role] = official.eyeBlinkIds[0]; continue; }
-        if (role === 'eyeROpen') { ids[role] = official.eyeBlinkIds[1] || official.eyeBlinkIds[0]; continue; }
-      }
-      if (official && official.lipSyncIds && official.lipSyncIds.length && role === 'mouthOpenY') {
-        ids[role] = official.lipSyncIds[0]; continue;
+      // 0) OFFICIAL model3.json Groups — authored by the model creator. Beats
+      // name guessing, but ONLY when we can identify the intended member by
+      // name; a bare index would be a coin flip (see pickFromGroup).
+      if (official && GROUP_PATTERNS[role]) {
+        const pool = (role === 'mouthOpenY') ? official.lipSyncIds : official.eyeBlinkIds;
+        // Restrict to params the model really owns, so a stale/incorrect Groups
+        // entry can't inject a nonexistent id.
+        const owned = (pool || []).filter(id => paramSet.has(id));
+        const picked = pickFromGroup(owned, GROUP_PATTERNS[role]);
+        if (picked) { ids[role] = picked; continue; }
+        // If the group has exactly ONE owned member there is no ambiguity to
+        // resolve — that member IS the role.
+        if (owned.length === 1) { ids[role] = owned[0]; continue; }
+        // Otherwise fall through to the canonical/keyword tiers below.
       }
       // 1) exact English Param* id (most precise)
       const canonical = 'Param' + role.charAt(0).toUpperCase() + role.slice(1);
@@ -788,6 +910,17 @@
         if (hit) { foundLower = hit; break; }
       }
       if (foundLower) ids[role] = lowerToReal[foundLower];
+    }
+    // INVARIANT: mouthOpenY and mouthForm must never resolve to the SAME param.
+    // If they do, lip-sync and mouth-shape writers collide and the mouth freezes.
+    // Prefer keeping mouthForm and re-deriving mouthOpenY from an owned param.
+    if (ids.mouthOpenY && ids.mouthOpenY === ids.mouthForm) {
+      const alt = Array.from(paramSet).find(id =>
+        /open/i.test(id) && /mouth|口|嘴/i.test(id) && id !== ids.mouthForm);
+      if (alt) ids.mouthOpenY = alt;
+      else delete ids.mouthOpenY;   // absent is safer than aliased
+      console.warn('[roles] mouthOpenY aliased onto mouthForm; resolved to',
+        ids.mouthOpenY || '(none)');
     }
     return ids;
   }
@@ -828,6 +961,45 @@
     const r = roleRange(role);
     if (!r) return clamp(v, -42, 42);
     return clamp(v, r.min, r.max);
+  }
+
+  // ── Role-space writers: the ONLY sanctioned way to drive a semantic role ──
+  // MODEL-AGNOSTIC RULE: never write a literal number into a role param. Values
+  // like `pokeParam(eyeLOpen, 0)` / `pokeParam(breath, 0.7)` silently assume the
+  // model uses the same numeric convention as the model the code was written
+  // against. The two models measured here BOTH happen to use eyeOpen 0..1 and
+  // angle ±30, which is exactly why such bypasses stayed invisible — a rigger
+  // using eyeOpen 0..100, an inverted range (1=closed), or a non-zero default
+  // would produce a character that never blinks or never breathes, with no error.
+  //
+  // pokeRoleNorm(role, t)  — t in 0..1 maps across the role's REAL min..max.
+  //                          t=0 -> min, t=1 -> max. Use for open/closed,
+  //                          breath, mouth-open: anything with a natural
+  //                          "none .. full" reading.
+  // pokeRoleRef(role, vRef) — vRef in the REFERENCE scale (±30 for degree roles,
+  //                          ±1 for normalized ones), mapped proportionally into
+  //                          the model's real range. Use for angles/gaze.
+  function pokeRoleNorm(role, t) {
+    const id = roleId(role);
+    if (!id) return false;
+    const r = roleRange(role);
+    const v = r ? r.min + clamp(t, 0, 1) * (r.max - r.min) : clamp(t, 0, 1);
+    pokeParam(id, v, 1);
+    return true;
+  }
+  function pokeRoleRef(role, vRef) {
+    const id = roleId(role);
+    if (!id) return false;
+    pokeParam(id, roleClampActual(role, toActual(role, vRef)), 1);
+    return true;
+  }
+  // Resting value of a role — the model's OWN declared default, not a literal 0.
+  // A rigger may default eyeOpen to 1 (open) or mouthOpen to 0; assuming 0 for
+  // both is how "her eyes start shut" bugs appear on an imported model.
+  function roleDefault(role) {
+    const r = roleRange(role);
+    if (r && typeof r.def === 'number') return r.def;
+    return 0;
   }
 
 
@@ -872,6 +1044,19 @@
     try {
       if (typeof m.getParameterIds === 'function') paramIds = m.getParameterIds() || [];
     } catch (e) {}
+
+    // Path A2: raw core parameter table. Checked early because it is the
+    // engine's own storage — the same source inspectModel() reads. The paths
+    // below dig through wrapper internals and only happened to work here by
+    // luck (cm._parameterIds), which is exactly how inspectModel() ended up
+    // silently falling back to guessed ranges.
+    if (!paramIds.length && cm) {
+      try {
+        const gm = cm.getModel && cm.getModel();
+        const ids = gm && gm.parameters && gm.parameters.ids;
+        if (ids && ids.length) paramIds = Array.prototype.slice.call(ids);
+      } catch (e) {}
+    }
 
     // Path B: CubismModel wrapper via cm.getModel()
     if (!paramIds.length && cm) {
@@ -1119,7 +1304,16 @@
   // ─── Remote TTS (Colab/Gradio) — URL diambil dari config.json (tts.endpoint) ───
   // Edit config.json, bukan file ini. Kosongkan ('') untuk pakai browser SpeechSynthesis bawaan.
   let TTS_ENDPOINT = '';
-  let EVENTS = { idleSpeak: true, idleMs: 1800000, idleRepeatMs: 1800000, awaySpeak: true, returnSpeak: true, awayHiddenMs: 10000 };
+  // Single source of truth for ambient-event behaviour. `quietMs` is the startup
+  // grace period the agent honours before it is allowed to speak unprompted; it
+  // used to be a hardcoded constant inside agent.js, which made it impossible to
+  // configure or to test in anything under 30 real minutes.
+  let EVENTS = { idleSpeak: true, idleMs: 1800000, idleRepeatMs: 1800000, awaySpeak: true, returnSpeak: true, awayHiddenMs: 10000, quietMs: 1800000 };
+  // Published so agent.js can read the LIVE object (loadAppConfig() mutates it in
+  // place via Object.assign, so the reference stays valid). agent.js loads after
+  // this file but the config fetch is async — a push-based handoff would race,
+  // a shared reference read at event time cannot.
+  window.__appEvents = EVENTS;
   let CAMERA = { enabled: false, fps: 0.4, presenceThreshold: 0.4, device: 'webgpu', model: 'Xenova/facial_emotions_image_detection' };
   let MOTION = { enabled: false, gain: 1.5 };
   async function loadAppConfig() {
@@ -1143,9 +1337,16 @@
   let agentIdleTimer = null;
   let agentIdleRepeat = null;
 
+  function stopAgentIdle() {
+    if (agentIdleTimer) { clearTimeout(agentIdleTimer); agentIdleTimer = null; }
+    if (agentIdleRepeat) { clearInterval(agentIdleRepeat); agentIdleRepeat = null; }
+  }
+
   function resetAgentIdle() {
-    if (agentIdleTimer) clearTimeout(agentIdleTimer);
-    if (agentIdleRepeat) { clearTimeout(agentIdleRepeat); agentIdleRepeat = null; }
+    // clearTimeout on an interval handle is a no-op in browsers — the repeat used
+    // to keep firing forever after the first idle event. Cancel both with the
+    // right primitive.
+    stopAgentIdle();
     if (!EVENTS.idleSpeak) return;
     const fire = () => {
       if (window.__agent && presence === true) window.__agent.reactEvent('idle');
@@ -1156,11 +1357,22 @@
     agentIdleTimer = setTimeout(fire, EVENTS.idleMs);
   }
 
+  // Presence has TWO possible producers (webcam module, or tab focus/visibility
+  // fallback) and they must never both be believed at once. The agent is the
+  // single hub: every producer calls window.__agent.setPresence(), and the agent
+  // calls straight back here. Before this, `presence` was only ever assigned on
+  // the fallback path, so turning the camera ON silently disabled every idle
+  // event: fire() requires presence === true and nothing could set it.
+  window.__l2dPresenceChanged = function (p) {
+    presence = p;
+    if (p === true) resetAgentIdle();
+    else stopAgentIdle();   // away / unknown: stop nagging an empty chair
+  };
+
   function applyFallbackPresence(p) {
     if (window.__cameraActive) return;   // kamera yang pegang kendali presence
     if (window.__agent) window.__agent.setPresence(p);
-    presence = p;
-    if (p === true) resetAgentIdle();
+    else window.__l2dPresenceChanged(p); // agent.js belum ter-load (urutan script)
   }
   document.addEventListener('visibilitychange', () => applyFallbackPresence(!document.hidden));
   window.addEventListener('blur', () => applyFallbackPresence(false));
@@ -1177,12 +1389,21 @@
       if (typeof speechSynthesis === 'undefined') { markDone(); return; }
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'id-ID'; u.rate = 1; u.pitch = 1.15; u.volume = 1;
+      // Per-model voice: pitch/rate/lang are part of a character's identity, so
+      // they come from the model's own config instead of a hardcoded constant.
+      const vcfg = currentModelConfig();
+      u.lang = vcfg.ttsLang; u.rate = vcfg.ttsRate; u.pitch = vcfg.ttsPitch; u.volume = 1;
       u.onend = markDone;
       u.onerror = markDone;
       const pickVoice = () => {
         const vs = speechSynthesis.getVoices() || [];
-        const v = vs.find(x => /id-ID/i.test(x.lang)) || vs.find(x => /indonesia/i.test(x.name)) || vs.find(x => /^id/i.test(x.lang));
+        // Match against the configured language, not a hardcoded id-ID, or a
+        // Japanese-voiced character would still be handed an Indonesian voice.
+        const base = String(vcfg.ttsLang || '').split('-')[0].toLowerCase();
+        const langRe = new RegExp('^' + base, 'i');
+        const v = vs.find(x => String(x.lang).toLowerCase() === String(vcfg.ttsLang).toLowerCase())
+          || vs.find(x => langRe.test(x.lang))
+          || (base === 'id' ? vs.find(x => /indonesia/i.test(x.name)) : null);
         if (v) u.voice = v;
         speechSynthesis.speak(u);
       };
@@ -1227,8 +1448,14 @@
       ttsDone = true;
       hideBubble();                 // sembunyikan teks pas audio selesai
       state.talking = false;        // hentikan mulut
+      // Rest the mouth at the MODEL's own default for this role, not a literal
+      // 0 — a rig whose mouthOpen rests at a non-zero value would otherwise be
+      // forced shut (or left ajar) after every line.
       const mId = roleId('mouthOpenY');
-      if (mId) { delete state.overrides[mId]; pokeParam(mId, state.mouthRest, 1); }
+      if (mId) {
+        delete state.overrides[mId];
+        pokeParam(mId, state.mouthRest != null ? state.mouthRest : roleDefault('mouthOpenY'), 1);
+      }
       if (onDone) onDone();
     };
     // Reveal teks + mulai gerak mulut HANYA saat audio benar-benar mulai main.
@@ -1242,7 +1469,10 @@
       state.mouthTimer = setTimeout(() => {
         state.talking = false;
         const mId = roleId('mouthOpenY');
-        if (mId) { delete state.overrides[mId]; pokeParam(mId, state.mouthRest, 1); }
+        if (mId) {
+          delete state.overrides[mId];
+          pokeParam(mId, state.mouthRest != null ? state.mouthRest : roleDefault('mouthOpenY'), 1);
+        }
       }, dur);
     };
     // Indikator "menyiapkan suara" — baru teks asli & mulut jalan pas audio siap.
@@ -1254,6 +1484,19 @@
       reveal();
       browserTTS(text, markDone, fallbackTimer);
     }
+  }
+
+  // ─── HTML escaping ─────────────────────────────────────────────
+  // Module-level on purpose: every innerHTML sink in this file must be able to
+  // reach it. It used to be declared inside wireUI(), which meant any code
+  // outside that function (the sheet editor and the dynamic group UI planned
+  // next) had no way to escape text and would be tempted to interpolate raw
+  // strings — model names, LLM-produced labels, and user-typed descriptions all
+  // end up in markup, so this has to be available everywhere.
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[m]));
   }
 
   // ─── UI Event Wiring ───────────────────────────────────────────
@@ -1356,7 +1599,12 @@
       const g = (window.__agent && window.__agent.guessEmotion) ? window.__agent.guessEmotion(text) : '';
       const moodMap = { senang: 'senang', tersenyum: 'senang', sedih: 'sedih', malu: 'normal', kaget: 'kaget', kesal: 'marah', bingung: 'normal' };
       const m = moodMap[g] || 'normal';
-      if (m !== 'normal' && window.__agent) window.__agent.setUserMood(m);
+      // Selalu kirim, termasuk 'normal'. Sebelumnya 'normal' di-skip, jadi sekali
+      // user menulis sesuatu yang sedih, mood itu menempel SELAMANYA dan setiap
+      // balasan berikutnya dibumbui "user terlihat sedih" walau sudah lama ceria.
+      // Sumber 'text' ditandai agar tidak menimpa mood kamera (sinyal wajah lebih
+      // kuat daripada tebakan kata kunci).
+      if (window.__agent) window.__agent.setUserMood(m, 'text');
       if (brainOn && window.__agent) {
         window.__agent.think(text);                      // route to the LLM brain
       } else {
@@ -1373,22 +1621,43 @@
     });
 
     // ── Kamera reactive toggle (opt-in) ──
-    const camToggle = document.getElementById('useCamera');
+    const camToggle = document.getElementById('use-camera');
+    const camStatus = document.getElementById('camera-status');
+    function setCamStatus(text, cls) {
+      if (!camStatus) return;
+      camStatus.textContent = text;
+      camStatus.className = 'note-status' + (cls ? ' ' + cls : '');
+    }
     if (camToggle) {
       camToggle.checked = !!CAMERA.enabled;
       camToggle.addEventListener('change', async (e) => {
         const on = e.target.checked;
         if (on) {
-          if (!window.cameraPresence) { e.target.checked = false; alert('Modul kamera belum dimuat.'); return; }
+          if (!window.cameraPresence) {
+            e.target.checked = false;
+            setCamStatus('modul kamera belum dimuat', 'err');
+            return;
+          }
+          // Model emosi diunduh dari CDN — bisa belasan detik. Kunci checkbox
+          // supaya user tidak bisa start/stop bertubi-tubi saat masih memuat.
+          e.target.disabled = true;
+          setCamStatus('meminta izin & memuat model…', 'busy');
           try {
-            await window.cameraPresence.start(CAMERA);
+            // awayHiddenMs hidup di `events`, bukan `camera`, tapi yang memakainya
+            // adalah loop kamera (lowStreak × interval). Tanpa diteruskan,
+            // ambang "pergi" milik user diam-diam diabaikan.
+            await window.cameraPresence.start(Object.assign({}, CAMERA, { awayHiddenMs: EVENTS.awayHiddenMs }));
+            setCamStatus('aktif — deteksi hadir & mood', 'ok');
           } catch (err) {
             console.error('[camera] start gagal:', err);
             e.target.checked = false;
-            alert('Gagal akses kamera: ' + (err && err.message ? err.message : err));
+            setCamStatus('gagal: ' + (err && err.message ? err.message : err), 'err');
+          } finally {
+            e.target.disabled = false;
           }
         } else {
           if (window.cameraPresence) window.cameraPresence.stop();
+          setCamStatus('mati', '');
           applyFallbackPresence(!document.hidden);   // kembalikan ke fallback visibility
         }
       });
@@ -1442,7 +1711,6 @@
         connList.appendChild(card);
       }
     }
-    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 
     function openModal(c) {
       editingId = c ? c.id : null;
@@ -1711,6 +1979,10 @@
         const sheet = inspectModel();
         hideLoader();
         if (sheet) {
+          // Re-inspection preserves the user's note; reflect that in the UI so
+          // the textarea can't drift from what was actually persisted.
+          refreshUserNoteUI();
+          try { refreshConfigForm(); } catch (e) {}
           alert(`✅ Character Sheet generated!\n\n` +
             `📋 ${sheet.paramCount} parameter ditemukan\n` +
             `😊 ${Object.keys(sheet.supportedEmotions).length} emosi didukung\n` +
@@ -1724,8 +1996,280 @@
       }, 100);
     });
 
+    // ── Catatan Karakter (user note) ──
+    const noteBox = $('#input-user-note');
+    const noteBtn = $('#btn-save-note');
+    const noteStatus = $('#note-status');
+    function setNoteStatus(msg, kind) {
+      if (!noteStatus) return;
+      noteStatus.textContent = msg;
+      noteStatus.className = 'note-status' + (kind ? ' ' + kind : '');
+    }
+    if (noteBtn && noteBox) {
+      noteBtn.addEventListener('click', async () => {
+        noteBtn.disabled = true;
+        setNoteStatus('menyimpan…');
+        try {
+          const saved = await saveUserNote(noteBox.value);
+          // Show the sanitized/truncated result so the user sees exactly what
+          // was stored rather than what they typed.
+          if (saved !== noteBox.value) noteBox.value = saved;
+          setNoteStatus(saved.length
+            ? `tersimpan (${saved.length}/${MAX_USER_NOTE})`
+            : 'catatan dikosongkan', 'ok');
+        } catch (e) {
+          setNoteStatus('gagal: ' + e.message, 'err');
+        } finally {
+          noteBtn.disabled = false;
+        }
+      });
+      // Ctrl/Cmd+Enter saves without reaching for the mouse.
+      noteBox.addEventListener('keydown', (ev) => {
+        if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); noteBtn.click(); }
+      });
+      // Live length feedback once the cap is in sight.
+      noteBox.addEventListener('input', () => {
+        const n = noteBox.value.length;
+        if (n > MAX_USER_NOTE * 0.8) setNoteStatus(n + '/' + MAX_USER_NOTE, n >= MAX_USER_NOTE ? 'err' : '');
+        else if (noteStatus && noteStatus.textContent) setNoteStatus('');
+      });
+    }
+
+    // ── Pengaturan per-model (config) ──
+    const cfgEls = {
+      blink: $('#cfg-blink'),
+      idle: $('#cfg-idle'),
+      framing: $('#cfg-framing'),
+      pitch: $('#cfg-tts-pitch'),
+      pitchOut: $('#cfg-tts-pitch-out'),
+      rate: $('#cfg-tts-rate'),
+      rateOut: $('#cfg-tts-rate-out'),
+      lang: $('#cfg-tts-lang'),
+      btn: $('#btn-save-cfg'),
+      test: $('#btn-test-voice'),
+      status: $('#cfg-status'),
+    };
+    function setCfgStatus(msg, kind) {
+      if (!cfgEls.status) return;
+      cfgEls.status.textContent = msg;
+      cfgEls.status.className = 'note-status' + (kind ? ' ' + kind : '');
+    }
+    // Paint the form from a config object. Exposed on the module scope below so
+    // a model swap can re-sync the panel.
+    function paintConfigForm(cfg) {
+      const c = normalizeModelConfig(cfg);
+      if (cfgEls.blink) cfgEls.blink.checked = c.blink;
+      if (cfgEls.idle) cfgEls.idle.checked = c.idle;
+      if (cfgEls.framing) cfgEls.framing.value = c.framing;
+      if (cfgEls.pitch) cfgEls.pitch.value = String(c.ttsPitch);
+      if (cfgEls.rate) cfgEls.rate.value = String(c.ttsRate);
+      // toFixed(2) keeps the readout width stable while dragging.
+      if (cfgEls.pitchOut) cfgEls.pitchOut.textContent = c.ttsPitch.toFixed(2);
+      if (cfgEls.rateOut) cfgEls.rateOut.textContent = c.ttsRate.toFixed(2);
+      if (cfgEls.lang) {
+        // A sheet may carry a lang that isn't in the dropdown (hand-edited, or
+        // written by a newer build). Add it rather than silently showing id-ID,
+        // which would misrepresent what is actually stored.
+        const has = Array.prototype.some.call(cfgEls.lang.options, o => o.value === c.ttsLang);
+        if (!has) {
+          const opt = document.createElement('option');
+          opt.value = c.ttsLang; opt.textContent = c.ttsLang + ' (tersimpan)';
+          cfgEls.lang.appendChild(opt);
+        }
+        cfgEls.lang.value = c.ttsLang;
+      }
+    }
+    refreshConfigForm = () => paintConfigForm(loadModelConfigLocal());
+
+    function readConfigForm() {
+      return {
+        blink: cfgEls.blink ? !!cfgEls.blink.checked : undefined,
+        idle: cfgEls.idle ? !!cfgEls.idle.checked : undefined,
+        framing: cfgEls.framing ? cfgEls.framing.value : undefined,
+        ttsPitch: cfgEls.pitch ? Number(cfgEls.pitch.value) : undefined,
+        ttsRate: cfgEls.rate ? Number(cfgEls.rate.value) : undefined,
+        ttsLang: cfgEls.lang ? cfgEls.lang.value : undefined,
+      };
+    }
+
+    // Live readout while dragging — no save, just feedback.
+    if (cfgEls.pitch && cfgEls.pitchOut) {
+      cfgEls.pitch.addEventListener('input', () => {
+        cfgEls.pitchOut.textContent = Number(cfgEls.pitch.value).toFixed(2);
+      });
+    }
+    if (cfgEls.rate && cfgEls.rateOut) {
+      cfgEls.rate.addEventListener('input', () => {
+        cfgEls.rateOut.textContent = Number(cfgEls.rate.value).toFixed(2);
+      });
+    }
+
+    // Blink/idle/framing apply IMMEDIATELY on change (cheap, instantly visible,
+    // and reversible), but are only persisted by the Save button. This way the
+    // user can try a framing without committing it.
+    if (cfgEls.blink) cfgEls.blink.addEventListener('change', () => {
+      state.blinkEnabled = !!cfgEls.blink.checked;
+      setCfgStatus('belum disimpan', '');
+    });
+    if (cfgEls.idle) cfgEls.idle.addEventListener('change', () => {
+      state.idleEnabled = !!cfgEls.idle.checked;
+      setCfgStatus('belum disimpan', '');
+    });
+    if (cfgEls.framing) cfgEls.framing.addEventListener('change', () => {
+      if (state.model) { try { frameModel(cfgEls.framing.value); } catch (e) {} }
+      setCfgStatus('belum disimpan', '');
+    });
+
+    if (cfgEls.btn) {
+      cfgEls.btn.addEventListener('click', async () => {
+        cfgEls.btn.disabled = true;
+        setCfgStatus('menyimpan…');
+        try {
+          const saved = await saveModelConfig(readConfigForm());
+          // Repaint from the SAVED value: clamping may have changed what the
+          // user selected, and the form must show the truth.
+          paintConfigForm(saved);
+          setCfgStatus('tersimpan', 'ok');
+        } catch (e) {
+          setCfgStatus('gagal: ' + e.message, 'err');
+        } finally {
+          cfgEls.btn.disabled = false;
+        }
+      });
+    }
+
+    // Hear the current slider values without saving them first.
+    if (cfgEls.test) {
+      cfgEls.test.addEventListener('click', () => {
+        const prev = state.modelConfig;
+        // Temporarily apply the form values so browserTTS() picks them up, then
+        // restore — a preview must not mutate live state on its own.
+        state.modelConfig = normalizeModelConfig(
+          Object.assign({}, prev, readConfigForm()));
+        try {
+          browserTTS('Halo, ini suara aku sekarang.', () => { state.modelConfig = prev; }, null);
+        } catch (e) {
+          state.modelConfig = prev;
+          setCfgStatus('tes suara gagal: ' + e.message, 'err');
+        }
+      });
+    }
+
+    refreshConfigForm();
+
     loadConns();
   }
+
+  // ── Sheet schema + per-model config constants ───────────────────
+  // These live ABOVE the Boot call on purpose. `const` is not hoisted the way
+  // function declarations are: it sits in a temporal dead zone until its own
+  // line executes. wireUI() -> refreshConfigForm() -> loadModelConfigLocal() ->
+  // normalizeModelConfig() reads MODEL_CONFIG_DEFAULTS synchronously during
+  // boot, so declaring these further down the file (where the sheet code that
+  // also uses them lives) threw "Cannot access 'MODEL_CONFIG_DEFAULTS' before
+  // initialization" and killed the whole IIFE before the model ever loaded.
+  // Keep declarations that boot-time code touches in this block.
+  //
+  // Sheets are persisted in two places (localStorage + sheets/*.json) and are
+  // read back by code that keeps gaining fields. Without a version stamp there
+  // is no way to tell "field missing because the model lacks it" from "field
+  // missing because this sheet predates the field", so every reader would need
+  // its own defensive guesswork. The version lets migrateSheet() normalize once,
+  // at the single point where a sheet enters the app.
+  //
+  // v0 = unversioned legacy sheets already on disk / in localStorage.
+  // v1 = adds schemaVersion + userNote.
+  // v2 = adds config{} (per-model user preferences: blink, idle, framing, TTS).
+  // v3 = adds rangeSource. Pre-v3 sheets were written by a broken enumeration
+  //      path whose ranges were ALWAYS guesses while claiming to be measured,
+  //      so v3 relabels them as estimated and asks for a re-inspect.
+  // v4 = adds params[i].userNote (per-parameter description written by the user),
+  //      paramGroups{user,ai} (CATEGORISATION: which tab/section a raw slider
+  //      belongs to) and presets{user,ai} (NAMED PRESETS: one clickable name ->
+  //      several params at specific values). The last two are deliberately
+  //      separate structures: a category label carries no values, and a preset
+  //      does not tell you where to file a slider. Both are needed.
+  const SHEET_SCHEMA_VERSION = 4;
+
+  // Fields authored by the USER, never by inspection or by the LLM. These must
+  // survive re-inspection: inspectModel() rebuilds the sheet from scratch, so
+  // without this list a re-inspect would silently erase the user's own notes.
+  //
+  // paramGroups and presets are carried WHOLE, including their .ai branch.
+  // Re-inspection is about re-measuring ranges from Cubism, not about revising
+  // groupings — dropping .ai here would make a range re-measure silently throw
+  // away the LLM's suggestions too. The .ai branch is replaced only by an
+  // explicit "Kirim ke LLM". Stale ids inside either branch are harmless: they
+  // are validated against sheet.params at render/apply time.
+  const USER_AUTHORED_FIELDS = ['userNote', 'config', 'paramGroups', 'presets'];
+
+  // ── Preset model ────────────────────────────────────────────────
+  // A preset is a NAME the user (or the LLM) can invoke, mapping to concrete
+  // values. Four categories, matching the four tabs:
+  //   emosi     -> projected into state.supportedEmotions, so applyExpression()
+  //                and getExpressibleEmotions() pick it up with no new engine
+  //   properti  -> manual click only for now (see note in capability profile)
+  //   aksesoris -> merged into capProfile.accessories, driven via [ACC:...]
+  //   gerak     -> merged into capProfile.gestures, driven via [GESTURE:...]
+  const PRESET_CATEGORIES = ['emosi', 'properti', 'aksesoris', 'gerak'];
+
+  // Bounds for the SEMANTIC pose fields used by a 'gerak' preset's steps.
+  //
+  // ±30 for bodyX/bodyY/bodyZ is DELIBERATE and matches applyActions() in
+  // agent.js — see the long comment there. Do not narrow either one to ±20
+  // without changing both: the whole point is that a preset the user designed
+  // and a directive the LLM emitted obey the same limit.
+  //
+  // ex/ey/mouthForm are normalized -1..1 in the engine, not degrees.
+  //
+  // Only these eight names exist. Anything else in a step's delta is DROPPED
+  // rather than passed through — that is what keeps a 'gerak' preset
+  // model-agnostic and stops a raw Cubism paramId from sneaking in via `d`.
+  const STEP_FIELD_BOUNDS = {
+    ax: 30, ay: 30, bodyX: 30, bodyY: 30, bodyZ: 30,
+    ex: 1, ey: 1, mouthForm: 1,
+  };
+  // Structural limits. Clamping values alone does not save us here: a preset
+  // with ms:0 repeated 400 times floods setTimeout without any single number
+  // being out of range. 40ms is below one frame at 24fps, so anything shorter
+  // is invisible anyway.
+  const STEP_MS_MIN = 40;
+  const STEP_MS_MAX = 3000;
+  const STEP_COUNT_MAX = 12;
+  const STEP_TOTAL_MS_MAX = 8000;
+
+
+  // Per-model config. These were previously hardcoded and reset on every reload:
+  // blink/idle lived only in `state`, framing was a literal frameModel('upper')
+  // at load time, and the TTS voice was `pitch: 1.15` baked into browserTTS().
+  // Pitch in particular is part of a character's identity — every model sounded
+  // identical.
+  //
+  // Stored INSIDE the sheet rather than in a second file: the sheet already has
+  // atomic writes, a serialized write queue, schema migration and a user-authored
+  // whitelist. A separate file would mean rebuilding all four and would introduce
+  // a desync window between two files describing one model.
+  const MODEL_CONFIG_DEFAULTS = {
+    blink: true,
+    idle: true,
+    framing: 'upper',     // 'upper' | 'full'
+    ttsRate: 1,
+    ttsPitch: 1.15,       // the old hardcoded value, now just the default
+    ttsLang: 'id-ID',
+  };
+
+  const FRAMING_MODES = ['upper', 'full'];
+  // Web Speech API accepts rate 0.1..10 and pitch 0..2. Values outside those are
+  // silently ignored by the browser, which looks like "the setting did nothing",
+  // so clamp here instead of letting a bad number reach speechSynthesis.
+  const TTS_RATE_RANGE = { min: 0.5, max: 2 };
+  const TTS_PITCH_RANGE = { min: 0, max: 2 };
+
+  // Live per-model config: the single place the running app reads its per-model
+  // preferences from. Seeded from the sheet on model load; a saved sheet is
+  // authoritative. Assigned here (not further down) for the same TDZ reason —
+  // refreshConfigForm() runs during wireUI() and would otherwise read undefined.
+  state.modelConfig = Object.assign({}, MODEL_CONFIG_DEFAULTS);
 
   // ─── Boot ─────────────────────────────────────────────────────
   wireUI();
@@ -1797,6 +2341,89 @@
   // instead of falling back to plain idle).
   const EMOTION_GESTURE = { senang: 'lean_excited', sedih: 'look_away_shy', malu: 'look_away_shy', kaget: 'recoil_surprised', normal: 'nod' };
 
+  // ── Preset lookup + apply ───────────────────────────────────────
+  // Name lookup ALWAYS hits presets.user before presets.ai. That is the same
+  // precedence the UI shows: an AI suggestion never shadows a preset the user
+  // authored under the same name, and nothing is overwritten — the two live in
+  // separate branches of the sheet.
+  function findPreset(name, category) {
+    if (!name || typeof name !== 'string') return null;
+    const sheet = state.lastSheet;
+    if (!sheet || !sheet.presets) return null;
+    const want = name.trim().toLowerCase();
+    for (const branch of ['user', 'ai']) {
+      const list = sheet.presets[branch] || [];
+      for (const p of list) {
+        if (category && p.category !== category) continue;
+        if (p.name.toLowerCase() === want) return p;
+      }
+    }
+    return null;
+  }
+
+  function findGerakPreset(name) { return findPreset(name, 'gerak'); }
+
+  // Apply a preset's static values. Parameters and Parts go through DIFFERENT
+  // engine calls, so they are stored and applied separately — a Part id sent
+  // through setParameterValue() is a silent no-op.
+  //
+  // Every value is clamped to the parameter's MEASURED Cubism range at apply
+  // time, and ids not present in the sheet are dropped. Neither the stored file
+  // nor the LLM is trusted to have stayed in range: min/max come from the engine
+  // only, exactly as in Fase 0.
+  function applyPreset(nameOrPreset, category) {
+    if (!state.model) return false;
+    const preset = (typeof nameOrPreset === 'string')
+      ? findPreset(nameOrPreset, category)
+      : nameOrPreset;
+    if (!preset) return false;
+
+    if (preset.category === 'gerak') { playGesture(preset.name); return true; }
+
+    const sheet = state.lastSheet || {};
+    const byId = new Map((sheet.params || []).filter(p => p && p.id).map(p => [p.id, p]));
+    const partIds = new Set((sheet.parts || []).map(p => (p && p.id) || p).filter(Boolean));
+
+    let applied = 0;
+    for (const [id, raw] of Object.entries(preset.values || {})) {
+      const meta = byId.get(id);
+      if (!meta) continue;                       // invented / stale id — drop
+      const lo = Number.isFinite(meta.min) ? meta.min : -1;
+      const hi = Number.isFinite(meta.max) ? meta.max : 1;
+      setSticky(id, Math.max(lo, Math.min(hi, Number(raw))), 1);
+      applied++;
+    }
+    for (const [id, raw] of Object.entries(preset.parts || {})) {
+      if (!partIds.has(id)) continue;
+      const v = Math.max(0, Math.min(1, Number(raw)));   // opacity is always 0..1
+      try { state.model.internalModel.coreModel.setPartOpacityById(id, v); applied++; }
+      catch (e) { /* part vanished with a model swap — ignore */ }
+    }
+    state.impulse = Math.min(1.0, state.impulse + 0.25);
+    console.log('[preset] applied', preset.category + ':' + preset.name,
+      '(' + applied + ' targets, source=' + preset.source + ')');
+    return applied > 0;
+  }
+
+  // Make user-authored 'emosi' presets visible to the EXISTING emotion engine.
+  // applyExpression() gates on state.supportedEmotions.hasOwnProperty(name) and
+  // getExpressibleEmotions() builds the LLM's vocabulary from the same map, so
+  // projecting here is all that is needed — no change to either function.
+  //
+  // Only .user is projected: an AI suggestion must not become an advertised
+  // capability before the user saves it.
+  function projectEmotionPresets(sheet) {
+    if (!sheet || !sheet.presets) return;
+    if (!sheet.supportedEmotions || typeof sheet.supportedEmotions !== 'object') sheet.supportedEmotions = {};
+    for (const p of (sheet.presets.user || [])) {
+      if (p.category !== 'emosi') continue;
+      sheet.supportedEmotions[p.name] = p.values || {};
+    }
+    if (state.supportedEmotions) {
+      Object.assign(state.supportedEmotions, sheet.supportedEmotions);
+    }
+  }
+
   let gestureToken = 0;
   function playGesture(name) {
     if (!state.model || !name) return;
@@ -1814,8 +2441,14 @@
       }
     }
 
-    const steps = GESTURE_LIBRARY[name];
-    if (!steps) return;
+    const preset = findGerakPreset(name);
+    // sanitizeSteps() runs HERE, at apply time, not when the preset was saved:
+    // sheets/*.json is hand-editable after the fact, so a save-path-only check
+    // is trivially bypassed. Same reasoning as clamping param values to the
+    // Cubism range at apply. Applies to user-written presets and (if ever
+    // enabled) AI-proposed ones alike, because both arrive through this door.
+    const steps = preset ? sanitizeSteps(preset.steps) : GESTURE_LIBRARY[name];
+    if (!steps || !steps.length) return;
     const P = state.aiPose;
     // Snapshot the CURRENT target (whatever EMOTION/HEAD just set) so every
     // delta composes on top of it, not on top of a previous gesture's leftovers.
@@ -1836,13 +2469,60 @@
   window.__live2dAgent = {
     speak,
     setExpression: applyExpression,
-    setAccessory: (paramId, val) => toggleAccessory(paramId, val),
+    // [ACC:...] now carries either a raw paramId (as always) OR the name of a
+    // user 'aksesoris' preset, because those names are advertised in
+    // capProfile.accessories. Preset lookup goes FIRST so a user preset named
+    // after a paramId still wins; unknown names fall through to the original
+    // toggle, so existing behaviour is unchanged.
+    setAccessory: (paramIdOrName, val) => {
+      const preset = findPreset(paramIdOrName, 'aksesoris');
+      if (preset) return applyPreset(preset);
+      return toggleAccessory(paramIdOrName, val);
+    },
+    applyPreset,
+    findPreset,
     setParameter: (id, v) => { setSticky(id, v, 1); },
     isReady: () => !!state.model,
     getMouth: () => { const mId = roleId('mouthOpenY'); return (mId && state.overrides[mId] != null ? state.overrides[mId] : state.mouthRest); },
     frameModel,
     zoom: setScaleAroundCenter,
     _getSupportedEmotions: () => state.supportedEmotions || {},
+    // Emosi mana yang model INI benar-benar bisa sampaikan, diurutkan dari cara
+    // yang paling ekspresif. Tiga sumber, semuanya diukur dari model — bukan
+    // daftar nama karakter tertentu:
+    //   1. supportedEmotions — preset param wajah (hasil scan)
+    //   2. nativeExpressions — file .exp3 milik rigger
+    //   3. taksonomi motion  — verb klip yang benar-benar ada (dari kurva)
+    // Dipakai agent.js supaya reaksi event memilih dari kemampuan nyata,
+    // bukan menulis nama emosi secara literal.
+    getExpressibleEmotions: () => {
+      const out = {};
+      const add = (name, via) => { if (name && !out[name]) out[name] = via; };
+      for (const k of Object.keys(state.supportedEmotions || {})) add(k, 'param');
+      for (const n of (state.modelExpressions || [])) add(n, 'native');
+      const T = state.motionTaxonomy;
+      if (T && T.byVerb && typeof MotionTaxonomy !== 'undefined') {
+        const EV = MotionTaxonomy.EMOTION_VERBS || {};
+        for (const emo of Object.keys(EV)) {
+          if (emo === 'normal') continue;
+          const hasClip = EV[emo].some(v => (T.byVerb[v] || []).length > 0);
+          if (hasClip) add(emo, 'clip');
+        }
+      }
+      return out;
+    },
+    // Sampaikan emosi lewat jalur terbaik yang tersedia. applyExpression() sendiri
+    // tidak melakukan apa pun untuk nama yang bukan preset param dan bukan .exp3
+    // — pada kedua model bundled itu berarti SETIAP reaksi jadi no-op senyap.
+    // Di sini klip motion dipakai sebagai jalur terakhir supaya tubuh tetap
+    // bereaksi walau wajahnya tak punya preset.
+    expressEmotion: (name) => {
+      if (!state.model || !name) return null;
+      const via = window.__live2dAgent.getExpressibleEmotions()[name];
+      if (!via) return null;
+      if (via === 'param' || via === 'native') { applyExpression(name); return via; }
+      return playEmotionClip(name) ? 'clip' : null;
+    },
     // ── AI Lock: pause user interaction while AI controls the character ──
     lockAI: () => {
       state.aiLock = true;
@@ -1907,7 +2587,459 @@
   // Deep-inspect a model once, save the profile to localStorage, and reuse
   // it for all future AI interactions — no hardcoding needed.
 
+  // Identity of the currently loaded model, used to name its character sheet
+  // (localStorage key AND sheets/<key>.json on the server).
+  //
+  // This was referenced in two places but never defined — a ReferenceError that
+  // rejected getCapabilityProfile(), which in turn killed agent.think() BEFORE
+  // it ever reached fetch(). Result: typing a message produced no request, no
+  // reply and no error, and left the agent's `busy` flag stuck true forever.
+  //
+  // Derived from the model PATH (not a display name) so two models sharing a
+  // folder name can't collide. The sanitizer mirrors sanitizeKey() in
+  // server.js exactly, so the browser and the server agree on the filename:
+  //   model/神宫白子/面饼0.model3.json -> model_神宫白子_面饼0_model3_json
+  // which is the sheet already present in sheets/ — existing sheets keep working.
+  function currentModelKey() {
+    const p = state.modelPath || 'default';
+    return p.replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g, '_');
+  }
+
   function characterSheetKey() { return 'live2d_sheet_' + currentModelKey(); }
+
+  // SHEET_SCHEMA_VERSION, USER_AUTHORED_FIELDS, MODEL_CONFIG_DEFAULTS,
+  // FRAMING_MODES and the TTS ranges are declared in the block above the Boot
+  // call. They belong logically here with the sheet code, but boot-time code
+  // (wireUI -> refreshConfigForm -> loadModelConfigLocal) reads them
+  // synchronously, and `const` in a temporal dead zone throws if declared this
+  // far down. Do not re-declare them here.
+
+  function normalizeModelConfig(raw) {
+    const c = Object.assign({}, MODEL_CONFIG_DEFAULTS);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return c;
+    if (typeof raw.blink === 'boolean') c.blink = raw.blink;
+    if (typeof raw.idle === 'boolean') c.idle = raw.idle;
+    if (FRAMING_MODES.indexOf(raw.framing) !== -1) c.framing = raw.framing;
+    // Number(): a persisted "1.4" from a form field must not poison the math.
+    const r = Number(raw.ttsRate);
+    if (Number.isFinite(r)) c.ttsRate = clamp(r, TTS_RATE_RANGE.min, TTS_RATE_RANGE.max);
+    const p = Number(raw.ttsPitch);
+    if (Number.isFinite(p)) c.ttsPitch = clamp(p, TTS_PITCH_RANGE.min, TTS_PITCH_RANGE.max);
+    if (typeof raw.ttsLang === 'string' && /^[a-zA-Z]{2}(-[a-zA-Z0-9]{2,8})*$/.test(raw.ttsLang)) {
+      c.ttsLang = raw.ttsLang;
+    }
+    return c;
+  }
+
+  // ── Preset sanitisation ─────────────────────────────────────────
+  // Applied AT APPLY TIME, not at save time. sheets/*.json is a plain file the
+  // user can edit by hand after saving, so a save-path-only check is trivially
+  // bypassed — same reasoning as clamping param values to the Cubism range at
+  // apply rather than trusting what is stored.
+  function sanitizeSteps(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    let total = 0;
+    for (const step of raw) {
+      if (out.length >= STEP_COUNT_MAX) break;
+      if (!step || typeof step !== 'object') continue;
+      const d = {};
+      const src = (step.d && typeof step.d === 'object') ? step.d : {};
+      for (const k in STEP_FIELD_BOUNDS) {
+        const n = Number(src[k]);
+        // Unknown keys are never copied: `for k in STEP_FIELD_BOUNDS` iterates
+        // the WHITELIST, not the input. A raw paramId in `d` simply vanishes.
+        if (Number.isFinite(n) && n !== 0) {
+          const b = STEP_FIELD_BOUNDS[k];
+          d[k] = Math.max(-b, Math.min(b, n));
+        }
+      }
+      let ms = Number(step.ms);
+      if (!Number.isFinite(ms)) ms = STEP_MS_MIN;
+      ms = Math.max(STEP_MS_MIN, Math.min(STEP_MS_MAX, Math.round(ms)));
+      if (total + ms > STEP_TOTAL_MS_MAX) break;
+      total += ms;
+      out.push({ d, ms });
+    }
+    return out;
+  }
+
+  // One preset entry. `source` is forced by the CALLER (the save path decides
+  // whether it is writing the .user or the .ai branch) — never read from the
+  // stored object, or a hand-edited file could promote an AI suggestion into a
+  // user-authored preset and win the precedence rule.
+  function normalizePreset(raw, source) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const name = String(raw.name == null ? '' : raw.name).trim().slice(0, 60);
+    if (!name) return null;
+    const category = PRESET_CATEGORIES.indexOf(raw.category) !== -1 ? raw.category : 'properti';
+    const num = (obj) => {
+      const o = {};
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return o;
+      for (const k of Object.keys(obj)) {
+        const n = Number(obj[k]);
+        if (typeof k === 'string' && k && Number.isFinite(n)) o[k] = n;
+      }
+      return o;
+    };
+    const p = {
+      name,
+      category,
+      // Parameters (setParameterValue) and Parts (setPartOpacity) are driven by
+      // DIFFERENT engine calls, so they cannot share one map — a value meant for
+      // a Part, applied as a Parameter, is a silent no-op.
+      values: num(raw.values),
+      parts: num(raw.parts),
+      source: source === 'ai' ? 'ai' : 'user',
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
+    };
+    // Timed keyframes only make sense for 'gerak'. A frozen {paramId: value}
+    // map is a pose, not a motion.
+    if (category === 'gerak') p.steps = sanitizeSteps(raw.steps);
+    return p;
+  }
+
+  function normalizePresetList(raw, source) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const item of raw) {
+      const p = normalizePreset(item, source);
+      if (!p) continue;
+      // Within ONE branch a name is unique (last write wins). Across branches it
+      // is not: presets.user and presets.ai may both hold "Senang", and that is
+      // exactly the case the precedence rule exists for.
+      const key = p.category + '\u0000' + p.name.toLowerCase();
+      if (seen.has(key)) out.splice(out.findIndex(x => x.category + '\u0000' + x.name.toLowerCase() === key), 1);
+      seen.add(key);
+      out.push(p);
+    }
+    return out;
+  }
+
+  function normalizePresets(raw) {
+    const r = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+    return { user: normalizePresetList(r.user, 'user'), ai: normalizePresetList(r.ai, 'ai') };
+  }
+
+  // paramId -> group label. Categorisation only; carries no values.
+  function normalizeGroupMap(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    for (const k of Object.keys(raw)) {
+      const label = String(raw[k] == null ? '' : raw[k]).trim().slice(0, 40);
+      if (k && label) out[k] = label;
+    }
+    return out;
+  }
+
+  function normalizeParamGroups(raw) {
+    const r = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+    return { user: normalizeGroupMap(r.user), ai: normalizeGroupMap(r.ai) };
+  }
+
+  // Resolution for a single parameter: user wins over AI, AI wins over the
+  // heuristic already computed by inspectModel(). Per-parameter, not
+  // whole-sheet — so moving one slider by hand does not freeze the rest of the
+  // sheet against future AI suggestions.
+  function resolveParamGroup(sheet, paramId, heuristic) {
+    const g = (sheet && sheet.paramGroups) || {};
+    return (g.user && g.user[paramId]) || (g.ai && g.ai[paramId]) || heuristic || 'Kustom';
+  }
+
+  // Presets to SHOW/INVOKE for a category. User entries first; an AI entry whose
+  // name collides with a user entry is kept but flagged `suggestion` so the UI
+  // can badge it — it never replaces the user's button, and lookup-by-name hits
+  // the user's copy first.
+  function resolvePresets(sheet, category) {
+    const P = (sheet && sheet.presets) || {};
+    const users = (P.user || []).filter(p => !category || p.category === category);
+    const taken = new Set(users.map(p => p.name.toLowerCase()));
+    const ais = (P.ai || [])
+      .filter(p => !category || p.category === category)
+      .map(p => Object.assign({}, p, { suggestion: taken.has(p.name.toLowerCase()) }));
+    return users.concat(ais);
+  }
+
+  function migrateSheet(sheet) {
+    if (!sheet || typeof sheet !== 'object' || Array.isArray(sheet)) return null;
+    const v = Number(sheet.schemaVersion) || 0;
+    if (v > SHEET_SCHEMA_VERSION) {
+      // A sheet written by a NEWER build. Don't rewrite it — we'd strip fields we
+      // don't know about. Use it as-is and say so.
+      console.warn('[sheet] schemaVersion', v, '> supported', SHEET_SCHEMA_VERSION,
+        '— using as-is, not migrating');
+      return sheet;
+    }
+    if (v < 1) {
+      // v0 -> v1: no destructive change, just establish the new fields.
+      if (typeof sheet.userNote !== 'string') sheet.userNote = '';
+      sheet.schemaVersion = 1;
+      console.log('[sheet] migrated v0 -> v1 for', sheet.modelName || '(unnamed)');
+    }
+    if (v < 2) {
+      // v1 -> v2: establish config{} from defaults. Non-destructive; a v1 sheet
+      // simply had no per-model preferences, so defaults are exactly right.
+      sheet.config = normalizeModelConfig(sheet.config);
+      sheet.schemaVersion = 2;
+      console.log('[sheet] migrated v1 -> v2 for', sheet.modelName || '(unnamed)');
+    }
+    if (v < 3) {
+      // v2 -> v3: every sheet written before v3 came out of the broken
+      // enumeration path — inspectModel() called the wrapper's accessor methods
+      // on the raw core object, which throws, so rawParams was always empty and
+      // the ranges were ALWAYS the PARAM_META/neutral guesses. Those sheets
+      // carry no estimated flag, so they currently claim to be measured.
+      //
+      // We cannot recover the real ranges here (no engine at migration time), so
+      // we do the only honest thing: relabel them as estimated and ask for a
+      // re-inspect. Verified against the live engine before writing this: 18% of
+      // lumine's ranges and 57% of 神宫白子's were wrong.
+      if (!sheet.rangeSource) {
+        sheet.rangesEstimated = true;
+        sheet.rangeSource = 'estimated-legacy';
+        sheet.needsReinspect = true;
+        if (Array.isArray(sheet.params)) {
+          for (const p of sheet.params) {
+            if (!p || typeof p !== 'object') continue;
+            p.estimated = true;
+            p.estimateSource = p.estimateSource || 'legacy-unmeasured';
+          }
+        }
+        if (sheet.paramRange && typeof sheet.paramRange === 'object') {
+          for (const k in sheet.paramRange) {
+            if (sheet.paramRange[k] && typeof sheet.paramRange[k] === 'object') {
+              sheet.paramRange[k].estimated = true;
+            }
+          }
+        }
+        console.warn('[sheet] ' + (sheet.modelName || '(unnamed)') + ': pre-v3 sheet — ranges ' +
+          'were never measured from Cubism. Flagged as estimated; re-inspect to get real ranges.');
+      }
+      sheet.schemaVersion = 3;
+      console.log('[sheet] migrated v2 -> v3 for', sheet.modelName || '(unnamed)');
+    }
+    if (v < 4) {
+      // v3 -> v4: establish per-parameter userNote, paramGroups and presets.
+      // Purely additive — a v3 sheet simply had none of them, so empty is
+      // exactly right. Nothing existing is read or rewritten here, which is why
+      // this migration cannot lose data the way v2->v3 had to warn about.
+      sheet.schemaVersion = 4;
+      console.log('[sheet] migrated v3 -> v4 for', sheet.modelName || '(unnamed)');
+    }
+    // Defensive normalization that every reader below relies on. Legacy sheets
+    // in the wild are missing some of these entirely.
+    if (typeof sheet.userNote !== 'string') sheet.userNote = '';
+    // Always re-normalize: a hand-edited sheets/*.json could carry an out-of-range
+    // pitch or a bogus framing mode, and those flow straight into the TTS engine.
+    sheet.config = normalizeModelConfig(sheet.config);
+    if (!Array.isArray(sheet.params)) sheet.params = [];
+    // Per-parameter user note. Normalized here, in the one place a sheet enters
+    // the app, so no renderer has to distinguish "no note" from "predates v4".
+    for (const p of sheet.params) {
+      if (!p || typeof p !== 'object') continue;
+      if (typeof p.userNote !== 'string') p.userNote = '';
+      else if (p.userNote.length > 300) p.userNote = p.userNote.slice(0, 300);
+    }
+    // Always re-normalize both structures, for the same reason config is
+    // re-normalized above: these are user-editable files, and presets feed the
+    // engine directly.
+    sheet.paramGroups = normalizeParamGroups(sheet.paramGroups);
+    sheet.presets = normalizePresets(sheet.presets);
+    if (!Array.isArray(sheet.parts)) sheet.parts = [];
+    if (!Array.isArray(sheet.accessories)) sheet.accessories = [];
+    if (!Array.isArray(sheet.nativeExpressions)) sheet.nativeExpressions = [];
+    if (!Array.isArray(sheet.motionGroups)) sheet.motionGroups = [];
+    if (!sheet.roleIds || typeof sheet.roleIds !== 'object') sheet.roleIds = {};
+    if (!sheet.paramRange || typeof sheet.paramRange !== 'object') sheet.paramRange = {};
+    if (!sheet.supportedEmotions || typeof sheet.supportedEmotions !== 'object') sheet.supportedEmotions = {};
+    if (!sheet.controls || typeof sheet.controls !== 'object') sheet.controls = {};
+    sheet.schemaVersion = SHEET_SCHEMA_VERSION;
+    return sheet;
+  }
+
+  // Read whatever sheet is currently persisted for this model, WITHOUT touching
+  // the network — used to carry user-authored fields across a re-inspection.
+  function existingUserFields() {
+    const carried = {};
+    let prev = null;
+    try {
+      const raw = localStorage.getItem(characterSheetKey());
+      if (raw) prev = JSON.parse(raw);
+    } catch (e) {}
+    if (!prev && state.lastSheet) prev = state.lastSheet;
+    if (!prev) return carried;
+    for (const f of USER_AUTHORED_FIELDS) {
+      if (prev[f] !== undefined && prev[f] !== null && prev[f] !== '') carried[f] = prev[f];
+    }
+    // Re-normalize a carried config: the previous sheet may predate a field or
+    // have been hand-edited, and this value is about to become the live config.
+    if (carried.config) carried.config = normalizeModelConfig(carried.config);
+    if (carried.paramGroups) carried.paramGroups = normalizeParamGroups(carried.paramGroups);
+    if (carried.presets) carried.presets = normalizePresets(carried.presets);
+    // Per-parameter userNote needs its OWN carry-over. USER_AUTHORED_FIELDS only
+    // protects TOP-LEVEL keys, and inspectModel() rebuilds sheet.params from
+    // scratch on every re-inspect — so without this map, re-measuring ranges
+    // would silently erase every per-param description the user wrote. Keyed by
+    // param id because the new params array may be a different length or order.
+    carried.__paramNotes = {};
+    if (Array.isArray(prev.params)) {
+      for (const p of prev.params) {
+        if (p && typeof p === 'object' && p.id && typeof p.userNote === 'string' && p.userNote) {
+          carried.__paramNotes[p.id] = p.userNote.slice(0, 300);
+        }
+      }
+    }
+    return carried;
+  }
+
+  // ── Live per-model config ───────────────────────────────────────
+  // state.modelConfig is seeded in the constants block above the Boot call.
+  // It must NOT be re-seeded here: this line sits below the boot call but still
+  // runs in the same synchronous pass, so a second Object.assign would clobber
+  // anything boot already resolved. (Harmless today only because the model load
+  // is async and lands after this line; that is luck, not design.)
+
+  function currentModelConfig() {
+    return state.modelConfig || MODEL_CONFIG_DEFAULTS;
+  }
+
+  // Push config values into the parts of the engine that read `state` directly,
+  // so a load or a save takes effect without a page reload.
+  function applyModelConfig(cfg) {
+    const c = normalizeModelConfig(cfg);
+    state.modelConfig = c;
+    state.blinkEnabled = c.blink;
+    state.idleEnabled = c.idle;
+    // Blink runs on an interval that checks state.blinkEnabled each tick, so
+    // toggling the flag is enough; no restart needed.
+    if (state.model) {
+      try { frameModel(c.framing); } catch (e) { console.warn('[config] framing failed:', e.message); }
+    }
+    return c;
+  }
+
+  // Read the persisted config for the CURRENT model without hitting the network.
+  function loadModelConfigLocal() {
+    const sheet = loadCharacterSheet();
+    return normalizeModelConfig(sheet && sheet.config);
+  }
+
+  // Persist config into the sheet. Mirrors saveUserNote(): localStorage first
+  // (synchronous, survives a dead server), then the sheet file.
+  async function saveModelConfig(patch) {
+    let sheet = loadCharacterSheet();
+    if (!sheet) {
+      if (!state.model) throw new Error('Load model dulu sebelum menyimpan pengaturan.');
+      sheet = inspectModel();
+      if (!sheet) throw new Error('Inspeksi model gagal, pengaturan tidak bisa disimpan.');
+    }
+    const merged = normalizeModelConfig(Object.assign({}, sheet.config, patch || {}));
+    sheet.config = merged;
+    sheet.schemaVersion = SHEET_SCHEMA_VERSION;
+
+    try {
+      localStorage.setItem(characterSheetKey(), JSON.stringify(sheet));
+    } catch (e) {
+      console.warn('[config] localStorage write failed:', e.message);
+    }
+    state.lastSheet = sheet;
+    applyModelConfig(merged);
+
+    const key = characterSheetKey().replace('live2d_sheet_', '');
+    const res = await fetch(API + '/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelName: key, sheet: sheet }),
+    });
+    if (!res.ok) {
+      let detail = {};
+      try { detail = await res.json(); } catch (e) {}
+      throw new Error(detail.error || ('server HTTP ' + res.status));
+    }
+    invalidateCapabilityProfile();
+    return merged;
+  }
+
+  // ── User note: read / write ─────────────────────────────────────
+  // The note lives INSIDE the character sheet (single source of truth) rather
+  // than in its own storage key, so it travels with the sheet file and can't
+  // drift out of sync with the model it describes.
+  //
+  // Capped because the note is injected into every LLM request as character
+  // context — an unbounded note would silently eat the context window and, on
+  // token-billed providers, the user's money.
+  const MAX_USER_NOTE = 2000;
+
+  function sanitizeUserNote(text) {
+    // Normalize line endings FIRST. A pasted note (or a non-conforming browser)
+    // can carry CRLF; leaving the CR in means the stored note differs from what
+    // the textarea shows and the count drifts by one per line.
+    let s = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    // Strip remaining control chars but KEEP newlines and tabs, which are
+    // meaningful formatting in a free-text description.
+    s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+    if (s.length > MAX_USER_NOTE) {
+      s = s.slice(0, MAX_USER_NOTE);
+      // Truncating by UTF-16 length can split a surrogate pair and leave a lone
+      // half, which serializes as U+FFFD. Drop the orphan so emoji never rot.
+      const last = s.charCodeAt(s.length - 1);
+      if (last >= 0xD800 && last <= 0xDBFF) s = s.slice(0, -1);
+    }
+    return s;
+  }
+
+  // Persist the note to BOTH stores the sheet lives in. Returns the saved text.
+  // Never silently no-ops: if there is no sheet yet we build one first, so the
+  // user's typing is not thrown away just because they hadn't run inspect.
+  async function saveUserNote(rawText) {
+    const note = sanitizeUserNote(rawText);
+    let sheet = state.lastSheet || loadCharacterSheet();
+    if (!sheet) sheet = await fetchSheetFile();
+    if (!sheet) {
+      if (!state.model) throw new Error('Load model dulu sebelum menyimpan catatan.');
+      sheet = inspectModel();          // creates + persists a fresh sheet
+      if (!sheet) throw new Error('Gagal membuat character sheet.');
+    }
+    sheet.userNote = note;
+    sheet.schemaVersion = SHEET_SCHEMA_VERSION;
+    state.lastSheet = sheet;
+
+    // localStorage first: it's synchronous and local, so the note is safe even
+    // if the server write fails.
+    let localOk = true;
+    try {
+      localStorage.setItem(characterSheetKey(), JSON.stringify(sheet));
+    } catch (e) { localOk = false; console.warn('[note] localStorage save failed:', e.message); }
+
+    // Then the file, which is the primary source on next load. The server
+    // serializes writes per sheet path, so this can't tear a concurrent save.
+    const res = await fetch(API + '/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelName: sheet.modelName, sheet }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.error || ('server HTTP ' + res.status) +
+        (localOk ? ' (tersimpan lokal saja)' : ''));
+    }
+    // The agent caches the capability profile, which now carries userNote —
+    // drop it so the very next message sees the new note.
+    try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
+    return note;
+  }
+
+  // Fill the textarea with the stored note for the CURRENT model.
+  async function refreshUserNoteUI() {
+    const box = $('#input-user-note');
+    if (!box) return;
+    let sheet = state.lastSheet || loadCharacterSheet();
+    if (!sheet) sheet = await fetchSheetFile();
+    box.value = (sheet && typeof sheet.userNote === 'string') ? sheet.userNote : '';
+    const status = $('#note-status');
+    if (status) { status.textContent = ''; status.className = 'note-status'; }
+  }
 
   // Deep-inspect the loaded model: read every parameter's actual range from
   // Cubism Core (min/max/default), list native expressions, detect accessory
@@ -1917,43 +3049,113 @@
     const cm = coreModel();
     const m = state.model;
 
-    // 1) Enumerate all parameters with REAL ranges from Cubism Core
+    // 1) Enumerate all parameters with REAL ranges from Cubism Core.
+    //
+    // There are TWO different objects in play and they do NOT share an API:
+    //
+    //   cm  = CubismModel (the pixi-live2d-display wrapper). Has the
+    //         getParameterCount() / getParameterIds() / getParameterMinimumValue(i)
+    //         accessor methods.
+    //   cm.getModel() = Live2DCubismCore.Model (the raw WASM object). Has NO
+    //         such methods — it exposes `.parameters` with parallel typed
+    //         arrays: ids, minimumValues, maximumValues, defaultValues, types.
+    //
+    // The previous version called cm.getModel() and then invoked the accessor
+    // methods on THAT, which throws TypeError on the very first call. The throw
+    // was swallowed by the outer catch, rawParams stayed empty, and every sheet
+    // silently fell through to the estimated-range path. Verified against the
+    // live engine: 18% of ranges were wrong on one model and 57% on another,
+    // while the sheet still claimed they were measured.
+    //
+    // Preference order below is deliberate: the raw typed arrays are the
+    // engine's own storage (fewest layers, nothing to misread), so they come
+    // first. The wrapper accessors are the documented fallback.
     const rawParams = [];
+    let rangeSource = 'none';
     try {
       const gm = (cm && cm.getModel) ? cm.getModel() : null;
-      const count = gm ? gm.getParameterCount() : (cm ? cm.getParameterCount() : 0);
-      for (let i = 0; i < count; i++) {
-        let id = '', min = -1, max = 1, def = 0;
-        try {
-          // Try to get ID string
-          if (gm && typeof gm.getParameterIds === 'function') {
-            const ids = gm.getParameterIds();
-            id = ids[i] || '';
-          } else if (gm && gm._parameterIds && gm._parameterIds[i]) {
-            id = gm._parameterIds[i];
-          } else if (gm && gm._model && gm._model.parameters && gm._model.parameters.ids) {
-            id = gm._model.parameters.ids[i] || '';
-          }
-          // Get actual min/max/default from Cubism
-          if (gm) {
-            min = gm.getParameterMinimumValue(i);
-            max = gm.getParameterMaximumValue(i);
-            def = gm.getParameterDefaultValue(i);
-          } else if (cm) {
-            min = cm.getParameterMinimumValue(i);
-            max = cm.getParameterMaximumValue(i);
-            def = cm.getParameterDefaultValue(i);
-          }
-        } catch (e) {}
-        if (id) rawParams.push({ id, min, max, def });
-      }
-    } catch (e) { console.warn('[inspect] param enumeration failed:', e.message); }
+      const pp = gm && gm.parameters;
 
-    // Fallback: use state.modelParams if raw enumeration failed
+      if (pp && pp.ids && pp.minimumValues && pp.maximumValues && pp.defaultValues) {
+        // Path 1: raw core arrays — the engine's actual parameter table.
+        rangeSource = 'core-arrays';
+        const n = pp.count != null ? pp.count : pp.ids.length;
+        for (let i = 0; i < n; i++) {
+          const id = pp.ids[i];
+          if (!id) continue;
+          rawParams.push({
+            id,
+            min: pp.minimumValues[i],
+            max: pp.maximumValues[i],
+            def: pp.defaultValues[i],
+            // ParameterType_BlendShape (1) behaves additively rather than as an
+            // absolute pose value; recorded so the AI can treat it differently.
+            type: pp.types ? pp.types[i] : undefined,
+          });
+        }
+      } else if (cm && typeof cm.getParameterCount === 'function' &&
+                 typeof cm.getParameterMinimumValue === 'function') {
+        // Path 2: CubismModel wrapper accessors.
+        rangeSource = 'wrapper-accessors';
+        const count = cm.getParameterCount();
+        const ids = (typeof cm.getParameterIds === 'function') ? cm.getParameterIds() : null;
+        for (let i = 0; i < count; i++) {
+          const id = ids ? ids[i] : '';
+          if (!id) continue;
+          rawParams.push({
+            id,
+            min: cm.getParameterMinimumValue(i),
+            max: cm.getParameterMaximumValue(i),
+            def: cm.getParameterDefaultValue(i),
+          });
+        }
+      }
+
+      // Never let a partially-read table masquerade as complete: any
+      // non-finite number means we misread the engine, so discard everything
+      // and let the estimated path take over with its honest flag.
+      const bad = rawParams.filter(p =>
+        !Number.isFinite(p.min) || !Number.isFinite(p.max) || !Number.isFinite(p.def) ||
+        !(p.min <= p.def && p.def <= p.max));
+      if (bad.length) {
+        console.warn('[inspect] ' + bad.length + ' params failed the min<=def<=max sanity ' +
+          'check (source=' + rangeSource + '); discarding measured ranges. First:', bad[0]);
+        rawParams.length = 0;
+        rangeSource = 'none';
+      }
+    } catch (e) {
+      console.warn('[inspect] param enumeration failed:', e.message);
+      rawParams.length = 0;
+      rangeSource = 'none';
+    }
+    if (rawParams.length) {
+      console.log('[inspect] measured ' + rawParams.length + ' parameter ranges from the engine ' +
+        '(source=' + rangeSource + ')');
+    }
+
+    // Fallback: Cubism Core enumeration produced nothing, so we have no MEASURED
+    // ranges at all. We still build a sheet (a blank one would break every
+    // downstream reader), but every param coming from here is tagged
+    // estimated:true so the range is never mistaken for the model's truth.
+    // PARAM_META covers only Cubism-standard ids; anything else gets a neutral
+    // -1..1 and is flagged too.
+    let rangesEstimated = false;
     if (!rawParams.length && state.modelParams) {
+      rangesEstimated = true;
+      console.warn('[inspect] enumeration failed — falling back to ESTIMATED ranges for',
+        state.modelParams.length, 'params. AI will be told these are unmeasured.');
       for (const pid of state.modelParams) {
         const meta = findParamMeta(pid);
-        rawParams.push({ id: pid, min: meta ? meta.min : -1, max: meta ? meta.max : 1, def: meta ? meta.def : 0 });
+        rawParams.push({
+          id: pid,
+          min: meta ? meta.min : -1,
+          max: meta ? meta.max : 1,
+          def: meta ? meta.def : 0,
+          estimated: true,
+          // Distinguishes "Cubism convention for a known id" from "we had no
+          // idea at all", which are very different confidence levels.
+          estimateSource: meta ? 'cubism-standard' : 'neutral-default',
+        });
       }
     }
 
@@ -1983,7 +3185,13 @@
           else group = 'Kustom';
         }
       }
-      classified.push({ id: rp.id, min: rp.min, max: rp.max, def: rp.def, group, label });
+      const entry = { id: rp.id, min: rp.min, max: rp.max, def: rp.def, group, label };
+      // BlendShape params are additive offsets, not absolute poses. Only tagged
+      // when the engine actually told us (absent on the estimated path).
+      if (rp.type === 1) entry.blendShape = true;
+      // Only present on the fallback path; absent means the range was measured.
+      if (rp.estimated) { entry.estimated = true; entry.estimateSource = rp.estimateSource; }
+      classified.push(entry);
       used.add(rp.id);
     }
 
@@ -1993,18 +3201,27 @@
     // setPartOpacity, not setParameterValue, when driving them).
     const parts = enumerateParts().map(p => ({ ...p, type: 'part' }));
 
-    // 3) Detect accessory params (custom ParamXX with 0-1 range) + accessory
-    // Parts (opacity toggles that default to 0/hidden — i.e. "off by default").
+    // 3) Role map FIRST — the accessory detector below needs to know which ids
+    // are already claimed as semantic roles so it never offers e.g. the blush or
+    // mouth-open param as a toggleable "accessory".
+    const roleIds = mapRoles(new Set(rawParams.map(p => p.id)), getOfficialGroups(m));
+    const ROLE_ID_SET = new Set(Object.values(roleIds).filter(Boolean));
+
+    // 4) Detect accessory params + accessory Parts — MEASURED, not listed.
+    // An accessory behaves like a toggle: a 0..1 range that rests at 0 (hidden
+    // by default). We detect that SHAPE rather than matching specific ids, so it
+    // works on any rigger's numbering scheme and yields nothing on models that
+    // simply have no accessory params (verified: 9 on one model, 0 on another,
+    // with no hardcoded id list involved).
+    const isToggleShaped = (p) =>
+      p.min >= 0 && p.max <= 1 && p.def === 0 &&
+      !ROLE_ID_SET.has(p.id) &&            // never expose a semantic role as an accessory
+      !/physics/i.test(p.id);
     const accessories = classified.filter(p =>
-      p.group === 'Aksesoris (Accessory)' ||
-      (p.id.match(/^Param\d+$/) && p.min >= 0 && p.max <= 1 && p.def === 0)
+      isToggleShaped(p) && (/^Param\d+$/.test(p.id) || p.group === 'Kustom')
     ).map(p => p.id).concat(
       parts.filter(p => p.def === 0).map(p => p.id)
     );
-
-    // 4) Role map so the AI + animation can reference the model's REAL ids
-    // regardless of naming language (English / Japanese / Chinese / etc.).
-    const roleIds = mapRoles(new Set(rawParams.map(p => p.id)), getOfficialGroups(m));
 
     // 5) Emotions: the Emosi settings panel was removed, so no synthetic
     //    emotion templates are generated here. The autonomous motion engine
@@ -2023,12 +3240,23 @@
 
     // 8) True range per param (from Cubism Core) for accurate clamping + sliders.
     const paramRange = {};
-    for (const p of classified) paramRange[p.id] = { min: p.min, max: p.max, def: p.def };
+    for (const p of classified) {
+      paramRange[p.id] = { min: p.min, max: p.max, def: p.def };
+      if (p.estimated) paramRange[p.id].estimated = true;
+    }
 
     const sheet = {
+      schemaVersion: SHEET_SCHEMA_VERSION,
       modelName: currentModelKey(),
       inspectedAt: new Date().toISOString(),
       paramCount: rawParams.length,
+      // True only when Cubism Core enumeration failed and every range above is a
+      // guess. The LLM prompt reads this and stops trusting the numbers.
+      rangesEstimated: rangesEstimated,
+      // Where the numbers came from: 'core-arrays' | 'wrapper-accessors' |
+      // 'estimated'. Recorded so a sheet can be audited later without having to
+      // re-derive provenance from which fields happen to be present.
+      rangeSource: rangesEstimated ? 'estimated' : rangeSource,
       params: classified,
       parts: parts,
       paramRange: paramRange,
@@ -2037,6 +3265,20 @@
       supportedEmotions: supportedEmotions,
       nativeExpressions: nativeExprs,
       motionGroups: motionGroups,
+      // User-authored, empty by default; re-inspection must not wipe it, so any
+      // existing value is carried over below.
+      userNote: '',
+      // Per-model preferences. Same carry-over rule as userNote.
+      config: Object.assign({}, MODEL_CONFIG_DEFAULTS),
+      // Two-branch structures (v4). Both are in USER_AUTHORED_FIELDS so a
+      // re-inspect keeps them, and both keep .user and .ai apart so an AI
+      // suggestion can never overwrite something the user made.
+      //   paramGroups: paramId -> group label   (categorisation; where a slider shows)
+      //   presets:     named value sets         (action; what happens on click)
+      // These are two different jobs: a group label stores no values, and a
+      // preset says nothing about where a slider belongs.
+      paramGroups: { user: {}, ai: {} },
+      presets: { user: [], ai: [] },
       controls: {
         head: !!(roleIds.angleX || roleIds.angleY),
         eyes: !!(roleIds.eyeBallX || roleIds.eyeBallY || roleIds.eyeLOpen || roleIds.eyeROpen),
@@ -2046,6 +3288,24 @@
         hair: classified.some(p => /hair/i.test(p.id)),
       },
     };
+
+    // Carry over user-authored fields BEFORE anything persists this sheet.
+    // inspectModel() rebuilds from scratch, so a re-inspect would otherwise
+    // silently destroy notes the user typed.
+    const carriedFields = existingUserFields();
+    const carriedNotes = carriedFields.__paramNotes || {};
+    delete carriedFields.__paramNotes;   // internal transport, never persisted
+    Object.assign(sheet, carriedFields);
+    // Re-attach per-param notes by id onto the freshly rebuilt params array.
+    // Ids that no longer exist (the model changed) are simply dropped.
+    for (const p of sheet.params) {
+      if (p && typeof p === 'object' && carriedNotes[p.id]) p.userNote = carriedNotes[p.id];
+    }
+    // Emosi presets must reach state.supportedEmotions before the sheet is
+    // published, or the freshly inspected model would advertise fewer emotions
+    // than the user actually defined.
+    projectEmotionPresets(sheet);
+    state.lastSheet = sheet;
 
     // Trigger AI classification for unmapped parameters in background
     triggerAIParamClassification(sheet, classified, roleIds);
@@ -2076,6 +3336,15 @@
   // Asynchronously classify unmapped parameters using the LLM (runs once per model)
   async function triggerAIParamClassification(sheet, classified, roleIds) {
     try {
+      // Defensive: this runs on a sheet that may have come from a v3 file whose
+      // migration ran in a previous session, or from a caller that built one by
+      // hand. Writing sheet.paramGroups.ai[...] on a sheet without the structure
+      // would throw and kill the whole classification silently.
+      if (!sheet.paramGroups) sheet.paramGroups = { user: {}, ai: {} };
+      // The .ai branch is a suggestion cache, so it is rebuilt from scratch on
+      // every run rather than accumulating stale labels from older classifies.
+      // .user is never touched here.
+      sheet.paramGroups.ai = {};
       const mappedParamIds = new Set(Object.values(roleIds || {}));
       const unmapped = classified.filter(p => !mappedParamIds.has(p.id) && !p.id.toLowerCase().includes('physics'));
       if (!unmapped.length) return;
@@ -2094,17 +3363,32 @@
       if (!items.length) return;
 
       let changed = false;
+      // The LLM may only add SEMANTIC meaning (role / group / label / accessory
+      // flag). The numeric truth of a parameter — min, max, def — comes from
+      // Cubism Core and is never touched here, even if the response contains
+      // those fields. We copy field-by-field instead of merging objects so a
+      // rogue payload physically cannot reach the range values.
       for (const item of items) {
         if (!item || !item.id) continue;
+        const pObj = sheet.params.find(p => p.id === item.id);
+        // Ignore any id that isn't a real parameter of THIS model.
+        if (!pObj) continue;
         if (item.role && !sheet.roleIds[item.role]) {
           sheet.roleIds[item.role] = item.id;
           changed = true;
         }
-        const pObj = sheet.params.find(p => p.id === item.id);
-        if (pObj) {
-          if (item.group) pObj.group = item.group;
-          if (item.label) pObj.label = item.label;
-        }
+        // Grouping goes into paramGroups.ai, NOT pObj.group. pObj.group is the
+        // heuristic slot computed by inspectModel() from the parameter id, and
+        // overwriting it would destroy the fallback that makes the panel work
+        // with no LLM at all. Keeping the two apart is also what lets
+        // resolveParamGroup() honour user > ai > heuristic — a single field
+        // cannot express three precedence levels.
+        //
+        // The .ai branch is REWRITTEN on every classify run by design: it is a
+        // suggestion cache, not user data. USER_AUTHORED_FIELDS protects the
+        // paramGroups object from re-inspection, but only .user is durable.
+        if (item.group) { sheet.paramGroups.ai[item.id] = String(item.group).trim().slice(0, 40); changed = true; }
+        if (item.label) { pObj.label = item.label; changed = true; }
         if (item.isAccessory && !sheet.accessories.includes(item.id)) {
           sheet.accessories.push(item.id);
           changed = true;
@@ -2130,72 +3414,102 @@
   function loadCharacterSheet() {
     try {
       const raw = localStorage.getItem(characterSheetKey());
-      return raw ? JSON.parse(raw) : null;
+      return raw ? migrateSheet(JSON.parse(raw)) : null;
     } catch (e) { return null; }
   }
 
-  // Delete character sheet (called when model is deleted)
-  function deleteCharacterSheet(modelKey) {
+  // Delete character sheet(s) belonging to a deleted model.
+  //
+  // Tricky bit: characterSheetKey() is derived from state.modelPath — the full
+  // 'model/<name>/<file>.model3.json' — while model deletion only knows <name>.
+  // The old code did 'live2d_sheet_' + name, a key that was NEVER the one
+  // written, so every sheet was orphaned in localStorage on delete and a later
+  // model could read back a stale predecessor's sheet. We instead sweep for the
+  // keys whose sanitized path segment matches this model name.
+  function sheetKeyPrefixForModelName(name) {
+    const sanitized = String(name || '').replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g, '_');
+    return 'live2d_sheet_model_' + sanitized + '_';
+  }
+
+  function deleteCharacterSheet(modelName) {
     try {
-      localStorage.removeItem('live2d_sheet_' + modelKey);
+      const prefix = sheetKeyPrefixForModelName(modelName);
+      const doomed = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) doomed.push(k);
+      }
+      for (const k of doomed) localStorage.removeItem(k);
+      if (doomed.length) console.log('[sheet] removed', doomed.length, 'sheet(s) for deleted model', modelName);
     } catch (e) {}
   }
 
-  // Cubism-style parameter catalog used for human labels / grouping in the
-  // live inspect engine (findParamMeta). NOT a settings UI — kept because the
-  // autonomous motion/inspect code references it.
+  // Cubism standard parameter table. Two jobs, both narrow:
+  //
+  //  1) GROUP HINTS — mostly redundant with the prefix rules in inspectModel()
+  //     (ParamAngle* -> Sudut, ParamEye* -> Mata, ...). The one id that genuinely
+  //     needs the table is ParamBreath, which belongs to Badan (Body) but does
+  //     not match /^ParamBody/. Kept for that.
+  //
+  //  2) ESTIMATED FALLBACK RANGES — used ONLY when Cubism Core enumeration fails
+  //     outright. These are the Cubism *convention*, NOT this model's truth: a
+  //     rigger is free to give ParamAngleX a -45..45 range, and we would record
+  //     -30..30 and quietly cap the AI's head movement at two thirds of what the
+  //     model can do. Anything sourced from here is therefore tagged
+  //     estimated:true and the LLM is told the range was never measured.
+  //
+  // The per-param `label` fields were removed: they were dead code. inspectModel()
+  // deliberately shows each parameter's REAL model id, so the Indonesian labels
+  // that used to live here were never read by anything.
   const PARAM_META = {
     'Sudut (Angle)': {
-      ParamAngleX:  { min: -30, max: 30, def: 0, label: 'Kepala Kiri/Kanan' },
-      ParamAngleY:  { min: -30, max: 30, def: 0, label: 'Kepala Atas/Bawah' },
-      ParamAngleZ:  { min: -30, max: 30, def: 0, label: 'Kepala Miring' },
+      ParamAngleX:  { min: -30, max: 30, def: 0 },
+      ParamAngleY:  { min: -30, max: 30, def: 0 },
+      ParamAngleZ:  { min: -30, max: 30, def: 0 },
     },
     'Mata (Eye)': {
-      ParamEyeLOpen:  { min: 0, max: 1, def: 1, label: 'Buka Mata Kiri' },
-      ParamEyeROpen:  { min: 0, max: 1, def: 1, label: 'Buka Mata Kanan' },
-      ParamEyeLSmile: { min: -1, max: 1, def: 0, label: 'Senyum Mata Kiri' },
-      ParamEyeRSmile: { min: -1, max: 1, def: 0, label: 'Senyum Mata Kanan' },
-      ParamEyeBallX:  { min: -1, max: 1, def: 0, label: 'Bola Mata Kiri/Kanan' },
-      ParamEyeBallY:  { min: -1, max: 1, def: 0, label: 'Bola Mata Atas/Bawah' },
-      ParamEyeForm:   { min: -1, max: 1, def: 0, label: 'Bentuk Mata' },
+      ParamEyeLOpen:  { min: 0, max: 1, def: 1 },
+      ParamEyeROpen:  { min: 0, max: 1, def: 1 },
+      ParamEyeLSmile: { min: -1, max: 1, def: 0 },
+      ParamEyeRSmile: { min: -1, max: 1, def: 0 },
+      ParamEyeBallX:  { min: -1, max: 1, def: 0 },
+      ParamEyeBallY:  { min: -1, max: 1, def: 0 },
+      ParamEyeForm:   { min: -1, max: 1, def: 0 },
     },
     'Alis (Eyebrow)': {
-      ParamBrowLX:     { min: -1, max: 1, def: 0, label: 'Alis Kiri Geser' },
-      ParamBrowRX:     { min: -1, max: 1, def: 0, label: 'Alis Kanan Geser' },
-      ParamBrowLY:     { min: -1, max: 1, def: 0, label: 'Alis Kiri Naik/Turun' },
-      ParamBrowRY:     { min: -1, max: 1, def: 0, label: 'Alis Kanan Naik/Turun' },
-      ParamBrowLAngle: { min: -1, max: 1, def: 0, label: 'Alis Kiri Angle' },
-      ParamBrowRAngle: { min: -1, max: 1, def: 0, label: 'Alis Kanan Angle' },
-      ParamBrowLForm:  { min: -1, max: 1, def: 0, label: 'Alis Kiri Bentuk' },
-      ParamBrowRForm:  { min: -1, max: 1, def: 0, label: 'Alis Kanan Bentuk' },
+      ParamBrowLX:     { min: -1, max: 1, def: 0 },
+      ParamBrowRX:     { min: -1, max: 1, def: 0 },
+      ParamBrowLY:     { min: -1, max: 1, def: 0 },
+      ParamBrowRY:     { min: -1, max: 1, def: 0 },
+      ParamBrowLAngle: { min: -1, max: 1, def: 0 },
+      ParamBrowRAngle: { min: -1, max: 1, def: 0 },
+      ParamBrowLForm:  { min: -1, max: 1, def: 0 },
+      ParamBrowRForm:  { min: -1, max: 1, def: 0 },
     },
     'Mulut (Mouth)': {
-      ParamMouthForm:  { min: -1, max: 1, def: 0, label: 'Bentuk Mulut' },
-      ParamMouthOpenY: { min: 0, max: 1, def: 0, label: 'Buka Mulut' },
-      ParamMouthOpenX: { min: -1, max: 1, def: 0, label: 'Mulut Lebar' },
+      ParamMouthForm:  { min: -1, max: 1, def: 0 },
+      ParamMouthOpenY: { min: 0, max: 1, def: 0 },
+      ParamMouthOpenX: { min: -1, max: 1, def: 0 },
     },
     'Badan (Body)': {
-      ParamBodyAngleX: { min: -20, max: 20, def: 0, label: 'Badan Kiri/Kanan' },
-      ParamBodyAngleY: { min: -20, max: 20, def: 0, label: 'Badan Atas/Bawah' },
-      ParamBodyAngleZ: { min: -20, max: 20, def: 0, label: 'Badan Miring' },
-      ParamBreath:     { min: 0, max: 1, def: 0, label: 'Napas' },
+      ParamBodyAngleX: { min: -20, max: 20, def: 0 },
+      ParamBodyAngleY: { min: -20, max: 20, def: 0 },
+      ParamBodyAngleZ: { min: -20, max: 20, def: 0 },
+      ParamBreath:     { min: 0, max: 1, def: 0 },
     },
-    'Rambut (Hair)': {
-      ParamHairFront: { min: -1, max: 1, def: 0, label: 'Rambut Depan' },
-      ParamHairSide:  { min: -1, max: 1, def: 0, label: 'Rambut Samping' },
-      ParamHairBack:  { min: -1, max: 1, def: 0, label: 'Rambut Belakang' },
-    },
-    'Aksesoris (Accessory)': {
-      Param91: { min: 0, max: 1, def: 0, label: 'Aksesoris 91' },
-      Param92: { min: 0, max: 1, def: 0, label: 'Aksesoris 92' },
-      Param93: { min: 0, max: 1, def: 0, label: 'Aksesoris 93' },
-      Param94: { min: 0, max: 1, def: 0, label: 'Aksesoris 94' },
-      Param52: { min: 0, max: 1, def: 0, label: 'Aksesoris 52' },
-      Param55: { min: 0, max: 1, def: 0, label: 'Aksesoris 55' },
-      Param68: { min: 0, max: 1, def: 0, label: 'Aksesoris 68' },
-      Param76: { min: 0, max: 1, def: 0, label: 'Aksesoris 76' },
-      Param96: { min: 0, max: 1, def: 0, label: 'Aksesoris 96' },
-    },
+    // NOTE: no 'Rambut (Hair)' and no 'Aksesoris (Accessory)' entries here.
+    //
+    // Hair: ParamHairFront/Side/Back are NOT a Cubism standard and were absent
+    // from every model actually measured. Hair params are matched by the
+    // /^ParamHair/ prefix rule in the classifier below instead of being listed.
+    //
+    // Accessories: previously this table hardcoded Param91/92/93/94/52/55/68/76/96
+    // — the accessory slots of ONE specific model. That is exactly the kind of
+    // name-dependence that breaks silently on an imported model, where the same
+    // numbers mean something entirely different. It was also fully REDUNDANT:
+    // the generic rule in inspectModel() (numbered id + 0..1 range + default 0)
+    // already detects 9/9 of them, and correctly finds 0 on a model that has
+    // none. Detection is measured from the model, never assumed from a list.
   };
 
   // Find meta info for a param by ID (from PARAM_META)
@@ -2219,7 +3533,9 @@
       const res = await fetch(API + '/api/sheet?name=' + encodeURIComponent(key));
       if (!res.ok) return null;
       const data = await res.json().catch(() => null);
-      return data && data.params ? data : null;
+      // Migrate on the way in: this is the boundary where a legacy on-disk sheet
+      // (written before schemaVersion existed) enters the running app.
+      return data && data.params ? migrateSheet(data) : null;
     } catch (e) { return null; }
   }
 
@@ -2261,6 +3577,22 @@
     // Hydrate engine capability flags from the sheet so AI moves respect the
     // model's real parameters.
     hydrateCaps(sheet);
+    state.lastSheet = sheet;
+
+    // Project user-authored 'emosi' presets into supportedEmotions BEFORE the
+    // profile is built. This is why presets live in the sheet rather than in a
+    // parallel store: applyExpression() already gates on
+    // state.supportedEmotions.hasOwnProperty(name), and getExpressibleEmotions()
+    // already feeds agent.js from it — so a projected preset becomes callable
+    // via [EMOTION:...] with no change to either function.
+    projectEmotionPresets(sheet);
+
+    // Only USER presets are promoted to capabilities. An .ai suggestion echoed
+    // back into the LLM's own prompt would read as a capability the user had
+    // already approved, blurring exactly the user/AI boundary this precedence
+    // rule exists to keep sharp. AI entries stay UI suggestions until saved.
+    const userPresets = (sheet.presets && sheet.presets.user) || [];
+    const presetNames = (cat) => userPresets.filter(p => p.category === cat).map(p => p.name);
 
     // Build concise profile for LLM
     return {
@@ -2269,15 +3601,33 @@
       // should use THESE ids when it wants to drive a specific part, so it works
       // for any model regardless of how the creator named its parameters.
       roleIds: sheet.roleIds || {},
-      paramGroups: [],
+      // Resolved CATEGORISATION (user ?? ai ?? heuristic) as id -> label. This
+      // was a dead `[]` placeholder before v4.
+      paramGroups: sheet.params.reduce((acc, p) => {
+        if (p && p.id) acc[p.id] = resolveParamGroup(sheet, p.id, p.group);
+        return acc;
+      }, {}),
       paramDetails: sheet.params,
       emotions: Object.keys(sheet.supportedEmotions),
       nativeExpressions: sheet.nativeExpressions,
-      accessories: sheet.accessories,
+      // Accessory presets ride the EXISTING [ACC:...] directive.
+      accessories: sheet.accessories.concat(presetNames('aksesoris')),
+      // NOTE: 'properti' presets are DELIBERATELY not merged here yet — manual
+      // click only for this phase. [PROP:] does reach agent.setExpression(), but
+      // that resolves against nativeExpressions/exp3 files, so a preset name
+      // would fall through and fail silently (the same class of bug as the empty
+      // supportedEmotions map). Wiring properti presets needs setExpression() to
+      // consult presets first; that is a separate change, not an oversight.
+      // Free-text note the USER wrote about this character. Passed to the LLM as
+      // character context; empty string when unset.
+      userNote: typeof sheet.userNote === 'string' ? sheet.userNote : '',
       // Named gesture verbs — model-agnostic + native motion groups from model
+      // + user 'gerak' presets. The LLM only ever PICKS a name from this list;
+      // it never authors timed keyframes (same reason min/max stay locked to
+      // Cubism: a timed sequence is far harder to validate than one number).
       gestures: Object.keys(GESTURE_LIBRARY).concat(
         Array.isArray(sheet.motionGroups) ? sheet.motionGroups.map(g => 'motion_' + g) : []
-      ),
+      ).concat(presetNames('gerak')),
       hasHeadControl: sheet.controls.head,
       hasEyeControl: sheet.controls.eyes,
       hasMouthControl: sheet.controls.mouth,
@@ -2464,12 +3814,14 @@
       if (Math.random() < 0.35) {
         playEmotionClip(state.activeEmotion);
       }
-      // A blink nudge for liveliness.
+      // A blink nudge for liveliness. Role space, so it works on any eyeOpen
+      // convention (see pokeRoleNorm).
       if (Math.random() < 0.6) {
         try {
-          const lo = roleId('eyeLOpen'), ro = roleId('eyeROpen');
-          if (lo) pokeParam(lo, 0, 1); if (ro) pokeParam(ro, 0, 1);
-          setTimeout(() => { if (lo) pokeParam(lo, 1, 1); if (ro) pokeParam(ro, 1, 1); }, 130);
+          pokeRoleNorm('eyeLOpen', 0); pokeRoleNorm('eyeROpen', 0);
+          setTimeout(() => {
+            pokeRoleNorm('eyeLOpen', 1); pokeRoleNorm('eyeROpen', 1);
+          }, 130);
         } catch (e) {}
       }
       // Schedule next gesture at a randomized interval (organic, not metronomic).

@@ -716,6 +716,158 @@ Format:
     return;
   }
 
+  // ── POST /api/model/analyze-sheet → AI-suggested PRESETS ──
+  // Distinct from classify-params: that one labels individual parameters, this
+  // one proposes whole poses (emosi / properti / aksesoris) as preset
+  // candidates. Everything it returns lands in sheet.presets.ai, which is inert
+  // until the user presses "Pakai" in the Sheet tab.
+  //
+  // Validation posture: the LLM is allowed to contribute NAMES, CATEGORIES and
+  // TARGET VALUES only. Ranges (min/max/def) and timed keyframes (steps) are
+  // never accepted from it — ranges come from Cubism Core via the client, and a
+  // frozen pose is not a motion. Values are clamped to the ranges the CLIENT
+  // sent, so a hallucinated 999 becomes the parameter's real max instead of
+  // deforming the model.
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/model/analyze-sheet') {
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
+    req.on('end', () => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      let incoming;
+      try { incoming = JSON.parse(body); } catch (e) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'body JSON rusak' })); return;
+      }
+
+      // Only params that carry a finite range are usable: without min/max there
+      // is nothing to clamp against, and an unclamped write is how a model gets
+      // deformed.
+      const params = (Array.isArray(incoming.params) ? incoming.params : [])
+        .filter(p => p && typeof p.id === 'string' && p.id
+          && Number.isFinite(Number(p.min)) && Number.isFinite(Number(p.max)))
+        .slice(0, 300);
+      const parts = (Array.isArray(incoming.parts) ? incoming.parts : [])
+        .map(p => (p && typeof p === 'object') ? p.id : p)
+        .filter(p => typeof p === 'string' && p)
+        .slice(0, 300);
+      // Names the user already owns. Sent to the LLM so it does not spend
+      // suggestions re-proposing what exists, and used below to drop collisions
+      // outright — a suggestion must never overwrite a user preset.
+      const existing = (Array.isArray(incoming.existingNames) ? incoming.existingNames : [])
+        .filter(n => typeof n === 'string').map(n => n.toLowerCase()).slice(0, 400);
+      // 'gerak' is intentionally absent: motions need timed keyframes, which
+      // this endpoint refuses to accept from an LLM.
+      const CATS = ['emosi', 'properti', 'aksesoris'];
+
+      if (!params.length) {
+        res.writeHead(200); res.end(JSON.stringify({ presets: [], warning: 'tidak ada parameter dengan range valid' })); return;
+      }
+      const active = getActiveConnection();
+      if (!active) {
+        res.writeHead(200); res.end(JSON.stringify({ presets: [], warning: 'tidak ada koneksi AI aktif' })); return;
+      }
+
+      const paramLines = params.map(p => {
+        const label = typeof p.label === 'string' && p.label.trim() ? ` (${p.label.trim().slice(0, 40)})` : '';
+        return `- "${p.id}"${label} range [${Number(p.min)}, ${Number(p.max)}] default ${Number(p.def)}`;
+      }).join('\n');
+
+      const prompt = `Kamu pakar rigging Live2D Cubism. Berdasarkan daftar parameter model di bawah, usulkan preset pose yang masuk akal untuk model INI.
+
+PARAMETER TERSEDIA (hanya id di bawah yang boleh dipakai):
+${paramLines}
+
+${parts.length ? `PART TERSEDIA (opacity 0..1):\n${parts.map(p => `- "${p}"`).join('\n')}` : '(model tidak punya part yang bisa diatur)'}
+
+PRESET YANG SUDAH ADA (jangan diusulkan lagi):
+${existing.length ? existing.join(', ') : '(belum ada)'}
+
+TUGAS: usulkan maksimal 12 preset. Untuk tiap preset tentukan:
+- name: nama singkat bahasa Indonesia (maks 60 karakter), mis. "Senang", "Kacamata", "Pipi Merah"
+- category: salah satu dari ${CATS.join(' / ')}
+  · emosi     = ekspresi wajah (mata, alis, mulut)
+  · properti  = perubahan tampilan non-aksesoris (warna pipi, ganti kerah)
+  · aksesoris = toggle benda yang dipakai/dilepas
+- values: objek { "ParamId": angka } berisi HANYA id dari daftar di atas
+- parts: objek { "PartId": angka 0..1 }, boleh kosong
+
+ATURAN KERAS:
+1. JANGAN mengarang id parameter atau part yang tidak ada di daftar.
+2. JANGAN menyertakan min, max, def, atau steps. Itu bukan tugasmu.
+3. Sertakan hanya parameter yang benar-benar berubah dari default (3-8 per preset).
+4. Kategori "gerak" TIDAK BOLEH diusulkan.
+
+KEMBALIKAN HANYA JSON array valid, tanpa markdown atau kata pembuka/penutup.
+Format:
+[
+  { "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} }
+]`;
+
+      llmWithFallback([{ role: 'user', content: prompt }]).then(({ reply }) => {
+        let clean = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
+        let parsed = [];
+        try { parsed = JSON.parse(clean); } catch (e) {
+          const m = clean.match(/\[\s*\{[\s\S]*\}\s*\]/);
+          if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) {} }
+        }
+
+        const ranges = new Map(params.map(p => [p.id, { lo: Number(p.min), hi: Number(p.max) }]));
+        const partIds = new Set(parts);
+        const existingSet = new Set(existing);
+        const str = (v, cap) => (typeof v === 'string' ? v.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, cap) : '');
+        const seen = new Set();
+        let dropped = 0;
+
+        const safe = (Array.isArray(parsed) ? parsed : []).reduce((acc, it) => {
+          if (!it || typeof it !== 'object' || Array.isArray(it)) { dropped++; return acc; }
+          const name = str(it.name, 60);
+          const category = CATS.indexOf(it.category) !== -1 ? it.category : null;
+          if (!name || !category) { dropped++; return acc; }
+          // A suggestion that shadows a user preset is pointless: precedence
+          // means it would never be visible anyway.
+          const key = category + '\u0000' + name.toLowerCase();
+          if (existingSet.has(name.toLowerCase()) || seen.has(key)) { dropped++; return acc; }
+
+          const values = {};
+          if (it.values && typeof it.values === 'object' && !Array.isArray(it.values)) {
+            for (const k of Object.keys(it.values)) {
+              const r = ranges.get(k);
+              const n = Number(it.values[k]);
+              if (!r || !Number.isFinite(n)) continue;      // invented id or NaN
+              values[k] = Math.max(r.lo, Math.min(r.hi, n)); // clamp to Cubism range
+            }
+          }
+          const pparts = {};
+          if (it.parts && typeof it.parts === 'object' && !Array.isArray(it.parts)) {
+            for (const k of Object.keys(it.parts)) {
+              const n = Number(it.parts[k]);
+              if (!partIds.has(k) || !Number.isFinite(n)) continue;
+              pparts[k] = Math.max(0, Math.min(1, n));       // opacity is always 0..1
+            }
+          }
+          // An empty preset would show up in the UI as an approvable row that
+          // does nothing when applied.
+          if (!Object.keys(values).length && !Object.keys(pparts).length) { dropped++; return acc; }
+
+          seen.add(key);
+          // Note what is NOT copied: min/max/def and steps never leave this
+          // reducer, even if the LLM sent them.
+          acc.push({ name, category, values: values, parts: pparts, source: 'ai' });
+          return acc;
+        }, []).slice(0, 12);
+
+        if (dropped) console.warn('[analyze-sheet] dropped', dropped, 'invalid/hallucinated preset(s)');
+        res.writeHead(200);
+        res.end(JSON.stringify({ presets: safe }));
+      }).catch(err => {
+        console.warn('[analyze-sheet] preset analysis failed:', err.message);
+        res.writeHead(200);
+        res.end(JSON.stringify({ presets: [], warning: err.message }));
+      });
+    });
+    return;
+  }
+
   // ── POST /api/animate-text → Two-pass animation director ──
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/animate-text') {
     let body = '';

@@ -210,6 +210,13 @@ const MIME = {
 
 const JSON_HEAD = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' };
 
+// Strip a UTF-8 BOM before JSON.parse. Cubism Editor and several Windows tools
+// write model3.json with a BOM, and JSON.parse() throws on it — which would make
+// a perfectly valid manifest look like it declares no expressions at all.
+function stripBom(s) {
+  return (typeof s === 'string' && s.charCodeAt(0) === 0xFEFF) ? s.slice(1) : s;
+}
+
 function safeJoin(root, reqPath) {
   // Decode %-encoding (handles CJK), then prevent traversal.
   const decoded = decodeURIComponent(reqPath.split('?')[0]);
@@ -1014,6 +1021,75 @@ Contoh format:
       const rel = path.relative(ROOT, abs).split(path.sep).join('/');
       res.writeHead(200, JSON_HEAD);
       res.end(JSON.stringify({ path: rel }));
+    } catch (e) {
+      res.writeHead(404, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // GET /api/model/expressions?name=X
+  // Lists every *.exp3.json that physically exists under model/<X>/, with each
+  // File path expressed RELATIVE TO THE model3.json DIRECTORY (which is how
+  // Cubism manifests reference them, and how pixi-live2d resolves them).
+  //
+  // WHY THIS EXISTS: a rigger can ship .exp3 files and forget to list them in
+  // model3.json's FileReferences.Expressions. The runtime then reports zero
+  // native expressions and the assets are dead weight — no error, just a
+  // character that cannot use the expressions it was shipped with. The browser
+  // cannot enumerate a directory, so discovery has to happen here.
+  //
+  // This is deliberately generic: no model name, no expression name, no folder
+  // convention is special-cased. Any model with orphaned .exp3 files benefits.
+  if (req.method === 'GET' && urlPath === '/api/model/expressions') {
+    try {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const name = q.get('name');
+      const dir = path.join(MODELS_DIR, name || '');
+      if (!dir.startsWith(MODELS_DIR) || !fs.existsSync(dir)) throw new Error('not found');
+      const model3 = findModel3(dir);
+      if (!model3) throw new Error('no model3.json in folder');
+      const baseDir = path.dirname(model3);
+
+      // What the manifest already declares — reported so the client can tell
+      // "orphaned assets" from "already wired up" without guessing.
+      let declared = [];
+      try {
+        const mj = JSON.parse(stripBom(fs.readFileSync(model3, 'utf8')));
+        const ex = mj && mj.FileReferences && mj.FileReferences.Expressions;
+        if (Array.isArray(ex)) declared = ex.map(e => e && e.File).filter(Boolean);
+      } catch (e) { /* unreadable manifest → treat as declaring nothing */ }
+      const declaredSet = new Set(declared.map(f => String(f).split(path.sep).join('/')));
+
+      const found = [];
+      (function walk(d, depth) {
+        if (depth > 6) return;
+        let entries = [];
+        try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+        for (const entry of entries) {
+          const full = path.join(d, entry.name);
+          if (entry.isDirectory()) { walk(full, depth + 1); continue; }
+          if (!entry.name.toLowerCase().endsWith('.exp3.json')) continue;
+          const rel = path.relative(baseDir, full).split(path.sep).join('/');
+          // An .exp3 outside the model3.json directory cannot be referenced by a
+          // relative path the loader can resolve, so skip it rather than emit a
+          // path that would 404 at load time.
+          if (rel.startsWith('..')) continue;
+          found.push({
+            Name: entry.name.replace(/\.exp3\.json$/i, ''),
+            File: rel,
+            declared: declaredSet.has(rel),
+          });
+        }
+      })(dir, 0);
+
+      found.sort((a, b) => a.Name.localeCompare(b.Name));
+      res.writeHead(200, JSON_HEAD);
+      res.end(JSON.stringify({
+        model3: path.relative(ROOT, model3).split(path.sep).join('/'),
+        declaredCount: declaredSet.size,
+        expressions: found,
+        orphanCount: found.filter(f => !f.declared).length,
+      }));
     } catch (e) {
       res.writeHead(404, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
     }

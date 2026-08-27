@@ -21,14 +21,18 @@
     "idleRepeatMs": 1800000,
     "awaySpeak": true,
     "returnSpeak": true,
-    "awayHiddenMs": 10000
+    "awayHiddenMs": 10000,
+    "quietMs": 1800000
   },
   "camera": {
     "enabled": false,
     "fps": 0.4,
     "presenceThreshold": 0.4,
     "device": "webgpu",
-    "model": "Xenova/facial_emotions_image_detection"
+    "model": "Xenova/facial_emotions_image_detection",
+    "moodGraceMs": 20000,
+    "moodDebounceMs": 5000,
+    "moodStableTicks": 2
   },
   "motion": { "enabled": false, "gain": 2.5 }
 }

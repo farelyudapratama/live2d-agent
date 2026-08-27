@@ -601,6 +601,72 @@ input[type="range"] {
 .model-item .del { background: rgba(255,80,120,0.18); color: #ff9ab0; }
 .model-item.active-model { border-color: var(--accent-glow); box-shadow: 0 0 0 1px var(--accent-glow); }
 
+/* ===== CATATAN KARAKTER (user note) ===== */
+.note-box { margin-top: 6px; }
+.note-box textarea {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: rgba(10,8,24,0.6); color: var(--text);
+  font-size: 12px; font-family: inherit; line-height: 1.5;
+  resize: vertical; min-height: 64px;
+  transition: var(--transition);
+}
+.note-box textarea::placeholder { color: var(--text-dim); opacity: 0.75; }
+.note-box textarea:focus { border-color: var(--accent); outline: none; }
+/* Visible keyboard focus: the accent border alone is too subtle for a11y. */
+.note-box textarea:focus-visible,
+#btn-save-note:focus-visible {
+  outline: 2px solid var(--accent-glow); outline-offset: 2px;
+}
+.note-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.note-status { font-size: 11px; color: var(--text-dim); }
+.note-status.ok { color: #7ee0a8; }
+.note-status.err { color: #ff9ab0; }
+.note-box .hint { font-size: 10px; margin-top: 6px; color: var(--text-dim); }
+
+/* ===== PENGATURAN PER-MODEL (config) ===== */
+.cfg-box { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
+.cfg-check {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text); cursor: pointer;
+}
+.cfg-check input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+.cfg-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+/* Fixed label column keeps the controls aligned in a narrow side panel. */
+.cfg-label { flex: 0 0 96px; color: var(--text-dim); font-size: 11px; }
+.cfg-row select {
+  flex: 1 1 auto; min-width: 0; padding: 6px 8px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: rgba(10,8,24,0.6); color: var(--text);
+  font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.cfg-row input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+/* Tabular numerals + fixed width so the row doesn't jitter while dragging. */
+.cfg-out {
+  flex: 0 0 34px; text-align: right; font-size: 11px;
+  color: var(--accent-glow); font-variant-numeric: tabular-nums;
+}
+.cfg-box .hint { font-size: 10px; margin-top: 2px; color: var(--text-dim); }
+.cfg-check input:focus-visible,
+.cfg-row select:focus-visible,
+.cfg-row input[type="range"]:focus-visible,
+#btn-save-cfg:focus-visible,
+#btn-test-voice:focus-visible {
+  outline: 2px solid var(--accent-glow); outline-offset: 2px;
+}
+
+/* ===== KAMERA REAKTIF (status) ===== */
+/* Warna status kamera memakai kelas .note-status yang sudah ada (.ok/.err) agar
+   tidak ada duplikasi token warna. Hanya state "sedang memuat" yang baru: model
+   emosi diunduh dari CDN dan bisa perlu belasan detik di jaringan lambat. */
+.note-status.busy { color: #ffd479; }
+/* Status duduk sejajar dengan label toggle-nya, bukan di baris terpisah.
+   `.cfg-row` (dipakai sebelumnya) adalah blok penuh sehingga status jatuh ke
+   bawah dan terbaca seperti keterangan lepas, bukan status milik checkbox. */
+.cfg-check-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cfg-check-inline .cfg-check { margin: 0; }
+#use-camera:focus-visible { outline: 2px solid var(--accent-glow); outline-offset: 2px; }
+
 /* ===== FOCUS / SELECTION ===== */
 ::selection { background: rgba(124,111,255,0.35); color: #fff; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -98,6 +98,69 @@
             <button id="btn-inspect" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">🔍 Inspeksi Model (Generate Character Sheet)</button>
             <p class="hint" style="margin-top:4px">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
           </div>
+
+          <!-- Catatan karakter: free-text milik USER, ikut dikirim ke AI -->
+          <div class="section-title" style="margin-top:14px">📝 Catatan Karakter</div>
+          <div class="note-box">
+            <textarea id="input-user-note" rows="4"
+              placeholder="Siapa dia? Sifat, gaya bicara, kebiasaan… mis. &quot;Dia pemalu, panggil aku Senpai, suka kucing.&quot;"
+              aria-describedby="note-hint"></textarea>
+            <div class="note-row">
+              <button id="btn-save-note" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Catatan</button>
+              <span id="note-status" class="note-status" role="status" aria-live="polite"></span>
+            </div>
+            <p class="hint" id="note-hint">Catatan ini dikirim ke AI sebagai konteks karakter, disimpan per-model, dan <b>tidak hilang</b> saat kamu inspeksi ulang.</p>
+          </div>
+
+          <!-- Pengaturan per-model: dulu hardcode & reset tiap reload -->
+          <div class="section-title" style="margin-top:14px">🎛️ Pengaturan Model Ini</div>
+          <div class="cfg-box">
+            <label class="cfg-check">
+              <input id="cfg-blink" type="checkbox" /> <span>Kedip mata otomatis</span>
+            </label>
+            <label class="cfg-check">
+              <input id="cfg-idle" type="checkbox" /> <span>Gerak idle otomatis</span>
+            </label>
+
+            <label class="cfg-row" for="cfg-framing">
+              <span class="cfg-label">Framing</span>
+              <select id="cfg-framing">
+                <option value="upper">Atas (kepala + bahu)</option>
+                <option value="full">Penuh (seluruh badan)</option>
+              </select>
+            </label>
+
+            <label class="cfg-row" for="cfg-tts-pitch">
+              <span class="cfg-label">Pitch suara</span>
+              <input id="cfg-tts-pitch" type="range" min="0" max="2" step="0.05"
+                aria-describedby="cfg-hint" />
+              <output id="cfg-tts-pitch-out" class="cfg-out" for="cfg-tts-pitch"></output>
+            </label>
+
+            <label class="cfg-row" for="cfg-tts-rate">
+              <span class="cfg-label">Kecepatan bicara</span>
+              <input id="cfg-tts-rate" type="range" min="0.5" max="2" step="0.05"
+                aria-describedby="cfg-hint" />
+              <output id="cfg-tts-rate-out" class="cfg-out" for="cfg-tts-rate"></output>
+            </label>
+
+            <label class="cfg-row" for="cfg-tts-lang">
+              <span class="cfg-label">Bahasa suara</span>
+              <select id="cfg-tts-lang">
+                <option value="id-ID">Indonesia (id-ID)</option>
+                <option value="ja-JP">Jepang (ja-JP)</option>
+                <option value="en-US">Inggris (en-US)</option>
+                <option value="zh-CN">Mandarin (zh-CN)</option>
+              </select>
+            </label>
+
+            <div class="note-row">
+              <button id="btn-save-cfg" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Pengaturan</button>
+              <button id="btn-test-voice" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">🔊 Tes Suara</button>
+              <span id="cfg-status" class="note-status" role="status" aria-live="polite"></span>
+            </div>
+            <p class="hint" id="cfg-hint">Disimpan per-model di dalam character sheet. Pitch &amp; kecepatan langsung terasa saat karakter bicara.</p>
+          </div>
         </div>
 
         <!-- AI Connections (9router-style) -->
@@ -107,6 +170,22 @@
           </div>
           <div id="conn-list" class="conn-list"></div>
           <div class="conn-hint">Router otomatis pakai connection <b>Active</b>; kalau gagal (quota/limit) fallback ke berikutnya.</div>
+
+          <!-- Kamera reaktif (opt-in).
+               Modul js/camera-presence.js sudah lengkap sejak awal, tapi checkbox
+               ini tidak pernah ada di markup: `getElementById('useCamera')` selalu
+               null, jadi start() tak pernah bisa dipanggil user. Ini kontrolnya. -->
+          <div class="section-title">🎥 Kamera &amp; Reaksi</div>
+          <div class="cfg-box">
+            <div class="cfg-check-inline">
+              <label class="cfg-check" for="use-camera">
+                <input type="checkbox" id="use-camera" aria-describedby="camera-hint" />
+                Pakai kamera (deteksi hadir &amp; mood)
+              </label>
+              <span id="camera-status" class="note-status" role="status" aria-live="polite">mati</span>
+            </div>
+            <p class="hint" id="camera-hint">Semua inferensi jalan di browser — frame kamera tidak pernah dikirim ke mana pun. Saat mati, kehadiran ditebak dari fokus/visibilitas tab.</p>
+          </div>
         </div>
 
       </div>

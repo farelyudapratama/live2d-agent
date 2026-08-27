@@ -46,7 +46,14 @@
     };
   })();
 
-  const API = 'http://127.0.0.1:8310';   // backend origin (used by boot + model/conn UI)
+  // Backend origin. Derived from the page that served this script, NOT a literal:
+  // server.js honours process.env.PORT, so a hardcoded :8310 silently breaks every
+  // fetch the moment the server runs on any other port. The page is always served
+  // BY that same server, so location.origin is correct by construction.
+  // The literal survives only as a file:// fallback (opening index.html directly).
+  const API = (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
+    ? location.origin
+    : 'http://127.0.0.1:8310';
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));  // shared math helper
   // ─── State ────────────────────────────────────────────────────
   const state = {
@@ -89,7 +96,7 @@
     idleMotionTimer: null,
     activeEmotion: 'normal',
     activeProperty: 'default',
-    supportedEmotions: {},   // (was populated from emotion templates; now empty — panel removed)
+    supportedEmotions: {},   // role-derived per model by refreshRoleEmotions(); user 'emosi' presets layer on top
     // Real, sheet-derived capability flags so the AI engine only drives
     // parameters THIS model actually owns. Populated by hydrateCaps() from
     // the character sheet (file -> localStorage -> live inspect fallback).
@@ -123,6 +130,9 @@
     // Eased emotion system: AI/UI set a TARGET, the engine eases toward it
     // every frame so expression changes morph smoothly instead of snapping.
     emoTarget: {}, emoCur: {},
+    // Universal emotion name -> { realParamId: actualValue }, resolved from the
+    // ROLE templates against whichever model is loaded. Rebuilt every load.
+    roleEmotions: {},
     // "Pop" impulse + transient energy boost fired on each response segment so
     // she bounces/lurches with life when she starts talking or changes pose.
     impulse: 0,
@@ -288,6 +298,84 @@
     }
   }
 
+  // ─── Orphaned .exp3 adoption (model-agnostic) ─────────────────
+  // A rigger can ship .exp3.json files and forget to list them in model3.json's
+  // FileReferences.Expressions. pixi-live2d-display only creates an
+  // ExpressionManager when settings.expressions exists, so those files are
+  // simply never loaded: state.modelExpressions comes back empty, emotionMode
+  // drops to 'synthetic', and assets the character was shipped with are dead.
+  //
+  // Fix: fetch the manifest ourselves, ask the server which .exp3 files actually
+  // exist on disk (GET /api/model/expressions), merge the missing ones into
+  // FileReferences.Expressions, and hand the PATCHED OBJECT to the loader.
+  //
+  // MODEL-AGNOSTIC by construction:
+  //   • the model folder is derived from modelPath, never named
+  //   • expression NAMES come from the filenames the rigger chose — we don't
+  //     rename, translate, or interpret them (a name may be CJK, English, or
+  //     numeric; all are equally valid)
+  //   • nothing is added that the manifest already declares
+  //   • the file on disk is never modified — the merge is in-memory only, so a
+  //     user's model folder is left byte-identical
+  //
+  // NON-DESTRUCTIVE: any failure (offline server, unreadable JSON, no orphans)
+  // returns null and the caller falls back to loading by URL.
+  async function buildModelSettings(modelPath) {
+    try {
+      const parts = String(modelPath || '').split('/');
+      // 'model/<folder>/.../x.model3.json' → '<folder>'. Everything after the
+      // folder is handled server-side by findModel3(), which walks nesting.
+      if (parts.length < 3 || parts[0] !== 'model') return null;
+      const folder = parts[1];
+      if (!folder) return null;
+
+      const [mRes, eRes] = await Promise.all([
+        fetch(API + '/' + modelPath.split('/').map(encodeURIComponent).join('/')),
+        fetch(API + '/api/model/expressions?name=' + encodeURIComponent(folder)),
+      ]);
+      if (!mRes.ok || !eRes.ok) return null;
+
+      const settings = await mRes.json();
+      const info = await eRes.json();
+      if (!settings || !settings.FileReferences) return null;
+
+      const onDisk = Array.isArray(info.expressions) ? info.expressions : [];
+      const orphans = onDisk.filter(e => e && !e.declared && e.File && e.Name);
+      if (!orphans.length) return null;   // manifest already complete
+
+      const declared = Array.isArray(settings.FileReferences.Expressions)
+        ? settings.FileReferences.Expressions.slice()
+        : [];
+      // getExpressionIndex() matches on Name, so a duplicate Name would make one
+      // entry permanently unreachable. Keep the rigger's declaration and skip our
+      // discovery in that case — the declared File is the authoritative one.
+      const takenNames = new Set(declared.map(e => e && e.Name).filter(Boolean));
+      const takenFiles = new Set(declared.map(e => e && e.File).filter(Boolean));
+
+      let added = 0;
+      for (const o of orphans) {
+        if (takenNames.has(o.Name) || takenFiles.has(o.File)) continue;
+        declared.push({ Name: o.Name, File: o.File });
+        takenNames.add(o.Name);
+        takenFiles.add(o.File);
+        added++;
+      }
+      if (!added) return null;
+
+      settings.FileReferences.Expressions = declared;
+      // The loader needs `url` on a settings object to resolve every relative
+      // File/Texture path; without it the moc and textures 404.
+      settings.url = new URL(modelPath.split('/').map(encodeURIComponent).join('/'),
+                             location.href).href;
+      console.log('[exp3] adopted', added, 'undeclared expression file(s) for', folder,
+                  '→ total', declared.length);
+      return settings;
+    } catch (e) {
+      console.warn('[exp3] adoption skipped:', e.message);
+      return null;
+    }
+  }
+
   // ─── Load Model ───────────────────────────────────────────────
   // modelPath is OPTIONAL. When omitted we ask the server for whatever model it
   // actually has (there is no bundled default any more — a hardcoded path is a
@@ -321,6 +409,15 @@
         // to a parameter the new model doesn't have.
         state.caps = {};
         state.modelParams = null;
+        // Emotion state is resolved against the OLD model's parameter ids, so all
+        // of it is invalid the moment the model is swapped. Left behind, the eased
+        // ease loop would keep writing the previous character's ids and the LLM
+        // would still be told about emotions this model may not have.
+        state.roleEmotions = {};
+        state.supportedEmotions = {};
+        state.emoTarget = {};
+        state.emoCur = {};
+        state.paramRange = {};
         // Belongs to the model being replaced; carrying it over would leak the
         // previous character's userNote into the new model's sheet.
         state.lastSheet = null;
@@ -329,7 +426,14 @@
       // model being replaced, so drop it here regardless of whether a model was
       // previously loaded.
       try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
-      state.model = await PIXI.live2d.Live2DModel.from(modelPath, {
+
+      // Load through a settings OBJECT rather than a URL string so orphaned
+      // .exp3.json files can be adopted before the runtime reads the manifest.
+      // buildModelSettings() returns null on any problem, in which case we hand
+      // the plain URL to the loader exactly as before — the adoption step must
+      // never be able to stop a model from loading.
+      const settings = await buildModelSettings(modelPath);
+      state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
         autoInteract: false,
       });
 
@@ -1036,22 +1140,133 @@
 
 
 
-  // Set the eased emotion TARGET from a preset (param->value) with optional intensity factor.
-  // Any param an emotion can touch but is absent from the preset is eased back to its
-  // neutral default, so the previous expression never "sticks". Current values
-  // are seeded from the live param so the morph starts from where it is.
-  // Emotion targets DISABLED (Emosi panel removed). Kept as a no-op so callers
-  // (applyExpression / resetEmotion / agent) never throw.
-  function setEmotionTargets(preset, intensity) {
-    return;
+  // ── Universal emotions, authored in ROLE SPACE ────────────────
+  // MODEL-AGNOSTIC RULE: an emotion is described by WHICH SEMANTIC ROLES move
+  // and HOW FAR in the reference scale — never by parameter id. The role→id map
+  // is resolved per model by mapRoles(), so the same table produces a correct
+  // face on a rig named in English, Japanese or Chinese, and produces NOTHING
+  // on a rig that lacks the parts (better absent than wrong).
+  //
+  // Values follow the same two-scale convention as the writers above:
+  //   • roles in NORM_TEMPLATE_ROLES → 0..1 "none..full" openness
+  //   • every other role            → reference scale (±30 degrees / ±1 normalized)
+  //
+  // eyeLOpen / eyeROpen appear in NO template on purpose: the blink system owns
+  // them, and the ease loop skips them anyway. Listing them would create targets
+  // that can never be written.
+  const NORM_TEMPLATE_ROLES = new Set(['mouthOpenY', 'mouthOpenX', 'breath']);
+  const EMOTION_ROLE_TEMPLATES = {
+    senang:    { mouthForm:  0.9, eyeLSmile:  0.8, eyeRSmile:  0.8, browLForm:  0.4, browRForm:  0.4, mouthOpenY: 0.35, angleZ:  4 },
+    tersenyum: { mouthForm:  0.6, eyeLSmile:  0.5, eyeRSmile:  0.5, angleZ:  3 },
+    sedih:     { mouthForm: -0.8, browLForm: -0.7, browRForm: -0.7, browLY: -0.5, browRY: -0.5, eyeBallY: -0.4, angleY: -6 },
+    malu:      { mouthForm:  0.3, eyeLSmile:  0.4, eyeRSmile:  0.4, eyeBallX: -0.5, browLY: -0.2, browRY: -0.2, angleZ:  6 },
+    kaget:     { mouthOpenY: 0.8, browLY:  0.7, browRY:  0.7, browLForm: 0.3, browRForm: 0.3, eyeBallY:  0.2, angleY:  5 },
+    kesal:     { mouthForm: -0.6, browLForm: -0.9, browRForm: -0.9, browLAngle: -0.6, browRAngle: -0.6, eyeBallX: 0.3, angleZ: -3 },
+    bingung:   { angleZ:  9, browLY:  0.4, browRY: -0.3, browLForm: 0.2, mouthForm: -0.2, eyeBallX:  0.5 },
+  };
+  // One lonely role is not a recognisable emotion — it reads as a twitch. Below
+  // this many resolved roles we decline to offer the emotion at all, per the
+  // "jangan menebak lalu diam" rule.
+  const EMOTION_MIN_ROLES = 2;
+
+  // Map a template value for one role into THIS model's real parameter value.
+  function emotionActualFor(role, v) {
+    const r = roleRange(role);
+    if (NORM_TEMPLATE_ROLES.has(role)) {
+      const t = clamp(v, 0, 1);
+      return r ? r.min + t * (r.max - r.min) : t;
+    }
+    const RH = refHalfFor(role);
+    return r ? roleClampActual(role, toActual(role, v)) : clamp(v, -RH, RH);
   }
 
-  // Clear all emotion-driven params back to neutral.
+  // Resolve the role templates against the CURRENT model. Returns
+  // { emotionName: { realParamId: actualValue } } containing only emotions this
+  // model can actually express. Rebuilt on every model load — never read from a
+  // sheet, because a sheet is a cache and may predate the role mapping.
+  function buildRoleEmotions() {
+    const out = {};
+    if (!state.caps || !state.caps.ids) return out;
+    for (const emo in EMOTION_ROLE_TEMPLATES) {
+      const tpl = EMOTION_ROLE_TEMPLATES[emo];
+      const vals = {};
+      let resolved = 0;
+      for (const role in tpl) {
+        const id = roleId(role);
+        if (!id) continue;                                            // model lacks this part
+        if (state.caps.params && !state.caps.params.has(id)) continue; // metadata was stale
+        // Two roles can collapse onto one id on a coarse rig (e.g. a single brow
+        // param). Two writers on one param is exactly the mouthOpenY/mouthForm
+        // aliasing bug, so the first role wins and the second is dropped.
+        if (vals[id] !== undefined) continue;
+        vals[id] = emotionActualFor(role, tpl[role]);
+        resolved++;
+      }
+      if (resolved < EMOTION_MIN_ROLES) continue;
+      out[emo] = vals;
+    }
+    return out;
+  }
+
+  // Refresh state.roleEmotions + state.supportedEmotions for the current model.
+  // User-authored 'emosi' presets are layered on top afterwards by
+  // projectEmotionPresets(), preserving the documented user > builtin precedence.
+  function refreshRoleEmotions() {
+    state.roleEmotions = buildRoleEmotions();
+    state.supportedEmotions = Object.assign({}, state.roleEmotions);
+    console.log('[emotion] role-derived vocabulary:', Object.keys(state.roleEmotions).join(', ') || '(none — model lacks facial roles)');
+    return state.roleEmotions;
+  }
+
+  // Set the eased emotion TARGET from a preset (param->value) with optional
+  // intensity factor. Any param the PREVIOUS emotion moved but this one does not
+  // mention is eased back to the model's OWN declared default, so the last
+  // expression never "sticks". Current values are seeded from the live param so
+  // the morph starts from wherever the face already is.
+  function setEmotionTargets(preset, intensity) {
+    if (!state.model) return;
+    // Intensity scales AWAY FROM THE MODEL'S DEFAULT, not from zero. A rig whose
+    // mouthForm rests at 0.5 would read intensity*value as "half closed" if we
+    // scaled from 0 — the classic literal-zero assumption.
+    const k = (intensity === undefined || intensity === null)
+      ? 1 : clamp(Number(intensity) || 0, 0, 1.5);
+    const has = (id) => !state.caps.params || state.caps.params.has(id);
+    const defOf = (id) => {
+      const r = state.paramRange && state.paramRange[id];
+      return (r && typeof r.def === 'number') ? r.def : 0;
+    };
+    const next = {};
+    for (const id in (preset || {})) {
+      if (!id || !has(id)) continue;
+      let v = Number(preset[id]);
+      if (!Number.isFinite(v)) continue;
+      const d = defOf(id);
+      v = d + (v - d) * k;
+      const r = state.paramRange && state.paramRange[id];
+      if (r && typeof r.min === 'number' && typeof r.max === 'number') v = clamp(v, r.min, r.max);
+      next[id] = v;
+    }
+    // Release whatever the previous emotion held.
+    for (const id in state.emoTarget) {
+      if (next[id] !== undefined) continue;
+      next[id] = defOf(id);
+    }
+    for (const id in next) {
+      if (state.emoCur[id] === undefined) state.emoCur[id] = readParam(id);
+    }
+    state.emoTarget = next;
+  }
+
+  // Clear all emotion-driven params back to neutral. Passing an empty preset
+  // makes setEmotionTargets() ease every held param back to the model's own
+  // default instead of snapping — and instead of leaving it stuck, which is what
+  // happened while this only reset native .exp3 state.
   function resetEmotion() {
     const mgr = state.model && state.model.internalModel &&
                 state.model.internalModel.motionManager &&
                 state.model.internalModel.motionManager.expressionManager;
     if (mgr && typeof mgr.resetExpression === 'function') mgr.resetExpression();
+    setEmotionTargets({});
   }
 
   // ─── Adaptive model capabilities (for user-imported models) ────
@@ -1212,11 +1427,18 @@
 
     state.emotionMode = state.modelExpressions.length ? 'native' : 'synthetic';
 
+    // Build the universal emotion vocabulary for THIS model. Must run AFTER
+    // caps.ids and paramRange are populated above, because every template value
+    // is mapped through the role ranges. Rebuilt on every load so swapping a
+    // model can never leave the previous character's parameter ids behind.
+    refreshRoleEmotions();
+
     console.log('[Live2D] capabilities:', JSON.stringify({
       mode: state.emotionMode,
       paramCount: state.modelParams.size,
       sampleParams: Array.from(state.modelParams).slice(0, 60),
       nativeExpr: state.modelExpressions,
+      universalEmotions: Object.keys(state.roleEmotions || {}),
     }));
   }
 
@@ -1387,7 +1609,7 @@
   let MOTION = { enabled: false, gain: 1.5 };
   async function loadAppConfig() {
     try {
-      const r = await fetch('http://127.0.0.1:8310/api/config');
+      const r = await fetch(API + '/api/config');
       const d = await r.json();
       TTS_ENDPOINT = (d.tts && d.tts.endpoint) || '';
       window.__ttsEndpoint = TTS_ENDPOINT; // debug: cek di console (window.__ttsEndpoint)
@@ -1486,7 +1708,7 @@
     try {
       // Lewat proxy lokal (server.js /api/tts) → Colab → balik audio same-origin.
       // Hindari CORS/autoplay cross-origin yang bikin remote gagal & fallback browser.
-      const resp = await fetch('http://127.0.0.1:8310/api/tts', {
+      const resp = await fetch(API + '/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
@@ -1739,7 +1961,7 @@
 
     async function loadConns() {
       try {
-        const r = await fetch('http://127.0.0.1:8310/api/config');
+        const r = await fetch(API + '/api/config');
         const d = await r.json();
         renderConns(d.connections || [], d.activeId);
       } catch (e) { console.error('[conn] load', e); }
@@ -1812,7 +2034,7 @@
       if (editingId) { body.id = editingId; body.connection = conn; }
       else body.connection = conn;
 
-      await fetch('http://127.0.0.1:8310/api/config', {
+      await fetch(API + '/api/config', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(body),
       });
@@ -1821,7 +2043,7 @@
     });
 
     async function setActive(id) {
-      await fetch('http://127.0.0.1:8310/api/config', {
+      await fetch(API + '/api/config', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ action: 'setActive', id }),
       });
@@ -1829,7 +2051,7 @@
     }
     async function delConn(id) {
       if (!confirm('Hapus connection ini?')) return;
-      await fetch('http://127.0.0.1:8310/api/config', {
+      await fetch(API + '/api/config', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ action: 'delete', id }),
       });
@@ -1837,7 +2059,7 @@
     }
     async function testConn(c, btn) {
       btn.disabled = true; btn.textContent = 'testing…';
-      const r = await fetch('http://127.0.0.1:8310/api/test', {
+      const r = await fetch(API + '/api/test', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ connection: c }),
       });
@@ -3120,7 +3342,25 @@
   // capability before the user saves it.
   function projectEmotionPresets(sheet) {
     if (!sheet || !sheet.presets) return;
-    if (!sheet.supportedEmotions || typeof sheet.supportedEmotions !== 'object') sheet.supportedEmotions = {};
+    if (!sheet.supportedEmotions || typeof sheet.supportedEmotions !== 'object' ||
+        Array.isArray(sheet.supportedEmotions)) sheet.supportedEmotions = {};
+    // Builtin role-derived emotions go in FIRST so a user preset of the same name
+    // overwrites them below — the documented user > builtin precedence. These are
+    // recomputed per model load (never read back from the sheet), so a sheet
+    // written for another character cannot inject its parameter ids here.
+    const builtin = state.roleEmotions || {};
+    // Drop any stale builtin entry BEFORE re-adding. A sheet may have been saved
+    // while another model was loaded, so it can carry emotion names resolved
+    // against a different rig's parameter ids. Names the CURRENT model cannot
+    // express must disappear rather than linger as dead vocabulary the LLM is
+    // told about. User presets are untouched — they are authored data, not cache.
+    const userNames = new Set((sheet.presets.user || [])
+      .filter(p => p.category === 'emosi').map(p => p.name));
+    for (const name in EMOTION_ROLE_TEMPLATES) {
+      if (!userNames.has(name)) delete sheet.supportedEmotions[name];
+      if (state.supportedEmotions && !userNames.has(name)) delete state.supportedEmotions[name];
+    }
+    for (const name in builtin) sheet.supportedEmotions[name] = builtin[name];
     for (const p of (sheet.presets.user || [])) {
       if (p.category !== 'emosi') continue;
       sheet.supportedEmotions[p.name] = p.values || {};
@@ -3614,10 +3854,16 @@
     // renamed on load and logged loudly. Renaming beats dropping — the user's
     // keyframes survive and stay callable, just under a distinct name.
     deshadowGerakPresets(sheet);
-    if (!sheet.roleIds || typeof sheet.roleIds !== 'object') sheet.roleIds = {};
-    if (!sheet.paramRange || typeof sheet.paramRange !== 'object') sheet.paramRange = {};
-    if (!sheet.supportedEmotions || typeof sheet.supportedEmotions !== 'object') sheet.supportedEmotions = {};
-    if (!sheet.controls || typeof sheet.controls !== 'object') sheet.controls = {};
+    // `typeof [] === 'object'`, so an array slips through a plain typeof check and
+    // then behaves like an empty map for the rest of its life: hasOwnProperty()
+    // is always false on it, which is precisely how supportedEmotions could sit
+    // as `[]` while every [EMOTION:...] silently failed. These four are all
+    // keyed maps, so an array is always corrupt input — reset it.
+    const asMap = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    sheet.roleIds = asMap(sheet.roleIds);
+    sheet.paramRange = asMap(sheet.paramRange);
+    sheet.supportedEmotions = asMap(sheet.supportedEmotions);
+    sheet.controls = asMap(sheet.controls);
     sheet.schemaVersion = SHEET_SCHEMA_VERSION;
     return sheet;
   }
@@ -4031,10 +4277,14 @@
       parts.filter(p => p.def === 0).map(p => p.id)
     );
 
-    // 5) Emotions: the Emosi settings panel was removed, so no synthetic
-    //    emotion templates are generated here. The autonomous motion engine
-    //    (face/body idle + look-at) still drives the character naturally.
-    const supportedEmotions = {};
+    // 5) Emotions: the universal vocabulary is DERIVED from the role map, not
+    //    authored per character. buildRoleEmotions() resolves the role templates
+    //    against this model's own params and ranges, so a rig missing brows or a
+    //    mouth simply advertises fewer emotions instead of getting wrong ones.
+    //    Written into the sheet so the LLM profile and the Sheet tab can report a
+    //    real count, but it is a CACHE — refreshRoleEmotions() recomputes it on
+    //    every model load and projectEmotionPresets() drops stale names.
+    const supportedEmotions = buildRoleEmotions();
 
     // 6) Native expressions (.exp3)
     const nativeExprs = state.modelExpressions || [];

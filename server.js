@@ -21,7 +21,10 @@ const { execSync } = require('child_process');
 // (node otherwise exits with "stdin is not a tty" when no TTY is attached).
 if (process.stdin && process.stdin.unref) { try { process.stdin.unref(); } catch (e) {} }
 
-const PORT = 8310;
+// Default stays 8310 so nothing changes for normal use; the env override exists
+// so a second instance can be started on a free port for testing without
+// disturbing an already-running server.
+const PORT = Number(process.env.PORT) || 8310;
 const ROOT = __dirname;
 
 // ── 9router-style connection store ─────────────────────────────
@@ -90,6 +93,52 @@ function getActiveConnection() {
   const cfg = loadConfig();
   return conns.find(c => c.id === cfg.activeId) || conns[0];
 }
+// ── Atomic JSON write ──────────────────────────────────────────
+// Node has no file locking, and these files get written from several request
+// handlers that can overlap (persistConnections runs on EVERY llm call; sheets
+// are written by inspect, by ai-classify, and soon by the sheet editor's Save).
+// A plain writeFileSync truncates first, so two overlapping writers — or a crash
+// mid-write — can leave a half-written file. For config.json that means losing
+// the user's API keys; for a sheet it means an unparseable sheet on next load.
+//
+// Writing to a unique temp file and renaming fixes the torn-file case: rename is
+// atomic on both NTFS and POSIX, so a reader sees either the old file or the new
+// one, never a partial. It does NOT serialize concurrent writers (last rename
+// wins) — acceptable here because every writer writes a complete document.
+function writeJsonAtomic(file, obj) {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, '.' + path.basename(file) + '.' + process.pid + '.' + Date.now() + '.tmp');
+  const text = JSON.stringify(obj, null, 2);
+  try {
+    fs.writeFileSync(tmp, text, 'utf8');
+    fs.renameSync(tmp, file);   // atomic replace
+  } catch (e) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e2) {}
+    throw e;
+  }
+}
+
+// Per-path write queue. writeJsonAtomic() prevents torn files but not lost
+// updates: with two overlapping POSTs for the same sheet, both read-modify-write
+// races still end with "last rename wins". Chaining writes per path makes them
+// apply in arrival order, so a Save that lands during an AI-classify write is
+// applied after it instead of vanishing.
+const _writeQueues = new Map();
+function queueJsonWrite(file, obj) {
+  const prev = _writeQueues.get(file) || Promise.resolve();
+  // Run after the previous write for this path regardless of whether it
+  // succeeded — one failed write must not block later ones.
+  const done = prev.then(() => writeJsonAtomic(file, obj), () => writeJsonAtomic(file, obj));
+  // The chain we store must never reject, or every subsequent .then would be
+  // skipped. Track the tail with a marker so the map entry is removed only when
+  // this write is the last one queued (prevents unbounded growth).
+  const tail = done.catch(() => {});
+  _writeQueues.set(file, tail);
+  tail.then(() => { if (_writeQueues.get(file) === tail) _writeQueues.delete(file); });
+  return done;   // callers see the real success/failure
+}
+
 function persistConnections(conns, activeId) {
   // Pertahankan blok lain (tts/events/camera) dari config yang ada, jangan timpa.
   let prev = {};
@@ -98,8 +147,15 @@ function persistConnections(conns, activeId) {
     activeId: activeId || (conns[0] && conns[0].id) || null,
     connections: conns,
   });
-  runtimeConfig = data;
-  try { fs.writeFileSync(path.join(ROOT, 'config.json'), JSON.stringify(data, null, 2), 'utf8'); } catch (e) {}
+  // PENTING: cache hanya bagian yang endpoint ini benar-benar miliki.
+  // Sebelumnya seluruh objek `data` disimpan, dan karena loadConfig() menaruh
+  // runtimeConfig DI ATAS file, satu kali menyimpan connection dari UI akan
+  // membekukan blok events/camera pada nilai saat itu — edit manual di
+  // config.json diabaikan diam-diam sampai server di-restart.
+  runtimeConfig = { activeId: data.activeId, connections: data.connections };
+  try { writeJsonAtomic(path.join(ROOT, 'config.json'), data); } catch (e) {
+    console.warn('[config] gagal menyimpan config.json:', e.message);
+  }
 }
 function maskKey(k) {
   if (!k || k.startsWith('MASUKKAN')) return k || '';
@@ -169,6 +225,21 @@ function safeJoin(root, reqPath) {
 // ── LLM provider proxy (no external deps) ───────────────────────
 // Supports: openai-compatible | gemini | groq | openai | anthropic | mock
 // `conn` is a single 9router-style connection object.
+
+// Hard limits for every outbound LLM call. Applied in httpsPostJson() so all
+// providers and all endpoints inherit them.
+const LLM_TIMEOUT_MS = 60000;              // no answer in 60s → fail, don't hang
+const MAX_LLM_RESPONSE_BYTES = 2 * 1024 * 1024;   // 2MB cap on provider replies
+
+// The only role names the system understands. Single source of truth: used both
+// to build the classify-params prompt AND to validate what comes back, so the
+// LLM can never invent a role that no writer knows how to apply.
+const KNOWN_ROLES = [
+  'angleX', 'angleY', 'angleZ', 'eyeBallX', 'eyeBallY', 'eyeLOpen', 'eyeROpen',
+  'eyeLSmile', 'eyeRSmile', 'eyeForm', 'mouthOpenY', 'mouthForm', 'mouthOpenX',
+  'bodyAngleX', 'bodyAngleY', 'bodyAngleZ', 'breath', 'browLForm', 'browRForm',
+  'browLY', 'browRY', 'browLAngle', 'browRAngle', 'blush',
+];
 function callLLM(conn, messages, clientSystem) {
   const provider = (conn.provider || 'openai-compatible').toLowerCase();
   // Bersihkan key dari karakter tersembunyi (newline, tab, zero-width, BOM, ctrl).
@@ -280,8 +351,20 @@ function httpsPostJson(urlStr, body, headers = {}) {
     }, headers);
     const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'POST', headers: h }, (resp) => {
       let buf = '';
-      resp.on('data', d => buf += d);
+      // Cap the provider response too: a hostile/broken endpoint streaming an
+      // endless body would otherwise grow this string until the process dies.
+      let tooBig = false;
+      resp.on('data', d => {
+        if (tooBig) return;
+        buf += d;
+        if (buf.length > MAX_LLM_RESPONSE_BYTES) {
+          tooBig = true;
+          resp.destroy();
+          reject(new Error('respon LLM terlalu besar (>' + Math.round(MAX_LLM_RESPONSE_BYTES / 1024) + 'KB)'));
+        }
+      });
       resp.on('end', () => {
+        if (tooBig) return;
         let json;
         try { json = JSON.parse(buf); } catch (e) { return reject(new Error('respon bukan JSON: ' + buf.slice(0, 200))); }
         if (resp.statusCode < 200 || resp.statusCode >= 300) {
@@ -292,9 +375,77 @@ function httpsPostJson(urlStr, body, headers = {}) {
         resolve(json);
       });
     });
+    // Without this, a provider that accepts the socket but never answers would
+    // hang the request forever: the browser's fetch never settles, and the UI
+    // that awaits it (chat, inspect, sheet analysis) freezes with no error.
+    req.setTimeout(LLM_TIMEOUT_MS, () => {
+      req.destroy(new Error('timeout: LLM tidak merespon dalam ' + Math.round(LLM_TIMEOUT_MS / 1000) + 's'));
+    });
     req.on('error', reject);
     req.write(data);
     req.end();
+  });
+}
+
+// ── Shared LLM caller with automatic connection fallback ────────────
+// Extracted verbatim from the inline tryNext() that used to live inside the
+// POST /api/chat handler, so that EVERY endpoint needing an LLM (chat,
+// classify-params, animate-text, and the sheet-analysis endpoint added later)
+// shares one retry/cooldown policy instead of each growing its own copy.
+//
+// Behaviour is intentionally identical to the old inline version:
+//   - try the active connection first, then the others in config order
+//   - skip any connection still inside its rate-limit cooldown
+//   - on a fallback-worthy error, stamp rateLimitedUntil and move to the next
+//   - on the last connection (or a non-fallback error), give up
+//
+// Resolves { reply, used, conn }. Rejects with an Error carrying `httpStatus`
+// (400 when no connection is configured at all, 502 otherwise) and `kind`, so
+// each caller can shape its own HTTP response without duplicating the policy.
+function llmWithFallback(messages, clientSystem) {
+  return new Promise((resolve, reject) => {
+    const conns = getConnections();
+    if (!conns.length) {
+      const e = new Error('Belum ada connection. Buka panel ⚙️ AI Connections.');
+      e.httpStatus = 400; e.kind = 'no-connections';
+      return reject(e);
+    }
+    const active = getActiveConnection();
+    // order: active first, then the rest
+    const order = [active, ...conns.filter(c => c !== active)].filter(Boolean);
+
+    let idx = 0;
+    (function tryNext() {
+      if (idx >= order.length) {
+        const e = new Error('Semua connection gagal (cek panel ⚙️ AI Connections).');
+        e.httpStatus = 502; e.kind = 'all-failed';
+        return reject(e);
+      }
+      const conn = order[idx++];
+      // skip connections in cooldown (rate-limited)
+      if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) {
+        return tryNext();
+      }
+      callLLM(conn, messages, clientSystem).then(reply => {
+        // mark success
+        conn.testStatus = 'success'; conn.lastError = ''; conn.rateLimitedUntil = null;
+        persistConnections(conns);
+        resolve({ reply, used: conn.id, conn });
+      }).catch(err => {
+        const status = err.statusCode || 0;
+        const cls = classifyError(status, err.message);
+        conn.testStatus = 'error'; conn.lastError = err.message;
+        if (cls.shouldFallback) conn.rateLimitedUntil = new Date(Date.now() + (cls.cooldownMs || 30000)).toISOString();
+        persistConnections(conns);
+        if (cls.shouldFallback && idx < order.length) {
+          tryNext();   // auto-fallback to next connection
+        } else {
+          const e = new Error('LLM error [' + (conn.name || conn.id) + ']: ' + err.message);
+          e.httpStatus = 502; e.kind = 'llm-error'; e.conn = conn;
+          reject(e);
+        }
+      });
+    })();
   });
 }
 
@@ -317,43 +468,15 @@ const server = http.createServer((req, res) => {
       // Client may send extra system context (e.g. capability profile).
       // Merge with the connection's systemPrompt so the LLM gets both.
       const clientSystem = payload.system || '';
-      const conns = getConnections();
-      if (!conns.length) {
-        res.writeHead(400); res.end(JSON.stringify({ error: 'Belum ada connection. Buka panel ⚙️ AI Connections.' })); return;
-      }
-      const active = getActiveConnection();
-      // order: active first, then the rest
-      const order = [active, ...conns.filter(c => c !== active)].filter(Boolean);
-
-      let idx = 0;
-      function tryNext() {
-        if (idx >= order.length) {
-          res.writeHead(502); res.end(JSON.stringify({ error: 'Semua connection gagal (cek panel ⚙️ AI Connections).' })); return;
-        }
-        const conn = order[idx++];
-        // skip connections in cooldown (rate-limited)
-        if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) {
-          return tryNext();
-        }
-        callLLM(conn, messages, clientSystem).then(reply => {
-          // mark success
-          conn.testStatus = 'success'; conn.lastError = ''; conn.rateLimitedUntil = null;
-          persistConnections(conns);
-          res.writeHead(200); res.end(JSON.stringify({ reply, used: conn.id }));
-        }).catch(err => {
-          const status = err.statusCode || 0;
-          const cls = classifyError(status, err.message);
-          conn.testStatus = 'error'; conn.lastError = err.message;
-          if (cls.shouldFallback) conn.rateLimitedUntil = new Date(Date.now() + (cls.cooldownMs || 30000)).toISOString();
-          persistConnections(conns);
-          if (cls.shouldFallback && idx < order.length) {
-            tryNext();   // auto-fallback to next connection
-          } else {
-            res.writeHead(502); res.end(JSON.stringify({ error: 'LLM error [' + (conn.name||conn.id) + ']: ' + err.message }));
-          }
-        });
-      }
-      tryNext();
+      // Retry/cooldown policy now lives in llmWithFallback() (shared with the
+      // model endpoints). Response shape is unchanged: { reply, used } on
+      // success, { error } with the same status codes on failure.
+      llmWithFallback(messages, clientSystem).then(({ reply, used }) => {
+        res.writeHead(200); res.end(JSON.stringify({ reply, used }));
+      }).catch(err => {
+        res.writeHead(err.httpStatus || 502);
+        res.end(JSON.stringify({ error: err.message }));
+      });
     });
     return;
   }
@@ -534,7 +657,7 @@ Parameter yang SUDAH ter-mapping:
 ${Object.entries(knownRoles).map(([r, id]) => `  ${r} -> ${id}`).join('\n') || '(belum ada)'}
 
 Daftar semantic roles yang tersedia:
-[angleX, angleY, angleZ, eyeBallX, eyeBallY, eyeLOpen, eyeROpen, eyeLSmile, eyeRSmile, eyeForm, mouthOpenY, mouthForm, mouthOpenX, bodyAngleX, bodyAngleY, bodyAngleZ, breath, browLForm, browRForm, browLY, browRY, browLAngle, browRAngle, blush]
+[${KNOWN_ROLES.join(', ')}]
 
 TUGAS: Analisis setiap parameter di atas (berdasarkan nama ID, range, naming convention JP/CN/EN, dan fungsinya di Live2D).
 Tentukan:
@@ -550,7 +673,7 @@ Format:
   { "id": "ParamX", "role": "angleX", "group": "Sudut (Angle)", "label": "Kepala X", "isAccessory": false }
 ]`;
 
-      callLLM(active, [{ role: 'user', content: prompt }]).then(reply => {
+      llmWithFallback([{ role: 'user', content: prompt }]).then(({ reply }) => {
         let clean = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
         let parsed = [];
         try { parsed = JSON.parse(clean); } catch (e) {
@@ -558,8 +681,32 @@ Format:
           const m = clean.match(/\[\s*\{[\s\S]*\}\s*\]/);
           if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) {} }
         }
+        // Never hand raw LLM output to the client. Only ids that were actually
+        // in the request survive, group/label are length-capped strings, role
+        // must be a known role, and any min/max/def the LLM tried to smuggle in
+        // is dropped outright (ranges come from Cubism Core, never from an LLM).
+        const requestedIds = new Set(unclassified.map(u => String(u.id)));
+        const allowedRoles = new Set(KNOWN_ROLES);
+        const str = (v, cap) => (typeof v === 'string' ? v.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, cap) : '');
+        const safe = (Array.isArray(parsed) ? parsed : []).reduce((acc, it) => {
+          if (!it || typeof it !== 'object') return acc;
+          const id = String(it.id == null ? '' : it.id);
+          if (!requestedIds.has(id)) return acc;   // hallucinated / unrelated id
+          const role = typeof it.role === 'string' && allowedRoles.has(it.role) ? it.role : null;
+          acc.push({
+            id,
+            role,
+            group: str(it.group, 40),
+            label: str(it.label, 60),
+            isAccessory: it.isAccessory === true,
+          });
+          return acc;
+        }, []);
+        if (Array.isArray(parsed) && safe.length !== parsed.length) {
+          console.warn('[classify-params] dropped', parsed.length - safe.length, 'invalid/hallucinated item(s)');
+        }
         res.writeHead(200);
-        res.end(JSON.stringify({ classifications: Array.isArray(parsed) ? parsed : [] }));
+        res.end(JSON.stringify({ classifications: safe }));
       }).catch(err => {
         console.warn('[classify-params] AI classification failed:', err.message);
         res.writeHead(200);
@@ -616,18 +763,37 @@ Contoh format:
   { "text": "Aku senang banget ketemu kalian lagi.", "emotion": "senang", "gesture": "lean_excited", "intensity": 0.8 }
 ]`;
 
-      callLLM(active, [{ role: 'user', content: directorPrompt }]).then(reply => {
+      llmWithFallback([{ role: 'user', content: directorPrompt }]).then(({ reply }) => {
         let clean = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
         let parsed = [];
         try { parsed = JSON.parse(clean); } catch (e) {
           const m = clean.match(/\[\s*\{[\s\S]*\}\s*\]/);
           if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) {} }
         }
-        if (!Array.isArray(parsed) || !parsed.length) {
-          parsed = [{ text, emotion: 'normal', gesture: 'nod', intensity: 0.7 }];
-        }
+        // Validate against what this model can actually do: an emotion or
+        // gesture the model doesn't have would drive the animation code with a
+        // name it can't resolve. Unknown emotion → 'normal', unknown gesture →
+        // null (neutral), intensity clamped to the documented 0.3–1.0 band.
+        const okEmotion = new Set(emotions);
+        const okGesture = new Set(gestures);
+        const segments = (Array.isArray(parsed) ? parsed : []).reduce((acc, s) => {
+          if (!s || typeof s !== 'object') return acc;
+          const t = typeof s.text === 'string' ? s.text : '';
+          if (!t.trim()) return acc;
+          let inten = Number(s.intensity);
+          if (!Number.isFinite(inten)) inten = 0.7;
+          acc.push({
+            text: t,
+            emotion: okEmotion.has(s.emotion) ? s.emotion : 'normal',
+            gesture: okGesture.has(s.gesture) ? s.gesture : null,
+            intensity: Math.min(1.0, Math.max(0.3, inten)),
+          });
+          return acc;
+        }, []);
         res.writeHead(200);
-        res.end(JSON.stringify({ segments: parsed }));
+        res.end(JSON.stringify({
+          segments: segments.length ? segments : [{ text, emotion: 'normal', gesture: 'nod', intensity: 0.7 }],
+        }));
       }).catch(err => {
         console.warn('[animate-text] fallback due to error:', err.message);
         res.writeHead(200);
@@ -757,20 +923,28 @@ Contoh format:
   }
   if (req.method === 'POST' && urlPath === '/api/sheet') {
     let body = '';
-    req.on('data', c => { body += c; if (body.length > 5 * 1024 * 1024) req.destroy(); });
+    let aborted = false;
+    req.on('data', c => { body += c; if (body.length > 5 * 1024 * 1024) { aborted = true; req.destroy(); } });
     req.on('end', () => {
+      if (aborted) return;
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       try {
         const data = JSON.parse(body);
         const name = (data.modelName || 'default');
         const sheet = data.sheet || data;
-        if (!sheet || typeof sheet !== 'object') throw new Error('sheet kosong');
-        fs.mkdirSync(SHEETS_DIR, { recursive: true });
-        fs.writeFileSync(sheetPathFor(name), JSON.stringify(sheet, null, 2), 'utf8');
-        console.log('[server] character sheet saved ->', sheetPathFor(name));
-        res.writeHead(200, JSON_HEAD);
-        res.end(JSON.stringify({ ok: true, path: path.relative(ROOT, sheetPathFor(name)).split(path.sep).join('/') }));
+        if (!sheet || typeof sheet !== 'object' || Array.isArray(sheet)) throw new Error('sheet kosong');
+        const target = sheetPathFor(name);
+        // Serialized + atomic: two writers for the same model (inspect finishing
+        // while ai-classify posts its update, or the sheet editor's Save landing
+        // at the same moment) can no longer interleave into a torn file.
+        queueJsonWrite(target, sheet).then(() => {
+          console.log('[server] character sheet saved ->', target);
+          res.writeHead(200, JSON_HEAD);
+          res.end(JSON.stringify({ ok: true, path: path.relative(ROOT, target).split(path.sep).join('/') }));
+        }).catch(e => {
+          res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+        });
       } catch (e) {
         res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
       }
@@ -944,8 +1118,8 @@ Contoh format:
       const payload = { model: name, generatedAt: new Date().toISOString(), clipCount: input.length, ...built };
 
       try {
-        fs.mkdirSync(SHEETS_DIR, { recursive: true });
-        fs.writeFileSync(cacheFile, JSON.stringify(payload, null, 2), 'utf8');
+        queueJsonWrite(cacheFile, payload).catch(e =>
+          console.warn('[motion-taxonomy] cache write failed:', e.message));
       } catch (e) { console.warn('[motion-taxonomy] cache write failed:', e.message); }
 
       console.log('[motion-taxonomy]', name, '->', input.length, 'clips,',

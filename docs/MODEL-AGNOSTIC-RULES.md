@@ -21,10 +21,14 @@ di kode ini:
 | 4 | `eyeBlinkIds[0]`/`[1]` diasumsikan L-lalu-R | Rigger yang menulis R dulu akan membuat mata kiri/kanan tertukar |
 | 5 | `ParamHair*` spekulatif di `PARAM_META` | 0/3 cocok di kedua model — murni tebakan |
 | 6 | **Nilai literal ditulis langsung ke param role** (bypass skala) | `pokeParam(eyeLOpen, 0/1)`, `pokeParam(breath, 0..1)`, lip-sync `Math.min(1, …)`, mouth-rest `0`. Kedua model bundled **sama-sama** pakai `eyeOpen` 0..1 dan `angle` ±30 — itulah kenapa bypass ini tak pernah kelihatan |
+| 7 | **Kemampuan model dibaca dari manifest saja, bukan dari disk** | `model3.json` lumine mendaftarkan 0 `FileReferences.Expressions` padahal ada 19 `.exp3.json` di folder. `pixi-live2d-display` hanya membuat ExpressionManager kalau `settings.expressions` truthy, jadi 19 aset mati **tanpa error** dan model tampak "tidak punya ekspresi" |
 
 Nomor 3 dan 4 satu spesies dengan 1 dan 2: **mengambil makna dari urutan array
 sama rapuhnya dengan mengambil makna dari nama.** Nomor 6 juga: **menulis angka
 literal ke param role sama saja mengasumsikan konvensi numerik rigger.**
+Nomor 7 adalah sisi lain koin yang sama: **mempercayai deklarasi rigger sebagai
+inventaris lengkap** — manifest bisa tidak lengkap, dan diam-diam kehilangan
+19 aset terasa persis sama seperti model yang memang datar.
 
 ## Menulis ke parameter: HANYA lewat role space
 
@@ -59,6 +63,7 @@ sebagai tengah membuat kepalanya miring permanen.
 - ❌ Mendaftar aksesoris secara manual — **deteksi bentuknya**: range 0..1, default 0, bukan role
 - ❌ Menebak lalu diam. Kalau ambigu, **jangan resolve** — tidak ada lebih aman daripada salah
 - ❌ Menambah satu regex per nama yang tidak cocok (begitulah 7 pola khusus Ichika dulu menyusup)
+- ❌ Menyimpulkan kemampuan model **hanya** dari `model3.json` — periksa juga apa yang benar-benar ada di disk
 
 ## Yang wajib
 
@@ -67,6 +72,8 @@ sebagai tengah membuat kepalanya miring permanen.
 - ✅ Invariant eksplisit: `mouthOpenY !== mouthForm` (dicek di `mapRoles`)
 - ✅ Tolak id dari `Groups` yang tidak dimiliki model (metadata bisa basi)
 - ✅ Laporkan provenance, bukan cuma persen: `curveClassified / nameOnly / unclassified`
+- ✅ Kalau melengkapi manifest yang tidak lengkap: **in-memory saja**, jangan tulis
+  ke file model, dan jangan pernah menimpa apa yang rigger sudah deklarasikan
 
 ## Cara membuktikan tidak melanggar
 
@@ -74,6 +81,8 @@ sebagai tengah membuat kepalanya miring permanen.
 node test/test-role-mapping.js      # 32 tes — resolusi role model-agnostic
 node test/test-param-scaling.js     # 52 tes — skala referensi & anti-bypass
 node test/test-motion-taxonomy.js   # 47 tes — klasifikasi klip
+node test/test-exp3-adoption.js     # 52 tes — adopsi .exp3 yatim, nol nama model
+node test/test-api-origin.js        # 18 tes — origin diturunkan, bukan port literal
 ```
 
 `test-role-mapping.js` melakukan **uji invariansi penggantian nama**: rig yang

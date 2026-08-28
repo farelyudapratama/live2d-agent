@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul 2>&1
-title 🎭 Live2D Agent — 神宫白子
+title 🎭 Live2D Agent
 
 cd /d "%~dp0"
 echo.
 echo   ╔═══════════════════════════════════════╗
-echo   ║   🎭 Live2D Agent — 神宫白子          ║
+echo   ║   You Live2D Agent                    ║
 echo   ║   Starting server...                  ║
 echo   ╚═══════════════════════════════════════╝
 echo.

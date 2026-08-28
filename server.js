@@ -540,6 +540,34 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Pure merge used by persistEvents(): returns a NEW config object with the
+  // ambient-event block replaced by `incoming` (unknown keys dropped, existing
+  // blocks preserved). Extracted as a pure function so it can be unit-tested
+  // without touching disk (test-fase4-behaviour.js).
+  const KNOWN_EVENT_KEYS = ['idleSpeak', 'idleMs', 'idleRepeatMs', 'awaySpeak', 'returnSpeak', 'awayHiddenMs', 'quietMs'];
+  function mergeEventsIntoConfig(prev, incoming) {
+    const base = (typeof prev === 'object' && prev) ? prev : {};
+    const merged = Object.assign({}, base.events || {}, incoming || {});
+    const clean = {};
+    for (const k of KNOWN_EVENT_KEYS) if (k in merged) clean[k] = merged[k];
+    return Object.assign({}, base, { events: clean });
+  }
+
+  // Persist ONLY the ambient-event block, preserving every other part of the
+  // config (connections, tts, camera, motion). Used by the Behaviour panel in
+  // the UI: the events block is user-facing tuning, so it must round-trip
+  // without ever rewriting (and thus risking) the user's API keys or other
+  // blocks. persistConnections() deliberately ignores events, so we write the
+  // full document here instead.
+  function persistEvents(events) {
+    let prev = {};
+    try { prev = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')); } catch (e) {}
+    const data = mergeEventsIntoConfig(prev, events);
+    try { writeJsonAtomic(path.join(ROOT, 'config.json'), data); } catch (e) {
+      console.warn('[config] gagal menyimpan events:', e.message);
+    }
+  }
+
   // ── GET /api/config → list connections + active (apiKey masked) ──
   if (req.method === 'GET' && req.url.split('?')[0] === '/api/config') {
     const cfg = loadConfig();
@@ -589,6 +617,19 @@ const server = http.createServer((req, res) => {
         } else if (action === 'setActive') {
           if (!conns.find(c => c.id === incoming.id)) { res.writeHead(404); res.end(JSON.stringify({ error: 'connection tidak ada' })); return; }
           cfg.activeId = incoming.id;
+        } else if (action === 'saveEvents') {
+          // Persist ONLY the ambient-event tuning (quietMs/idleMs/.../toggles),
+          // leaving connections/tts/camera/motion untouched. The UI sends the
+          // full events object; we merge it onto whatever is already stored so
+          // a partial object can never drop a field the UI didn't show. Unknown
+          // keys are dropped inside mergeEventsIntoConfig(). The live in-app
+          // update of the running EVENTS object is done client-side (applyLive),
+          // so the server only persists + acknowledges.
+          const prevCfg = loadConfig();
+          const merged = mergeEventsIntoConfig(prevCfg, incoming.events || {});
+          persistEvents(merged.events);
+          res.writeHead(200); res.end(JSON.stringify({ ok: true, events: merged.events }));
+          return;
         } else if (action === 'save') {
           // full replace (backwards compat)
           if (Array.isArray(incoming.connections)) conns = incoming.connections;
@@ -1027,7 +1068,64 @@ Contoh format:
     return;
   }
 
-  // GET /api/model/expressions?name=X
+  // GET /api/model/expressions-adoption?name=X
+  // Langkah 2d: lets the UI show a per-file checkbox for the auto-adopted
+  // orphaned .exp3 files, and reports which ones the user has switched OFF.
+  // The disabled list is persisted per-model under sheets/ as
+  // exp3-adoption_<folder>.json ({ disabled: [Name,...] }). Adoption stays
+  // ON by default — this only lets the user opt OUT of specific files.
+  if (req.method === 'GET' && urlPath === '/api/model/expressions-adoption') {
+    try {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const name = q.get('name');
+      // Reuse the discovery endpoint (no await — the request handler is not async).
+      const base = (typeof API === 'string' && /^https?:/.test(API)) ? API : ('http://127.0.0.1:' + PORT);
+      fetch(base + '/api/model/expressions?name=' + encodeURIComponent(name || ''))
+        .then(eRes => eRes.ok ? eRes.json() : Promise.reject(new Error('expressions discovery failed')))
+        .then(info => {
+          const adoptFile = path.join(SHEETS_DIR, 'exp3-adoption_' + String(name || '').replace(/[^A-Za-z0-9_\\-]+/g, '_') + '.json');
+          let disabled = [];
+          try { const j = JSON.parse(fs.readFileSync(adoptFile, 'utf8')); if (Array.isArray(j.disabled)) disabled = j.disabled; } catch (e) {}
+          const disabledSet = new Set(disabled);
+          const expressions = (info.expressions || []).map(e => Object.assign({}, e, { enabled: !disabledSet.has(e.Name) }));
+          res.writeHead(200, JSON_HEAD);
+          res.end(JSON.stringify({ model3: info.model3, expressions, disabled: Array.from(disabledSet) }));
+        })
+        .catch(err => { res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: err.message })); });
+    } catch (e) {
+      res.writeHead(404, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // POST /api/model/expressions-adoption  body: { name, disabled:[Name,...] }
+  // Persists the user's opt-out list for orphaned .exp3 adoption. Only the
+  // `disabled` array is honoured; unknown keys are ignored.
+  if (req.method === 'POST' && urlPath === '/api/model/expressions-adoption') {
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 1e5) req.destroy(); });
+    req.on('end', () => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      let incoming;
+      try { incoming = JSON.parse(body); } catch (e) {
+        res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: 'body JSON rusak' })); return;
+      }
+      try {
+        const name = String(incoming.name || '').replace(/[^A-Za-z0-9_\\-]+/g, '_');
+        if (!name) throw new Error('name kosong');
+        const disabled = Array.isArray(incoming.disabled) ? incoming.disabled.filter(x => typeof x === 'string') : [];
+        const adoptFile = path.join(SHEETS_DIR, 'exp3-adoption_' + name + '.json');
+        writeJsonAtomic(adoptFile, { disabled });
+        res.writeHead(200, JSON_HEAD);
+        res.end(JSON.stringify({ ok: true, disabled }));
+      } catch (e) {
+        res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // Lists every *.exp3.json that physically exists under model/<X>/, with each
   // File path expressed RELATIVE TO THE model3.json DIRECTORY (which is how
   // Cubism manifests reference them, and how pixi-live2d resolves them).

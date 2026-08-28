@@ -10,7 +10,8 @@ dan diatur dari panel web. Tujuannya: desktop pet / VTuber-style assistant lokal
 
 > **Status:** WIP. Engine render: **PixiJS v6.5.10** +
 > `pixi-live2d-display@0.4.0` + **Live2D Cubism Core 4** (bundled offline).
-> Rencana kerja aktif: `docs/PLAN-BESOK-ALIVE.md`.
+> Rencana kerja aktif: `docs/PLAN-BESOK-ALIVE.md` (semua langkah "Terasa
+> Hidup" **sudah selesai** — lihat catatan di bawah).
 
 ---
 
@@ -18,14 +19,20 @@ dan diatur dari panel web. Tujuannya: desktop pet / VTuber-style assistant lokal
 
 ```bash
 cd live2d-agent
-node server.js            # server static + LLM proxy di http://127.0.0.1:8310
+node server.js            # server static + LLM proxy, default http://127.0.0.1:8310
+PORT=9000 node server.js  # port lain juga jalan — frontend ikut sendiri
 ```
 
-Buka `http://127.0.0.1:8310`. Model diharapkan ada di `model/<nama>/<file>.model3.json`
-(lihat *Model assets* di bawah — **gak di-commit** karena lisensi).
+Atau cukup klik **`start.bat`** (Windows) — dia menjalankan `node server.js`,
+lalu buka URL yang dicetak. Buka URL yang dicetak. Model diharapkan ada di
+`model/<nama>/<file>.model3.json` (lihat *Model assets* di bawah — **gak
+di-commit** karena lisensi).
 
 > `server.py` adalah server static lama tanpa proxy LLM/sheet. Untuk fitur agent
 > pakai `server.js`.
+
+**Setelah mengubah `server.js` / `js/app.js` / `agent.js`, restart server**
+(Node tidak hot-reload — tutup jendela CMD lalu klik `start.bat` lagi).
 
 ---
 
@@ -37,12 +44,15 @@ Buka `http://127.0.0.1:8310`. Model diharapkan ada di `model/<nama>/<file>.model
 | Sheet per model (schema v4) | ✅ | inspeksi Cubism + label user + saran AI |
 | Preset 4 kategori | ✅ | `emosi` / `properti` / `aksesoris` / `gerak` |
 | Analisa sheet oleh LLM | ✅ | `POST /api/model/analyze-sheet`, output divalidasi ketat |
-| Injeksi gerak dari LLM | 🟡 | directive `[EMOTION:] [GESTURE:] [ACC:] [PROP:] [HEAD:] [EYES:] [MOUTH:] [BODY:]` — `[PROP:]` belum didaftarkan ke LLM |
-| Agent proaktif (idle/away/return/mood) | 🟡 | mesin lengkap, tapi default config bikin diam 30 menit |
+| Adopsi `.exp3` tak terdaftar | ✅ | ekspresi di disk tapi lupa didaftarkan di `model3.json` tetap kepakai |
+| Injeksi gerak dari LLM | ✅ | directive `[EMOTION:] [GESTURE:] [ACC:] [PROP:] [HEAD:] [EYES:] [MOUTH:] [BODY:]` — `[PROP:]` & `[ACC:]` sudah tersambung ke LLM |
+| Agent proaktif (idle/away/return/mood) | ✅ | panel **Kelakuan** + profil Hidup/Sedang/Tenang; mesin sudah lengkap |
 | Deteksi mood via webcam | ✅ | opt-in, inferensi lokal, frame tidak di-upload |
 | Mouse-follow (mata + kepala + badan) | ✅ | |
 | TTS + lip-sync (osilasi) | ✅ | |
 | Otak LLM (proxy `/api/chat`) | ✅ | multi-provider + fallback |
+| Indikator keadaan hidup | ✅ | presence / mood + sumber / sisa masa tenang, real-time di UI |
+| Kontrol adopsi `.exp3` (opt-out per file) | ✅ | tab Sheet → 🧬 Ekspresi Teradopsi |
 | STT mic (ngobrol 2 arah) | ⬜ | rencana |
 | Lip-sync presisi (dari audio) | ⬜ | masih timer-osilasi |
 
@@ -72,6 +82,9 @@ sheets/<key>.json     Cache sheet per model
 OpenAI-compatible → balik teks → `agent.js` pecah jadi segmen + directive →
 gerak + TTS. API key **hanya di server**, tidak pernah ke browser.
 
+Frontend menurunkan origin backend dari `location.origin`, jadi `PORT=…`, akses
+dari LAN, dan https semuanya jalan tanpa mengubah kode.
+
 ### Sistem preset (sheet)
 Empat kategori — `emosi`, `properti`, `aksesoris`, `gerak` — disimpan per model
 di `localStorage` **dan** `sheets/<key>.json`. Tiga sumber dengan kepercayaan
@@ -85,11 +98,19 @@ Detail lengkap + aturan yang tidak boleh dibalik: `docs/HANDOFF-SHEET-SYSTEM.md`
 ## 🧪 Test
 
 ```bash
+npm test                 # jalankan semua suite (cross-platform, via test/run-all.js)
+# atau manual:
 for f in test/test-*.js; do node "$f"; done
 ```
 
-Baseline: **768 passed, 0 failed** di 10 suite (`test-taxonomy-ichika.js` skip —
-butuh aset model yang tidak ada di repo).
+Baseline: **993 passed, 0 failed** di 19 suite aktif (`test-taxonomy-ichika.js`
+skip — butuh aset model Ichika yang tidak ada di repo). `test/run-all.js`
+menjumlahkan tiap suite dan mengembalikan exit non-zero bila ada kegagalan,
+cocok untuk CI.
+
+Kalau mau ringkasan, grep `[0-9]+ passed, [0-9]+ failed`; jangan ambil baris
+terakhir tiap suite — beberapa suite mencetak keterangan (atau baris kosong)
+setelah ringkasannya, sehingga terlihat gagal padahal bersih.
 
 ---
 
@@ -104,11 +125,20 @@ butuh aset model yang tidak ada di repo).
 ---
 
 ## 🔧 Troubleshooting
-- **Karakter tidak pernah bicara sendiri?** Cek `events.quietMs` / `idleMs` di
-  `config.json` — default user saat ini 30 menit. Console akan mencetak
-  `[agent] masa tenang, skip event`.
-- **0 emosi terdeteksi?** Model mungkin tidak mendaftarkan `.exp3` di
-  `model3.json` walau filenya ada di folder (kasus lumine: 27 file, 0 terdaftar).
+- **Karakter tidak pernah bicara sendiri?** Buka tab ⚙️ AI → **🎚️ Kelakuan
+  (Proaktivitas)**, pilih profil **⚡ Hidup** lalu **💾 Simpan Kelakuan** — dia
+  akan mulai bicara ~15 dtk. Atau cek `events.quietMs` / `idleMs` di
+  `config.json` (default 30 menit). Indikator **⏳ masa tenang** di bawah chat
+  menunjukkan sisa waktu; console mencetak `[agent] masa tenang, skip event`.
+- **0 emosi terdeteksi?** Ekspresi yang ada di disk tapi tidak terdaftar di
+  `model3.json` sekarang diadopsi otomatis; console mencetak
+  `[exp3] adopted N undeclared expression file(s)`. Kalau tetap 0, berarti model
+  itu memang tidak punya file `.exp3.json` — emosi harus dibuat sebagai preset
+  `emosi` berbasis parameter di tab Sheet.
+- **Semua fetch gagal padahal halaman kebuka?** Dulu penyebabnya port
+  di-hardcode; sekarang origin diturunkan dari `location.origin`. Kalau kambuh,
+  cek apakah ada literal `127.0.0.1:8310` yang menyusup balik
+  (`node test/test-api-origin.js`).
 - **Model blank di headless?** Normal — swiftshader headless gak render WebGL ke
   framebuffer; model tetap load (cek console `[Live2D] Model loaded`).
 

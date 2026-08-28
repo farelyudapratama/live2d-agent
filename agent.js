@@ -100,6 +100,7 @@ Format: [EMOTION:nama]
 === DAFTAR EXPRESSION / PROPERTI BAWAAN ===
 ${capProfile.nativeExpressions.length ? capProfile.nativeExpressions.join(', ') : 'tidak ada'}
 Format: [EXPR:nama] atau [PROP:nama]
+${capProfile.properties && capProfile.properties.length ? 'Properti (preset user, bisa kamu aktifkan otomatis): ' + capProfile.properties.join(', ') + '\nGunakan [PROP:nama] untuk menyalakannya.' : ''}
 
 === DAFTAR AKSESORIS ===
 ${capProfile.accessories.length ? capProfile.accessories.join(', ') : 'tidak ada'}
@@ -222,7 +223,13 @@ Contoh pendek:
     }
 
     const clean = currentText.trim();
-    if (clean) {
+    // A trailing directive with no text after it (e.g. "...[PROP:Kacamata]") left
+    // currentActions populated but never produced a segment — so the last emotion
+    // /gesture/property was silently dropped. Push a (possibly empty-text) segment
+    // whenever there is at least one pending action, so end-of-reply directives
+    // are still applied. An empty-text segment is fine: speakSegments() just
+    // applies the actions without emitting visible speech for that beat.
+    if (clean || Object.keys(currentActions).length) {
       segments.push({ text: clean, actions: { ...currentActions } });
     }
 

@@ -320,6 +320,26 @@
   //
   // NON-DESTRUCTIVE: any failure (offline server, unreadable JSON, no orphans)
   // returns null and the caller falls back to loading by URL.
+  // Pure helper: which orphaned (undeclared) .exp3 files should be auto-adopted,
+  // given the user's opt-out set. Extracted so Langkah 2d's exclusion logic is
+  // unit-testable without booting the engine (test-fase4-adoption.js).
+  //   - declared files are never "orphans" (rigger owns them)
+  //   - files without File/Name are unresolvable → skipped
+  //   - names in `disabled` (user opt-out) are skipped
+  function filterAdoptable(onDisk, disabled) {
+    // Realm-agnostic membership test: a Set created in another JS realm is not
+    // `instanceof` this realm's Set, so we probe for a `.has` method first, then
+    // fall back to array `.includes`. Keeps the opt-out logic correct even when
+    // the disabled set arrives from a different context (e.g. a test sandbox).
+    const isOff = (n) => {
+      if (disabled && typeof disabled.has === 'function') return disabled.has(n);
+      if (Array.isArray(disabled)) return disabled.indexOf(n) !== -1;
+      return false;
+    };
+    return (Array.isArray(onDisk) ? onDisk : [])
+      .filter(e => e && !e.declared && e.File && e.Name && !isOff(e.Name));
+  }
+
   async function buildModelSettings(modelPath) {
     try {
       const parts = String(modelPath || '').split('/');
@@ -339,9 +359,22 @@
       const info = await eRes.json();
       if (!settings || !settings.FileReferences) return null;
 
+      // Langkah 2d: a user may have opted OUT of specific auto-adopted .exp3
+      // files. We fetch that opt-out list and skip those names so adoption stays
+      // model-agnostic AND respects user choice. If the endpoint is missing or
+      // errors, we adopt everything (the old default) — never fail closed.
+      let disabled = new Set();
+      try {
+        const aRes = await fetch(API + '/api/model/expressions-adoption?name=' + encodeURIComponent(folder));
+        if (aRes.ok) {
+          const aInfo = await aRes.json();
+          if (Array.isArray(aInfo.disabled)) disabled = new Set(aInfo.disabled);
+        }
+      } catch (e) { /* adopt all on error */ }
+
       const onDisk = Array.isArray(info.expressions) ? info.expressions : [];
-      const orphans = onDisk.filter(e => e && !e.declared && e.File && e.Name);
-      if (!orphans.length) return null;   // manifest already complete
+      const orphans = filterAdoptable(onDisk, disabled);
+      if (!orphans.length) return null;   // manifest already complete (or all opted out)
 
       const declared = Array.isArray(settings.FileReferences.Expressions)
         ? settings.FileReferences.Expressions.slice()
@@ -2457,6 +2490,192 @@
 
     refreshConfigForm();
 
+    // ── Kelakuan (Behaviour) panel — Langkah 2a ──
+    // Menyelesaikan Temuan A: karakter diam 30 menit karena config.events, bukan
+    // bug kode. Panel ini membiarkan user mengatur proaktivitas tanpa menyentuh
+    // config.json manual (yang merupakan data milik user — lihat HANDOLD rule).
+    // Perubahan di-apply LIVE ke EVENTS (referensi yang dibaca agent.js saat
+    // event terjadi) DAN di-persist ke server via POST /api/config saveEvents.
+    (function initBehaviourPanel() {
+      const els = {
+        hidup: $('[data-profil="hidup"]'), sedang: $('[data-profil="sedang"]'), tenang: $('[data-profil="tenang"]'),
+        profilStatus: $('#behaviour-profil-status'),
+        idleSpeak: $('#beh-idleSpeak'), awaySpeak: $('#beh-awaySpeak'), returnSpeak: $('#beh-returnSpeak'),
+        quietMs: $('#beh-quietMs'), idleMs: $('#beh-idleMs'), idleRepeatMs: $('#beh-idleRepeatMs'),
+        quietOut: $('#beh-quietMs-out'), idleOut: $('#beh-idleMs-out'), repeatOut: $('#beh-idleRepeatMs-out'),
+        save: $('#btn-beh-save'), saveStatus: $('#beh-save-status'),
+        countdown: $('#beh-quiet-countdown'),
+      };
+      // Profil: nilai sementara uji (TIDAK di-commit sebagai default diam-diam —
+      // user yang memilih, lalu Save). Diambil dari PLAN-BESOK-ALIVE.md §0 Temuan A.
+      const PROFILES = {
+        hidup:  { quietMs: 15000, idleMs: 45000, idleRepeatMs: 90000, idleSpeak: true, awaySpeak: true, returnSpeak: true },
+        sedang: { quietMs: 60000, idleMs: 180000, idleRepeatMs: 300000, idleSpeak: true, awaySpeak: true, returnSpeak: true },
+        tenang: { quietMs: 1800000, idleMs: 1800000, idleRepeatMs: 1800000, idleSpeak: true, awaySpeak: true, returnSpeak: true },
+      };
+      const fmtMs = (ms) => {
+        ms = Math.max(0, Math.round(ms));
+        if (ms < 1000) return '0 detik';
+        const s = Math.round(ms / 1000);
+        if (s < 60) return s + ' detik';
+        const m = Math.floor(s / 60), r = s % 60;
+        if (m < 60) return r ? m + ' mnt ' + r + ' dtk' : m + ' mnt';
+        const h = Math.floor(m / 60), mr = m % 60;
+        return mr ? h + ' jam ' + mr + ' mnt' : h + ' jam';
+      };
+      // Approximation of the agent's quiet-period start, so the countdown matches
+      // agent.js's inQuietPeriod() (which uses its own agentStart). Good enough
+      // for a live "sisa N menit" readout; not a contract.
+      window.__agentStartApprox = window.__agentStartApprox || Date.now();
+      let countdownTimer = null;
+
+      function paintForm() {
+        const e = window.__appEvents || EVENTS;
+        if (els.idleSpeak) els.idleSpeak.checked = !!e.idleSpeak;
+        if (els.awaySpeak) els.awaySpeak.checked = !!e.awaySpeak;
+        if (els.returnSpeak) els.returnSpeak.checked = !!e.returnSpeak;
+        if (els.quietMs) { els.quietMs.value = Number(e.quietMs) || 0; els.quietOut.textContent = fmtMs(Number(e.quietMs) || 0); }
+        if (els.idleMs) { els.idleMs.value = Number(e.idleMs) || 0; els.idleOut.textContent = fmtMs(Number(e.idleMs) || 0); }
+        if (els.idleRepeatMs) { els.idleRepeatMs.value = Number(e.idleRepeatMs) || 0; els.repeatOut.textContent = fmtMs(Number(e.idleRepeatMs) || 0); }
+        // Highlight the matching profile button, if any.
+        const match = (p) => PROFILES[p] && PROFILES[p].quietMs === (Number(e.quietMs) || 0) &&
+          PROFILES[p].idleMs === (Number(e.idleMs) || 0) && PROFILES[p].idleRepeatMs === (Number(e.idleRepeatMs) || 0);
+        [['hidup', els.hidup], ['sedang', els.sedang], ['tenang', els.tenang]].forEach(([k, b]) => {
+          if (b) b.classList.toggle('active', match(k));
+        });
+      }
+
+      function readForm() {
+        return {
+          idleSpeak: !!(els.idleSpeak && els.idleSpeak.checked),
+          awaySpeak: !!(els.awaySpeak && els.awaySpeak.checked),
+          returnSpeak: !!(els.returnSpeak && els.returnSpeak.checked),
+          quietMs: Number(els.quietMs && els.quietMs.value) || 0,
+          idleMs: Number(els.idleMs && els.idleMs.value) || 0,
+          idleRepeatMs: Number(els.idleRepeatMs && els.idleRepeatMs.value) || 0,
+        };
+      }
+
+      // Apply to the live EVENTS object (agent.js reads this by reference) and
+      // restart the idle timer so the new timing takes effect immediately.
+      function applyLive(ev) {
+        Object.assign(EVENTS, ev);
+        // Restart idle scheduling with the new timing. Only fires if presence is
+        // currently true (resetAgentIdle checks EVENTS.idleSpeak internally).
+        try { if (typeof resetAgentIdle === 'function') resetAgentIdle(); } catch (e) {}
+        if (window.__agent && typeof window.__agent.invalidateCapabilityProfile === 'function') { /* no-op, kept for clarity */ }
+        // Reset our countdown anchor so the new quietMs is measured from now.
+        window.__agentStartApprox = Date.now();
+      }
+
+      function setSaveStatus(msg, kind) {
+        if (!els.saveStatus) return;
+        els.saveStatus.textContent = msg;
+        els.saveStatus.className = 'note-status' + (kind ? ' ' + kind : '');
+      }
+
+      // Profil buttons: fill the form with the profile, mark active.
+      [['hidup', els.hidup], ['sedang', els.sedang], ['tenang', els.tenang]].forEach(([k, b]) => {
+        if (!b) return;
+        b.addEventListener('click', () => {
+          const p = PROFILES[k];
+          if (els.idleSpeak) els.idleSpeak.checked = !!p.idleSpeak;
+          if (els.awaySpeak) els.awaySpeak.checked = !!p.awaySpeak;
+          if (els.returnSpeak) els.returnSpeak.checked = !!p.returnSpeak;
+          if (els.quietMs) { els.quietMs.value = p.quietMs; els.quietOut.textContent = fmtMs(p.quietMs); }
+          if (els.idleMs) { els.idleMs.value = p.idleMs; els.idleOut.textContent = fmtMs(p.idleMs); }
+          if (els.idleRepeatMs) { els.idleRepeatMs.value = p.idleRepeatMs; els.repeatOut.textContent = fmtMs(p.idleRepeatMs); }
+          [['hidup', els.hidup], ['sedang', els.sedang], ['tenang', els.tenang]].forEach(([, x]) => x && x.classList.remove('active'));
+          b.classList.add('active');
+          if (els.profilStatus) els.profilStatus.textContent = 'Profil "' + (k === 'hidup' ? 'Hidup' : k === 'sedang' ? 'Sedang' : 'Tenang') + '" dipakai — tekan Simpan.';
+        });
+      });
+
+      // Sliders update their readouts live.
+      if (els.quietMs) els.quietMs.addEventListener('input', () => { els.quietOut.textContent = fmtMs(Number(els.quietMs.value)); });
+      if (els.idleMs) els.idleMs.addEventListener('input', () => { els.idleOut.textContent = fmtMs(Number(els.idleMs.value)); });
+      if (els.idleRepeatMs) els.idleRepeatMs.addEventListener('input', () => { els.repeatOut.textContent = fmtMs(Number(els.idleRepeatMs.value)); });
+
+      if (els.save) {
+        els.save.addEventListener('click', async () => {
+          els.save.disabled = true;
+          setSaveStatus('menyimpan…');
+          const ev = readForm();
+          applyLive(ev);   // live immediately, even if the server call fails
+          try {
+            const r = await fetch(API + '/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'saveEvents', events: ev }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            setSaveStatus('tersimpan', 'ok');
+            // Re-paint from the server-authoritative value (it may have clamped).
+            if (d.events) { Object.assign(EVENTS, d.events); paintForm(); }
+          } catch (e) {
+            setSaveStatus('gagal: ' + e.message, 'err');
+          } finally {
+            els.save.disabled = false;
+          }
+        });
+      }
+
+      // Live countdown of the quiet period ("sisa 12 menit").
+      function tickCountdown() {
+        const e = window.__appEvents || EVENTS;
+        const q = Number(e.quietMs) || 0;
+        const elapsed = Date.now() - (window.__agentStartApprox || Date.now());
+        const left = q - elapsed;
+        if (els.countdown) {
+          if (left > 0) els.countdown.textContent = 'Masa tenang: sisa ' + fmtMs(left) + ' (karakter belum bicara sendiri).';
+          else els.countdown.textContent = 'Masa tenang selesai — karakter bisa bereaksi sendiri.';
+        }
+      }
+      if (countdownTimer) clearInterval(countdownTimer);
+      countdownTimer = setInterval(tickCountdown, 1000);
+      tickCountdown();
+
+      paintForm();
+    })();
+
+    // ── Indikator keadaan hidup — Langkah 2b ──
+    // Merender window.__agent._reactiveState() (presence, mood + sumber, masa
+    // tenang) ke strip di sidebar, sehingga user tahu KENAPA karakter diam
+    // tanpa membuka console. Poll 1 Hz; murah dan tidak mengganggu render model.
+    (function initLiveStateIndicator() {
+      const elP = $('#ls-presence'), elM = $('#ls-mood'), elQ = $('#ls-quiet');
+      if (!elP || !elM || !elQ) return;
+      const fmtMs = (ms) => {
+        ms = Math.max(0, Math.round(ms));
+        if (ms < 1000) return '0 dtk';
+        const s = Math.round(ms / 1000);
+        if (s < 60) return s + ' dtk';
+        const m = Math.floor(s / 60), r = s % 60;
+        if (m < 60) return r ? m + ' mnt ' + r + ' dtk' : m + ' mnt';
+        const h = Math.floor(m / 60), mr = m % 60;
+        return mr ? h + ' jam ' + mr + ' mnt' : h + ' jam';
+      };
+      function render() {
+        const st = (window.__agent && typeof window.__agent._reactiveState === 'function')
+          ? window.__agent._reactiveState() : null;
+        // presence
+        const p = st ? st.presenceState : null;
+        elP.textContent = '👤 ' + (p === true ? 'hadir' : p === false ? 'pergi' : 'tidak tahu');
+        // mood + source
+        const mood = st && st.userMood && st.userMood !== 'normal' ? st.userMood : 'netral';
+        const src = st && st.moodSource ? ' (' + st.moodSource + ')' : '';
+        elM.textContent = '😶 mood: ' + mood + src;
+        // quiet period
+        const q = st ? Number(st.quietMs) || 0 : 0;
+        const start = window.__agentStartApprox || Date.now();
+        const left = q - (Date.now() - start);
+        elQ.textContent = '⏳ masa tenang: ' + (left > 0 ? 'sisa ' + fmtMs(left) : 'selesai');
+      }
+      setInterval(render, 1000);
+      render();
+    })();
+
     // ── Tab 📋 Sheet: baca sheet + kelola preset ──
     const shEls = {
       summary: $('#sheet-summary'),
@@ -2608,6 +2827,23 @@
               ok ? 'ok' : 'err');
           });
           row.appendChild(applyBtn);
+
+          // Langkah 2c: "Coba" = pratinjau preset tanpa mengunci status aktif.
+          // applyPreset() memang mengubah pose model secara langsung (sama seperti
+          // Terap), tapi kami TIDAK menandainya sebagai preset aktif, sehingga
+          // user bisa kembali ke pose netral lewat tombol biasa / emosi lain —
+          // berbeda dari "Terap" yang mengklaim slot activeProperty.
+          const tryBtn = document.createElement('button');
+          tryBtn.type = 'button'; tryBtn.className = 'p-act';
+          tryBtn.textContent = 'Coba';
+          tryBtn.title = 'Pratinjau pose ini tanpa menguncinya sebagai preset aktif.';
+          tryBtn.addEventListener('click', () => {
+            if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
+            const ok = applyPreset(p, p.category);
+            setSheetStatus(ok ? 'pratinjau: ' + p.name + ' (bisa dikembalikan)' : 'tidak ada target valid di preset ini',
+              ok ? '' : 'err');
+          });
+          row.appendChild(tryBtn);
 
           const editBtn = document.createElement('button');
           editBtn.type = 'button'; editBtn.className = 'p-act';
@@ -2853,8 +3089,93 @@
       paintSheetCats(sheet);
       paintPresetList(sheet);
       paintDraft();
+      loadAdoption();   // Langkah 2d: keep the opt-out list in sync with the model
     };
     refreshSheetUI();
+
+    // ── Ekspresi teradopsi (opt-out) — Langkah 2d ──
+    // Renders each auto-adopted orphaned .exp3 with a checkbox, and saves the
+    // user's disabled set via POST /api/model/expressions-adoption. Adoption
+    // stays ON by default; this only lets the user switch specific files off.
+    const adEls = {
+      list: $('#adoption-list'),
+      save: $('#btn-adoption-save'),
+      status: $('#adoption-status'),
+    };
+    let adDisabled = new Set();   // current (unsaved) disabled names
+
+    function currentModelFolder() {
+      const parts = String(state.modelPath || '').split('/');
+      return parts.length >= 2 ? parts[1] : null;
+    }
+
+    async function loadAdoption() {
+      if (!adEls.list) return;
+      const folder = currentModelFolder();
+      if (!folder) { setAdoptionMsg('Load model dulu.', ''); return; }
+      try {
+        const r = await fetch(API + '/api/model/expressions-adoption?name=' + encodeURIComponent(folder));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const info = await r.json();
+        const exprs = Array.isArray(info.expressions) ? info.expressions : [];
+        adDisabled = new Set(Array.isArray(info.disabled) ? info.disabled : []);
+        if (!exprs.length) { setAdoptionMsg('Tidak ada .exp3 di folder ini.', ''); return; }
+        adEls.list.textContent = '';
+        for (const e of exprs) {
+          const row = document.createElement('div');
+          row.className = 'preset-item' + (e.declared ? ' is-ai' : '');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.checked = !!e.enabled;
+          cb.id = 'adopt_' + e.Name;
+          cb.addEventListener('change', () => {
+            if (cb.checked) adDisabled.delete(e.Name);
+            else adDisabled.add(e.Name);
+          });
+          const lbl = document.createElement('label');
+          lbl.className = 'p-name'; lbl.htmlFor = cb.id;
+          lbl.textContent = e.Name + (e.declared ? ' (terdaftar)' : ' (yatim)');
+          row.appendChild(cb); row.appendChild(lbl);
+          adEls.list.appendChild(row);
+        }
+      } catch (e) {
+        setAdoptionMsg('Gagal muat: ' + e.message, 'err');
+      }
+    }
+    // Uses textContent (never innerHTML) so a model/expession name from disk can
+    // never inject markup — same XSS guard as the rest of the sheet pane.
+    function setAdoptionMsg(msg, kind) {
+      if (!adEls.list) return;
+      adEls.list.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'preset-empty' + (kind ? ' ' + kind : '');
+      d.textContent = msg;
+      adEls.list.appendChild(d);
+    }
+
+    if (adEls.save) {
+      adEls.save.addEventListener('click', async () => {
+        adEls.save.disabled = true;
+        if (adEls.status) { adEls.status.textContent = 'menyimpan…'; adEls.status.className = 'note-status'; }
+        const folder = currentModelFolder();
+        if (!folder) { if (adEls.status) adEls.status.textContent = 'load model dulu'; adEls.save.disabled = false; return; }
+        try {
+          const r = await fetch(API + '/api/model/expressions-adoption', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: folder, disabled: Array.from(adDisabled) }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+          if (adEls.status) { adEls.status.textContent = 'tersimpan (' + adDisabled.size + ' dimatikan)'; adEls.status.className = 'note-status ok'; }
+          // Re-adopt on next load: changing the opt-out set must re-run buildModelSettings.
+          if (state.model) { try { await loadModel(state.modelPath); } catch (e) { console.warn('[adoption] reload failed:', e.message); } }
+        } catch (e) {
+          if (adEls.status) { adEls.status.textContent = 'gagal: ' + e.message; adEls.status.className = 'note-status err'; }
+        } finally {
+          adEls.save.disabled = false;
+        }
+      });
+    }
 
     loadConns();
   }
@@ -3749,11 +4070,18 @@
   // the user's copy first.
   function resolvePresets(sheet, category) {
     const P = (sheet && sheet.presets) || {};
-    const users = (P.user || []).filter(p => !category || p.category === category);
+    // Each entry is tagged with `source` so the UI can decide between a live
+    // "Terap" (user) and a "Pakai" (AI suggestion) action — paintPresetList()
+    // branches on `p.source === 'ai'`. Without this tag EVERY preset renders as
+    // a user preset (👤 + Terap/Edit/Hapus) and AI suggestions can never be
+    // approved from the UI, silently defeating the whole user>ai workflow.
+    const users = (P.user || [])
+      .filter(p => !category || p.category === category)
+      .map(p => Object.assign({}, p, { source: 'user' }));
     const taken = new Set(users.map(p => p.name.toLowerCase()));
     const ais = (P.ai || [])
       .filter(p => !category || p.category === category)
-      .map(p => Object.assign({}, p, { suggestion: taken.has(p.name.toLowerCase()) }));
+      .map(p => Object.assign({}, p, { source: 'ai', suggestion: taken.has(p.name.toLowerCase()) }));
     return users.concat(ais);
   }
 
@@ -4705,6 +5033,26 @@
     });
   }
 
+  // Surface the model's user-authored 'properti' presets to the LLM as a
+  // capability list. Extracted as its own function so it can be unit-tested in
+  // isolation (test-fase4-properties.js) without booting the whole engine.
+  //
+  // Rules (mirrors the user > ai precedence elsewhere):
+  //   - only presets.user of category 'properti' are advertised
+  //   - presets.ai entries are EXCLUDED — they are suggestions until the user
+  //     approves them, and must never read as an already-granted capability
+  //   - an unknown/garbage category is never leaked into the LLM prompt
+  function capabilityPropertyNames(sheet) {
+    const out = [];
+    const list = (sheet && sheet.presets && sheet.presets.user) || [];
+    for (const p of list) {
+      if (p && p.category === 'properti' && typeof p.name === 'string' && p.name.trim()) {
+        out.push(p.name.trim());
+      }
+    }
+    return out;
+  }
+
   async function getCapabilityProfile() {
     if (!state.model) return null;
 
@@ -4757,12 +5105,13 @@
       nativeExpressions: sheet.nativeExpressions,
       // Accessory presets ride the EXISTING [ACC:...] directive.
       accessories: sheet.accessories.concat(presetNames('aksesoris')),
-      // NOTE: 'properti' presets are DELIBERATELY not merged here yet — manual
-      // click only for this phase. [PROP:] does reach agent.setExpression(), but
-      // that resolves against nativeExpressions/exp3 files, so a preset name
-      // would fall through and fail silently (the same class of bug as the empty
-      // supportedEmotions map). Wiring properti presets needs setExpression() to
-      // consult presets first; that is a separate change, not an oversight.
+      // 'properti' presets surfaced to the LLM as their OWN field. applyExpression()
+      // already resolves a 'properti' preset before .exp3, and the [PROP:] execution
+      // path works — what was missing was only the advertisement. Kept SEPARATE from
+      // nativeExpressions so the user-vs-rigger provenance stays legible; .ai
+      // suggestions are deliberately EXCLUDED (they are not capabilities until the
+      // user presses "Pakai" — see HANDOFF rule #1).
+      properties: capabilityPropertyNames(sheet),
       // Free-text note the USER wrote about this character. Passed to the LLM as
       // character context; empty string when unset.
       userNote: typeof sheet.userNote === 'string' ? sheet.userNote : '',

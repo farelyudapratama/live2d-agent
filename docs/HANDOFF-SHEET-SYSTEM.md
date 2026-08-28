@@ -112,10 +112,74 @@ Penyimpanan: `localStorage['live2d_sheet_' + currentModelKey()]` **dan**
       jalur eksekusi; lookup preset mendahului `.exp3` native.
 - [x] **Nama karakter model-agnostic.** Diturunkan dari `config.displayName` →
       nama folder model → `'Live2D Agent'`. Tidak ada literal di `index.html`.
+- [x] **Adopsi `.exp3` yatim.** Model yang mengirim file `.exp3.json` tanpa
+      mendaftarkannya di `model3.json` sekarang tetap dapat ekspresinya. Lihat
+      bagian "Adopsi `.exp3` yatim" di bawah. Terkunci `test-exp3-adoption.js`.
+- [x] **Origin backend diturunkan, bukan literal.** Terkunci `test-api-origin.js`.
 - [ ] **Sisa: `properti` belum sampai ke LLM.** `applyExpression()` sudah bisa
       me-resolve preset `properti`, tapi `getCapabilityProfile()` belum
       mendaftarkannya ke LLM, jadi LLM tidak pernah mengeluarkan `[PROP:]`.
       Lihat `docs/PLAN-BESOK-ALIVE.md` §1.
+
+## Adopsi `.exp3` yatim
+
+Masalahnya di bundle `pixi-live2d-display@0.4.0`:
+
+```js
+init(t){super.init(t),this.settings.expressions&&(this.expressionManager=new Ge(...))}
+```
+
+ExpressionManager **hanya** dibuat kalau `settings.expressions` truthy. lumine
+punya 19 file `.exp3.json` di disk dan `model3.json`-nya mendaftarkan **nol**,
+jadi manager-nya tidak pernah lahir dan 19 aset itu mati **tanpa satu pun
+error** — persis kelas kegagalan senyap yang jadi alasan
+`docs/MODEL-AGNOSTIC-RULES.md` ada.
+
+Dua bagian:
+
+| Bagian | Apa |
+|---|---|
+| `GET /api/model/expressions?name=X` | Menyusuri folder model, melaporkan setiap `.exp3` dengan `File` **relatif terhadap direktori `model3.json`** (itu yang di-resolve loader, bukan relatif folder model), plus flag `declared` per file dan `orphanCount` |
+| `buildModelSettings()` (`js/app.js`) | Menggabungkan hanya yang **belum** terdaftar ke salinan **in-memory** manifest, lalu menyerahkan objek itu ke `Live2DModel.from()` alih-alih string URL |
+
+**Deviasi dari rencana awal.** `PLAN-BESOK-ALIVE.md` §2 dulu meminta daftar
+centang ("ditemukan N ekspresi tidak terdaftar — pakai?") dengan alasan "jangan
+auto-load diam-diam". Yang diterapkan adalah adopsi **otomatis**, karena file
+`.exp3` di folder model adalah data intrinsik model — sekelas motion native di
+aturan #3 — bukan tebakan aplikasi tentang makna. Yang ditebak hanyalah niat
+rigger untuk mengaktifkannya, dan biaya salah tebak asimetris: mengadopsi
+ekspresi yang tak terpakai hanya menambah nama di daftar, sementara tidak
+mengadopsi membuat 19 aset mati senyap. Kalau nanti terasa berlebihan, UI
+centang bisa ditambahkan di atas endpoint yang sudah ada — flag `declared`
+sudah disediakan untuk itu.
+
+Aturan yang wajib dipertahankan:
+
+- **Manifest lengkap → `null`.** Fungsi mengembalikan `null` sehingga pemuatan
+  jatuh ke jalur URL biasa, persis seperti sebelum fitur ini ada. 神宫白子 (8/8
+  sudah terdaftar) tidak disentuh sama sekali.
+- **Nama duplikat tidak pernah di-append.** `getExpressionIndex()` melakukan
+  `definitions.findIndex(e => e.Name === t)`, jadi entri kedua bernama sama akan
+  tak terjangkau selamanya. Deklarasi rigger yang menang.
+- **File di disk tidak pernah ditulis.** Adopsi murni in-memory; test
+  membandingkan byte manifest sebelum/sesudah.
+- **Setiap kegagalan → `null`.** Server mati, JSON rusak, payload aneh, path di
+  luar `model/` — semuanya jatuh ke pemuatan biasa. Adopsi secara struktural
+  tidak bisa menggagalkan pemuatan model.
+- **File `.exp3` di ATAS direktori `model3.json` dilewati**, karena path
+  relatifnya tidak akan pernah resolve.
+- Nama ekspresi diambil **verbatim** dari nama file pilihan rigger (CJK,
+  numerik, snake_case lewat apa adanya). Test memerahkan build kalau ada yang
+  menyelipkan `'lumine'`, `神宫白子`, `'mothion'`, atau `exp_angry` ke handler.
+
+Efek terukur: model default naik dari **0 → 19** emosi di
+`getCapabilityProfile()`.
+
+**Temuan sampingan:** `stripBom()` dipanggil di `server.js` tapi tidak pernah
+didefinisikan. Cubism Editor dan beberapa tool Windows menulis `model3.json`
+dengan BOM, dan `JSON.parse()` melempar padanya — manifest valid akan terlihat
+rusak. Sekarang ada, dengan test bermanifest-BOM yang membuktikan
+`declaredCount` terbaca 1, bukan 0.
 
 ## Urutan kerja yang wajib dipatuhi
 
@@ -160,36 +224,47 @@ cd /f/backup/live2d-agent
 for f in test/test-*.js; do node "$f"; done
 ```
 
-Baseline saat ini: **768 passed, 0 failed** di 10 suite
+Baseline saat ini: **901 passed, 0 failed** di 13 suite aktif
 (`test-taxonomy-ichika.js` skip karena butuh aset model Ichika yang tidak ada di
 repo). Setiap fase baru menambah suite sendiri; jangan biarkan angka turun.
 
 Catatan menjalankan: loop di atas mencetak semua baris. Kalau mau ringkasan,
 jangan ambil baris terakhir tiap suite sebagai hasil — suite yang men-skip
-mencetak keterangan setelah ringkasannya, sehingga terlihat gagal padahal bersih.
+mencetak keterangan setelah ringkasannya, dan `test-motion-taxonomy.js` menutup
+dengan baris kosong, sehingga keduanya terlihat gagal padahal bersih.
 Grep `[0-9]+ passed, [0-9]+ failed` saja.
 
 ## Utang teknis / catatan
 
-- **`properti` belum sampai ke LLM.** `applyExpression()` sudah cek preset lebih
-  dulu, tapi `getCapabilityProfile()` (`js/app.js` ~4507) belum mendaftarkan
-  preset `properti`, jadi LLM tidak pernah tahu ia ada dan tidak akan pernah
-  mengeluarkan `[PROP:]`. Komentar "DELIBERATELY not merged" di sekitar baris
-  4510 sudah **basi** — alasannya (setExpression belum cek preset) sudah
-  diperbaiki. Perbarui komentarnya bersama kodenya.
-- **`model3.json` lumine mendaftarkan 0 expression padahal ada 27 file `.exp3`
-  di folder `mothion/`.** Inilah sebab `getCapabilityProfile()` melaporkan 0
-  emosi untuk model default — bukan model tanpa ekspresi, tapi manifest tidak
-  lengkap. Lihat `docs/PLAN-BESOK-ALIVE.md` §0 Temuan B.
+- **`properti` SELESAI sampai ke LLM.** `getCapabilityProfile()` sekarang
+  mengiklankan `properties: capabilityPropertyNames(sheet)` (hanya branch
+  `.user`, dipisah dari `nativeExpressions`), dan `agent.js` mencantumkannya di
+  prompt "DAFTAR EXPRESSION / PROPERTI BAWAAN" — sehingga LLM mengeluarkan
+  `[PROP:]`. Lihat `test-fase4-properties.js`.
 - **`motionGroups` kosong di kedua model bundled** dan hanya ada 1 file
   `.motion3.json` di repo. Jadi `[GESTURE:]` sepenuhnya bergantung pada 9
   gesture builtin `GESTURE_LIBRARY`. Ini konsekuensi aset, bukan bug.
-- **Proaktivitas dimatikan oleh config, bukan kode.** `events.quietMs`,
-  `idleMs`, dan `idleRepeatMs` semuanya 1800000 ms (30 menit) di `config.json`
-  user, sehingga dalam sesi uji normal karakter tidak akan pernah bereaksi
-  sendiri. Mesin `reactEvent`/presence/mood sudah lengkap.
+- **Proaktivitas diatur via UI, bukan lagi cuma config.** Mesin
+  `reactEvent`/presence/mood sudah lengkap; sekarang ada panel **Kelakuan** (tab
+  ⚙️ AI) dengan profil Hidup/Sedang/Tenang + slider mentah + countdown masa
+  tenang, persist via `POST /api/config saveEvents` (aman untuk apiKey).
+  Default `config.json` user tetap 30 menit (Tenang) — sesuai aturan data milik
+  user.
+- **Badge sumber preset diperbaiki.** `resolvePresets()` kini mengisi `source`
+  (`user`/`ai`) + `suggestion`, sehingga saran AI (🤖) tampil berbeda dari
+  preset user (👤) dan tombol "Pakai" bisa menyetujuinya. Sebelumnya semua
+  tampil sebagai user (bug senyap). Lihat `test-fase4-sheetbadge.js`.
+- **Adopsi `.exp3` belum diverifikasi visual.** Test membuktikan file ditemukan,
+  path fetchable, dan manifest tergabung benar — tapi apakah 19 ekspresi lumine
+  *terlihat* benar saat dirender hanya bisa dikonfirmasi di browser. Penanda di
+  console: `[exp3] adopted N undeclared expression file(s) for <model>`. Ada
+  juga kontrol opt-out per-file di tab 📋 Sheet (🧬 Ekspresi Teradopsi).
+- **`package.json` SUDAH ada** — jalankan `npm test` (menjalankan
+  `test/run-all.js`, cross-platform). Baseline **993 passed, 0 failed** di 19
+  suite. `test-taxonomy-ichika.js` skip (butuh aset model Ichika).
 - `config.json` milik user pernah berisi koneksi rusak (`baseUrl` invalid →
   error "Invalid URL" saat chat) dan `systemPrompt` yang menyebut nama karakter
   berbeda dari model yang dimuat. Keduanya sudah dibersihkan (backup:
-  `config.json.bak`). Tetap berlaku: ini data milik user, **minta izin dulu**
-  sebelum menyentuh.
+  `config.json.bak`, untracked). Tetap berlaku: ini data milik user, **minta izin
+  dulu** sebelum menyentuh. (Fyi: `config.json.bak` **tidak** di-ignore oleh
+  `.gitignore` — jangan commit file itu karena memuat API key.)

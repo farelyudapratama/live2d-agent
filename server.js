@@ -807,6 +807,17 @@ Format:
       // this endpoint refuses to accept from an LLM.
       const CATS = ['emosi', 'properti', 'aksesoris'];
 
+      // Per-parameter descriptions the USER wrote. AUTHORITATIVE context: the
+      // user explains what each param actually does on their rig, and the LLM
+      // must respect that meaning over its own guess. Sanitised + length-capped
+      // so an untrusted sheet can't smuggle a giant string into the prompt.
+      const notes = (incoming.notes && typeof incoming.notes === 'object') ? incoming.notes : {};
+      const noteOf = (id) => {
+        const n = notes[id];
+        if (typeof n !== 'string') return '';
+        return n.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, 300);
+      };
+
       if (!params.length) {
         res.writeHead(200); res.end(JSON.stringify({ presets: [], warning: 'tidak ada parameter dengan range valid' })); return;
       }
@@ -817,7 +828,10 @@ Format:
 
       const paramLines = params.map(p => {
         const label = typeof p.label === 'string' && p.label.trim() ? ` (${p.label.trim().slice(0, 40)})` : '';
-        return `- "${p.id}"${label} range [${Number(p.min)}, ${Number(p.max)}] default ${Number(p.def)}`;
+        let line = `- "${p.id}"${label} range [${Number(p.min)}, ${Number(p.max)}] default ${Number(p.def)}`;
+        const pn = noteOf(p.id);
+        if (pn) line += ` | penjelasan user: ${pn}`;
+        return line;
       }).join('\n');
 
       const prompt = `Kamu pakar rigging Live2D Cubism. Berdasarkan daftar parameter model di bawah, usulkan preset pose yang masuk akal untuk model INI.
@@ -830,7 +844,7 @@ ${parts.length ? `PART TERSEDIA (opacity 0..1):\n${parts.map(p => `- "${p}"`).jo
 PRESET YANG SUDAH ADA (jangan diusulkan lagi):
 ${existing.length ? existing.join(', ') : '(belum ada)'}
 
-TUGAS: usulkan maksimal 12 preset. Untuk tiap preset tentukan:
+TUGAS: usulkan maksimal 12 preset yang BERAGAM. Untuk tiap preset tentukan:
 - name: nama singkat bahasa Indonesia (maks 60 karakter), mis. "Senang", "Kacamata", "Pipi Merah"
 - category: salah satu dari ${CATS.join(' / ')}
   · emosi     = ekspresi wajah (mata, alis, mulut)
@@ -844,11 +858,14 @@ ATURAN KERAS:
 2. JANGAN menyertakan min, max, def, atau steps. Itu bukan tugasmu.
 3. Sertakan hanya parameter yang benar-benar berubah dari default (3-8 per preset).
 4. Kategori "gerak" TIDAK BOLEH diusulkan.
+5. WAJIB BERAGAM — jangan cuma 1 emosi. Usulkan MINIMAL 3 preset kategori "emosi" dengan NAMA BERBEDA yang didukung parameter wajah (mis. Senang, Sedih, Kaget, Malu, Marah — pilih yang masuk akal untuk model ini, JANGAN ulang "Senang" saja). Bila model punya part, tambahkan 1-2 preset kategori "aksesoris"/"properti". Semua "name" harus unik & berbeda satu sama lain.
 
 KEMBALIKAN HANYA JSON array valid, tanpa markdown atau kata pembuka/penutup.
-Format:
+Format (contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti dengan emosi & part milik model ini):
 [
-  { "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} }
+  { "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} },
+  { "name": "Sedih", "category": "emosi", "values": { "ParamMouthForm": -1, "ParamEyeLSmile": -1 }, "parts": {} },
+  { "name": "Kacamata", "category": "aksesoris", "values": {}, "parts": { "PartGlasses": 1 } }
 ]`;
 
       llmWithFallback([{ role: 'user', content: prompt }]).then(({ reply }) => {
@@ -1010,6 +1027,10 @@ Contoh format:
   // resolve correctly. Upload is JSON-driven: the client sends each file's
   // relative path + base64 body; the server writes them under model/<name>/.
   const MODELS_DIR = path.join(ROOT, 'model');
+  // Declared early (before the request handlers below) so the adoption handlers
+  // can read it synchronously without hitting the temporal-dead-zone of a const
+  // declared further down in this same callback.
+  const SHEETS_DIR = path.join(ROOT, 'sheets');
 
   // Recursively find the FIRST *.model3.json under a directory.
   // Handles nested layouts (e.g. lumine_l2d/lumine/lumine.model3.json).
@@ -1068,6 +1089,58 @@ Contoh format:
     return;
   }
 
+  // Physical .exp3.json discovery for a model folder. Shared by the
+  // /api/model/expressions and /api/model/expressions-adoption endpoints so the
+  // latter does NOT need a fragile internal HTTP round-trip back to this server
+  // (which could 500 if `fetch` is unavailable or the self-call fails).
+  function discoverExpressions(name) {
+    const dir = path.join(MODELS_DIR, name || '');
+    if (!dir.startsWith(MODELS_DIR) || !fs.existsSync(dir)) throw new Error('not found');
+    const model3 = findModel3(dir);
+    if (!model3) throw new Error('no model3.json in folder');
+    const baseDir = path.dirname(model3);
+
+    // What the manifest already declares — reported so the client can tell
+    // "orphaned assets" from "already wired up" without guessing.
+    let declared = [];
+    try {
+      const mj = JSON.parse(stripBom(fs.readFileSync(model3, 'utf8')));
+      const ex = mj && mj.FileReferences && mj.FileReferences.Expressions;
+      if (Array.isArray(ex)) declared = ex.map(e => e && e.File).filter(Boolean);
+    } catch (e) { /* unreadable manifest → treat as declaring nothing */ }
+    const declaredSet = new Set(declared.map(f => String(f).split(path.sep).join('/')));
+
+    const found = [];
+    (function walk(d, depth) {
+      if (depth > 6) return;
+      let entries = [];
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+      for (const entry of entries) {
+        const full = path.join(d, entry.name);
+        if (entry.isDirectory()) { walk(full, depth + 1); continue; }
+        if (!entry.name.toLowerCase().endsWith('.exp3.json')) continue;
+        const rel = path.relative(baseDir, full).split(path.sep).join('/');
+        // An .exp3 outside the model3.json directory cannot be referenced by a
+        // relative path the loader can resolve, so skip it rather than emit a
+        // path that would 404 at load time.
+        if (rel.startsWith('..')) continue;
+        found.push({
+          Name: entry.name.replace(/\.exp3\.json$/i, ''),
+          File: rel,
+          declared: declaredSet.has(rel),
+        });
+      }
+    })(dir, 0);
+
+    found.sort((a, b) => a.Name.localeCompare(b.Name));
+    return {
+      model3: path.relative(ROOT, model3).split(path.sep).join('/'),
+      declaredCount: declaredSet.size,
+      expressions: found,
+      orphanCount: found.filter(f => !f.declared).length,
+    };
+  }
+
   // GET /api/model/expressions-adoption?name=X
   // Langkah 2d: lets the UI show a per-file checkbox for the auto-adopted
   // orphaned .exp3 files, and reports which ones the user has switched OFF.
@@ -1078,20 +1151,14 @@ Contoh format:
     try {
       const q = new URL(req.url, 'http://localhost').searchParams;
       const name = q.get('name');
-      // Reuse the discovery endpoint (no await — the request handler is not async).
-      const base = (typeof API === 'string' && /^https?:/.test(API)) ? API : ('http://127.0.0.1:' + PORT);
-      fetch(base + '/api/model/expressions?name=' + encodeURIComponent(name || ''))
-        .then(eRes => eRes.ok ? eRes.json() : Promise.reject(new Error('expressions discovery failed')))
-        .then(info => {
-          const adoptFile = path.join(SHEETS_DIR, 'exp3-adoption_' + String(name || '').replace(/[^A-Za-z0-9_\\-]+/g, '_') + '.json');
-          let disabled = [];
-          try { const j = JSON.parse(fs.readFileSync(adoptFile, 'utf8')); if (Array.isArray(j.disabled)) disabled = j.disabled; } catch (e) {}
-          const disabledSet = new Set(disabled);
-          const expressions = (info.expressions || []).map(e => Object.assign({}, e, { enabled: !disabledSet.has(e.Name) }));
-          res.writeHead(200, JSON_HEAD);
-          res.end(JSON.stringify({ model3: info.model3, expressions, disabled: Array.from(disabledSet) }));
-        })
-        .catch(err => { res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: err.message })); });
+      const info = discoverExpressions(name);
+      const adoptFile = path.join(SHEETS_DIR, 'exp3-adoption_' + String(name || '').replace(/[^A-Za-z0-9_\\-]+/g, '_') + '.json');
+      let disabled = [];
+      try { const j = JSON.parse(fs.readFileSync(adoptFile, 'utf8')); if (Array.isArray(j.disabled)) disabled = j.disabled; } catch (e) {}
+      const disabledSet = new Set(disabled);
+      const expressions = (info.expressions || []).map(e => Object.assign({}, e, { enabled: !disabledSet.has(e.Name) }));
+      res.writeHead(200, JSON_HEAD);
+      res.end(JSON.stringify({ model3: info.model3, expressions, disabled: Array.from(disabledSet) }));
     } catch (e) {
       res.writeHead(404, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
     }
@@ -1141,53 +1208,9 @@ Contoh format:
   if (req.method === 'GET' && urlPath === '/api/model/expressions') {
     try {
       const q = new URL(req.url, 'http://localhost').searchParams;
-      const name = q.get('name');
-      const dir = path.join(MODELS_DIR, name || '');
-      if (!dir.startsWith(MODELS_DIR) || !fs.existsSync(dir)) throw new Error('not found');
-      const model3 = findModel3(dir);
-      if (!model3) throw new Error('no model3.json in folder');
-      const baseDir = path.dirname(model3);
-
-      // What the manifest already declares — reported so the client can tell
-      // "orphaned assets" from "already wired up" without guessing.
-      let declared = [];
-      try {
-        const mj = JSON.parse(stripBom(fs.readFileSync(model3, 'utf8')));
-        const ex = mj && mj.FileReferences && mj.FileReferences.Expressions;
-        if (Array.isArray(ex)) declared = ex.map(e => e && e.File).filter(Boolean);
-      } catch (e) { /* unreadable manifest → treat as declaring nothing */ }
-      const declaredSet = new Set(declared.map(f => String(f).split(path.sep).join('/')));
-
-      const found = [];
-      (function walk(d, depth) {
-        if (depth > 6) return;
-        let entries = [];
-        try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
-        for (const entry of entries) {
-          const full = path.join(d, entry.name);
-          if (entry.isDirectory()) { walk(full, depth + 1); continue; }
-          if (!entry.name.toLowerCase().endsWith('.exp3.json')) continue;
-          const rel = path.relative(baseDir, full).split(path.sep).join('/');
-          // An .exp3 outside the model3.json directory cannot be referenced by a
-          // relative path the loader can resolve, so skip it rather than emit a
-          // path that would 404 at load time.
-          if (rel.startsWith('..')) continue;
-          found.push({
-            Name: entry.name.replace(/\.exp3\.json$/i, ''),
-            File: rel,
-            declared: declaredSet.has(rel),
-          });
-        }
-      })(dir, 0);
-
-      found.sort((a, b) => a.Name.localeCompare(b.Name));
+      const info = discoverExpressions(q.get('name'));
       res.writeHead(200, JSON_HEAD);
-      res.end(JSON.stringify({
-        model3: path.relative(ROOT, model3).split(path.sep).join('/'),
-        declaredCount: declaredSet.size,
-        expressions: found,
-        orphanCount: found.filter(f => !f.declared).length,
-      }));
+      res.end(JSON.stringify(info));
     } catch (e) {
       res.writeHead(404, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
     }
@@ -1238,7 +1261,6 @@ Contoh format:
   // ROOT/sheets/<modelKey>.json. This lets the AI reuse the profile on every
   // chat WITHOUT re-inspecting the model each time — exactly the behavior the
   // user asked for. A GET returns the saved sheet (or 404 if none yet).
-  const SHEETS_DIR = path.join(ROOT, 'sheets');
   // Filesystem-safe key for a model name. CJK is preserved (models are often
   // named 神宫白子) — only characters that break paths are collapsed.
   function sanitizeKey(name) {

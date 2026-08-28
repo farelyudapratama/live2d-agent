@@ -63,6 +63,8 @@
     blinkInterval: null,
     idleRAF: null,
     aiLock: false,            // true while AI controls the character (pause user interaction)
+    frozen: false,            // true while the param-notes popup is dragging a slider (suppress idle fidget)
+    frozenTimer: null,        // 10s cooldown that re-enables idle after the last drag
     accessoryValues: {},
     // Sticky parameter overrides (accessories + sliders + eye-follow).
     // The model re-evaluates its own motion/physics every frame, so we re-apply
@@ -520,8 +522,11 @@
   // ─── Blink System (uses real parameter ids) ──────────────────
   function startBlink() {
     if (state.blinkInterval) clearInterval(state.blinkInterval);
-    const blinkOnce = () => {
-      if (!state.model || !state.blinkEnabled) return;
+      const blinkOnce = () => {
+        if (!state.model || !state.blinkEnabled) return;
+        // Hold still while the user is posing/inspecting (preset editor or the
+        // param-notes popup freeze): no blinking during a hand-built pose.
+        if (state.frozen) return;
       try {
         // Blink in ROLE space: fully-closed / fully-open are the ENDS of the
         // model's own eyeOpen range, not the literals 0 and 1. A rig using
@@ -592,20 +597,26 @@
         bMf = 0; bBx = L.bx + bodyLeanLife * 0.4; bBy = L.by; bBz = tiltLife * 0.4;
       } else {
         // AI lock: pose target + BIG fidget + life + speech head bob.
+        // When the parameter-notes popup is FROZEN (user is dragging a slider),
+        // suppress the fidget oscillators so the slider alone drives the rig —
+        // the whole point is to see what THIS parameter does without the idle
+        // animation fighting it. Mouse-follow is already off (it gates on
+        // !aiLock). Unfreeze after 10s of no dragging returns here to normal.
+        const frozen = !!state.frozen;
         const P = state.aiPose;
         state.fidgetT += dt;
         const ft = state.fidgetT + state.fidgetSeed;
-        const amp = 1 + liveliness * 1.6;
-        const fx = (Math.sin(ft * 0.6) * 9 + Math.sin(ft * 1.7) * 3) * amp;
-        const fy = (Math.sin(ft * 0.45 + 1.3) * 7 + Math.sin(ft * 2.1) * 2.5) * amp;
-        bAx = P.ax + fx + talkHead;
+        const amp = frozen ? 0 : (1 + liveliness * 1.6);
+        const fx = frozen ? 0 : (Math.sin(ft * 0.6) * 9 + Math.sin(ft * 1.7) * 3) * amp;
+        const fy = frozen ? 0 : (Math.sin(ft * 0.45 + 1.3) * 7 + Math.sin(ft * 2.1) * 2.5) * amp;
+        bAx = P.ax + fx + (frozen ? 0 : talkHead);
         bAy = P.ay + fy;
-        bEx = P.ex + fx * 0.05 + E1;
-        bEy = P.ey + fy * 0.05 + E2;
+        bEx = P.ex + fx * 0.05 + (frozen ? 0 : E1);
+        bEy = P.ey + fy * 0.05 + (frozen ? 0 : E2);
         bMf = P.mouthForm;
-        bBx = P.bodyX + (Math.sin(ft * 0.5) * 5 + Math.sin(ft * 1.1) * 1.5) * amp;
+        bBx = P.bodyX + (frozen ? 0 : (Math.sin(ft * 0.5) * 5 + Math.sin(ft * 1.1) * 1.5) * amp);
         bBy = P.bodyY;
-        bBz = P.bodyZ + Math.sin(ft * 0.33 + 0.7) * 5 * amp + tiltLife;
+        bBz = P.bodyZ + (frozen ? 0 : Math.sin(ft * 0.33 + 0.7) * 5 * amp + tiltLife);
       }
 
       // Global motion amplitude boost (config: motion.enabled + motion.gain).
@@ -675,7 +686,8 @@
 
       // Breathing drives the chest/body param directly (smooth controller).
       // `breath` is authored 0..1 (none..full) so it maps through role space.
-      if (state.hasBreath) pokeRoleNorm('breath', clamp(breath, 0, 1));
+      // Suppressed while frozen so a posed character is truly still (no "napas").
+      if (state.hasBreath && !state.frozen) pokeRoleNorm('breath', clamp(breath, 0, 1));
 
       // ── EASED EMOTION (morph the face instead of snapping) ──
       if (state.emoCur) {
@@ -692,7 +704,7 @@
         }
       }
 
-      if (state.talking) {
+      if (state.talking && !state.frozen) {
         const mId = roleId('mouthOpenY');
         if (mId) {
           const base = 0.35 + 0.4 * Math.abs(Math.sin(t * 9));   // syllable rhythm
@@ -2701,6 +2713,45 @@
     // calls (setPartOpacityById vs setParameterValueById) and must not be merged
     // into one bag of numbers — same split as normalizePreset().
     let draft = { values: {}, parts: {} };
+    // Direct param/part sliders for the preset editor. Lets the user COMPOSE a
+    // pose by hand (muka/tubuh/bagian) instead of only snapshotting the live
+    // model via "Ambil Pose Sekarang". presetStuckIds tracks overrides we set so
+    // we can release them (return model to idle) on Save/Clear.
+    const presetSliders = $('#preset-param-sliders');
+    const presetFreezeInfo = $('#preset-freeze-info');
+    const presetStuckIds = new Set();
+    // The moment the user touches the editor's slider area, hold the model
+    // completely still (persistent freeze) so posing is predictable. Released
+    // again on Save/Clear/Terap/Coba via releasePresetPreview().
+    if (presetSliders) {
+      presetSliders.addEventListener('pointerdown', () => freezeModelForEdit(presetFreezeInfo, true));
+    }
+
+    // § Editor Preset sekarang tampil sebagai popup mengambang (serupa dengan
+    //   📝 Jelaskan Parameter). Tombol pembuka ada di tab 📋 Sheet; popup ini
+    //   memuat ulang slider + draft tiap dibuka, dan melepas bekuan saat ditutup.
+    const presetEditorPopup = $('#preset-editor-popup');
+    const presetEditorCloseBtn = $('#preset-editor-close');
+    const presetEditorOpenBtn = $('#btn-open-preset-editor');
+
+    function openPresetEditor() {
+      const sheet = state.lastSheet || loadCharacterSheet();
+      paintDraft();
+      renderPresetSliders(sheet);
+      if (presetEditorPopup) {
+        presetEditorPopup.classList.remove('hidden');
+        presetEditorPopup.setAttribute('aria-hidden', 'false');
+      }
+    }
+    function closePresetEditor() {
+      if (presetEditorPopup) {
+        presetEditorPopup.classList.add('hidden');
+        presetEditorPopup.setAttribute('aria-hidden', 'true');
+      }
+      releasePresetPreview();
+    }
+    if (presetEditorOpenBtn) presetEditorOpenBtn.addEventListener('click', openPresetEditor);
+    if (presetEditorCloseBtn) presetEditorCloseBtn.addEventListener('click', closePresetEditor);
 
     function setSheetStatus(msg, kind) {
       if (!shEls.status) return;
@@ -2822,6 +2873,7 @@
           applyBtn.textContent = 'Terap';
           applyBtn.addEventListener('click', () => {
             if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
+            releasePresetPreview();
             const ok = applyPreset(p, p.category);
             setSheetStatus(ok ? 'diterapkan: ' + p.name : 'tidak ada target valid di preset ini',
               ok ? 'ok' : 'err');
@@ -2839,6 +2891,7 @@
           tryBtn.title = 'Pratinjau pose ini tanpa menguncinya sebagai preset aktif.';
           tryBtn.addEventListener('click', () => {
             if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
+            releasePresetPreview();
             const ok = applyPreset(p, p.category);
             setSheetStatus(ok ? 'pratinjau: ' + p.name + ' (bisa dikembalikan)' : 'tidak ada target valid di preset ini',
               ok ? '' : 'err');
@@ -2858,7 +2911,9 @@
               parts: Object.assign({}, p.parts || {}),
             };
             paintDraft();
+            renderPresetSliders(state.lastSheet || loadCharacterSheet());
             setPresetStatus('dimuat untuk diedit', '');
+            openPresetEditor();
           });
           row.appendChild(editBtn);
 
@@ -2904,6 +2959,335 @@
       }
     }
 
+    // ── Penjelasan parameter (params[i].userNote) — POPUP ─────────
+    // Floating panel on the RIGHT (does not cover the model on the left stage).
+    // Renders EVERY parameter + part with a live slider (so the user sees what
+    // the param actually moves) and a description textarea. Dragging a slider
+    // freezes the idle fidget + mouse-follow (state.frozen) for 10s so the user
+    // sees a clean signal, then idle resumes smoothly. textContent only — param
+    // ids come from disk, so innerHTML would be an injection sink.
+    const pnPopup = $('#paramnotes-popup');
+    const pnList = $('#paramnotes-popup-list');
+    const pnOpenBtn = $('#btn-open-paramnotes');
+    const pnCloseBtn = $('#pn-popup-close');
+    const pnCountdown = $('#pn-countdown');
+    const pnSaveAll = $('#pn-save-all');
+    const pnSaveStatus = $('#pn-save-status');
+    let pnTimer = null;          // debounce for description autosave
+    const pnStuckIds = new Set(); // param/part ids we setSticky'd (cleared on close)
+
+    function setPnStatus(row, msg, kind) {
+      const el = row.querySelector('.pn-status');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.className = 'pn-status' + (kind ? ' ' + kind : '');
+    }
+
+    // Read the model's CURRENT value of a param/part (for slider initial pos).
+    function readAny(id, isPart) {
+      try {
+        const cm = coreModel();
+        if (!cm) return null;
+        const gm = (cm.getModel) ? cm.getModel() : cm;
+        if (isPart) return (typeof gm.getPartOpacityById === 'function') ? gm.getPartOpacityById(id) : null;
+        return (typeof gm.getParameterValueById === 'function') ? gm.getParameterValueById(id) : null;
+      } catch (e) { return null; }
+    }
+
+    // Freeze idle fidget + mouse-follow while dragging, then resume after 10s.
+    // ── Shared model-freeze for DIRECT param editing ──
+    // Used by BOTH the "Penjelasan Parameter" popup and the Sheet preset editor
+    // so they share one mechanism. ROOT CAUSE of "slider moves nothing on some
+    // models": pixi-live2d runs internalModel.update() (physics/motion/expression/
+    // eyeBlink/focus/breath) INSIDE its own PIXI render, which runs BEFORE our
+    // separate rAF tick() that calls applyOverrides(). So any param bound to those
+    // systems is overwritten every frame unless we suspend the writers. We null
+    // them for the freeze window and stash originals in state._frozenRefs so
+    // unfreeze restores them exactly. While frozen we also hold state.aiLock so
+    // idle fidget + mouse-follow don't fight the slider; tick() eases back in from
+    // the current values when we release, so idle resumes smoothly. statusEl (if
+    // given) shows the freeze countdown instead of the popup's own element.
+    let _freezeStatusEl = null;
+    let _freezeTimer = null;
+
+    function freezeModelForEdit(statusEl, persistent) {
+      state.frozen = true;
+      const snap = (id) => (state.caps.params && state.caps.params.has(id)) ? readParam(id) : 0;
+      if (typeof state.aiPose === 'object') {
+        state.aiPose.ax = snap(roleId('angleX')); state.aiPose.ay = snap(roleId('angleY'));
+        state.aiPose.ex = snap(roleId('eyeBallX')); state.aiPose.ey = snap(roleId('eyeBallY'));
+        state.aiPose.bodyX = snap(roleId('bodyAngleX')); state.aiPose.bodyY = snap(roleId('bodyAngleY'));
+        state.aiPose.bodyZ = snap(roleId('bodyAngleZ'));
+        state.aiPose.mouthForm = snap(roleId('mouthForm'));
+      }
+      if (!state.aiLock) { state.aiLock = true; }
+      const im = state.model && state.model.internalModel;
+      if (im && !state._frozenRefs) {
+        state._frozenRefs = {
+          physics: im.physics, eyeBlink: im.eyeBlink, breath: im.breath,
+        };
+        try { im.motionManager.stopAllMotions(); } catch (e) {}
+        try { if (im.motionManager.expressionManager) im.motionManager.expressionManager.resetExpression(); } catch (e) {}
+        im.physics = null; im.eyeBlink = null; im.breath = null;
+        if (im.focusController) { im.focusController.x = 0; im.focusController.y = 0; }
+      }
+      _freezeStatusEl = statusEl || null;
+      if (_freezeTimer) clearTimeout(_freezeTimer);
+      if (_freezeStatusEl) {
+        _freezeStatusEl.classList.add('frozen');
+        _freezeStatusEl.textContent = persistent
+          ? '❄ mode pose: model diam (idle/blink/napas dimatikan)'
+          : '❄ dibekukan — gerak idle kembali dalam 10 dtk';
+      }
+      // Persistent freeze (preset/motion editor): hold the model completely still
+      // until releasePresetPreview() — no 10s auto-resume, so the user can take
+      // their time posing without idle/blink/breath fighting the sliders.
+      if (persistent) return;
+      let remaining = 10;
+      const tickCountdown = () => {
+        remaining--;
+        if (remaining > 0) {
+          if (_freezeStatusEl) _freezeStatusEl.textContent = '❄ dibekukan — gerak idle kembali dalam ' + remaining + ' dtk';
+          _freezeTimer = setTimeout(tickCountdown, 1000);
+        } else {
+          unfreezeModelForEdit();
+        }
+      };
+      _freezeTimer = setTimeout(tickCountdown, 1000);
+    }
+
+    function unfreezeModelForEdit() {
+      if (_freezeTimer) { clearTimeout(_freezeTimer); _freezeTimer = null; }
+      const im = state.model && state.model.internalModel;
+      if (im && state._frozenRefs) {
+        im.physics = state._frozenRefs.physics;
+        im.eyeBlink = state._frozenRefs.eyeBlink;
+        im.breath = state._frozenRefs.breath;
+        state._frozenRefs = null;
+      }
+      state.frozen = false;
+      if (state.aiLock) state.aiLock = false;   // idle/mouse-follow resume; tick eases from CURRENT values → smooth, no snap
+      if (_freezeStatusEl) {
+        _freezeStatusEl.classList.remove('frozen');
+        _freezeStatusEl.textContent = '✓ gerak idle aktif kembali';
+      }
+      _freezeStatusEl = null;
+    }
+
+    function renderParamNotesPopup(sheet) {
+      if (!pnList) return;
+      pnList.textContent = '';
+      const params = (sheet && sheet.params) || [];
+      const parts = (sheet && sheet.parts) || [];
+      if (!params.length && !parts.length) {
+        const p = document.createElement('div');
+        p.className = 'pn-empty';
+        p.textContent = 'Belum ada sheet. Buka tab 📁 Model → Inspeksi Model dulu.';
+        pnList.appendChild(p);
+        return;
+      }
+      // EVERY parameter + part, no cap — the popup scrolls.
+      for (const p of params) {
+        if (!p || !p.id || typeof p.min !== 'number' || typeof p.max !== 'number') continue;
+        appendNoteRow(pnList, p.id, p.id, p.group, p.min, p.max, p.def, false,
+          (typeof p.userNote === 'string') ? p.userNote : '');
+      }
+      for (const p of parts) {
+        if (!p || !p.id) continue;
+        appendNoteRow(pnList, p.id, p.id, 'Bagian (Parts)', 0, 1, (typeof p.def === 'number' ? p.def : 1), true, '');
+      }
+    }
+
+    // Build one row: id, slider (min..max), live value label, description box.
+    // The slider portion is delegated to the shared buildParamSliderRow() so the
+    // popup and the preset editor use the exact same widget.
+    function appendNoteRow(list, id, label, group, min, max, def, isPart, note) {
+      const cur = readAny(id, isPart);
+      const startVal = (cur != null && Number.isFinite(cur)) ? cur : def;
+      const { row } = buildParamSliderRow({
+        id, label, group: resolveParamGroup(state.lastSheet || {}, id, group),
+        min, max, def, isPart, value: startVal,
+        onInput: (id, v, isPart) => {
+          // Drive the model live. setSticky keeps it held each frame; while frozen
+          // the idle fidget won't fight it (see tick() frozen branch).
+          if (isPart) window.__live2dAgent.setPartOpacity(id, v);
+          else window.__live2dAgent.setParameter(id, v);
+          pnStuckIds.add(id);
+          freezeModelForEdit(pnCountdown);
+        },
+        onCommit: () => { unfreezeMaybe(); },
+      });
+      row.classList.toggle('saved', !!note.trim());
+      row.dataset.id = id;
+      row.dataset.part = isPart ? '1' : '';
+
+      // Description textarea.
+      const input = document.createElement('textarea');
+      input.className = 'pn-input';
+      input.rows = 1;
+      input.maxLength = 300;
+      input.placeholder = 'Jelaskan fungsi param ini, mis. "skala pupil kiri"';
+      input.value = note;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); input.blur(); }
+      });
+      input.addEventListener('input', () => {
+        const cnt = row.querySelector('.pn-count');
+        if (cnt) cnt.textContent = input.value.length + '/300';
+        row.classList.toggle('saved', input.value.trim().length > 0);
+        if (pnTimer) clearTimeout(pnTimer);
+        pnTimer = setTimeout(() => commitPn(row, id, input.value), 500);
+      });
+      input.addEventListener('blur', () => {
+        if (pnTimer) { clearTimeout(pnTimer); pnTimer = null; }
+        commitPn(row, id, input.value);
+      });
+      row.appendChild(input);
+
+      const meta = document.createElement('div');
+      meta.className = 'pn-meta';
+      const cnt = document.createElement('span');
+      cnt.className = 'pn-count'; cnt.textContent = input.value.length + '/300';
+      const st = document.createElement('span');
+      st.className = 'pn-status';
+      meta.appendChild(cnt); meta.appendChild(st);
+      row.appendChild(meta);
+
+      list.appendChild(row);
+    }
+
+    function fmtNum(n) {
+      const x = Number(n);
+      if (!Number.isFinite(x)) return '0';
+      return (Math.abs(x) >= 100 ? x.toFixed(1) : x.toFixed(2)).replace(/\.?0+$/, '') || '0';
+    }
+
+    // Reusable parameter/part SLIDER widget. Shared by the "Penjelasan Parameter"
+    // popup AND the Sheet preset editor so both compose poses from the SAME
+    // sliders instead of duplicating markup. Returns { row, range, valEl }; the
+    // caller appends its own extra controls (textarea, meta) into `row`.
+    // opts: { id, label, group, min, max, def, isPart, value, onInput, onCommit }
+    function buildParamSliderRow(opts) {
+      const id = opts.id, label = opts.label || id, group = opts.group || '';
+      const min = opts.min, max = opts.max, def = opts.def;
+      const isPart = !!opts.isPart;
+      const startVal = (opts.value != null && Number.isFinite(opts.value)) ? opts.value : def;
+
+      const row = document.createElement('div');
+      row.className = 'pn-row';
+
+      const head = document.createElement('div');
+      head.className = 'pn-head';
+      const idEl = document.createElement('span');
+      idEl.className = 'pn-id'; idEl.textContent = label;
+      head.appendChild(idEl);
+      if (group) {
+        const gEl = document.createElement('span');
+        gEl.className = 'pn-group'; gEl.textContent = '· ' + group;
+        head.appendChild(gEl);
+      }
+      row.appendChild(head);
+
+      const sliderRow = document.createElement('div');
+      sliderRow.className = 'pn-slider-row';
+      const range = document.createElement('input');
+      range.type = 'range'; range.className = 'pn-range';
+      range.min = String(min); range.max = String(max); range.step = 'any';
+      range.value = String(startVal);
+      const valEl = document.createElement('span');
+      valEl.className = 'pn-val';
+      valEl.textContent = fmtNum(startVal) + '  [' + fmtNum(min) + '..' + fmtNum(max) + ']';
+      sliderRow.appendChild(range);
+      sliderRow.appendChild(valEl);
+      row.appendChild(sliderRow);
+
+      range.addEventListener('input', () => {
+        const v = Number(range.value);
+        valEl.textContent = fmtNum(v) + '  [' + fmtNum(min) + '..' + fmtNum(max) + ']';
+        if (opts.onInput) opts.onInput(id, v, isPart);
+      });
+      range.addEventListener('change', () => {
+        if (opts.onCommit) opts.onCommit(id, Number(range.value), isPart);
+      });
+
+      return { row, range, valEl };
+    }
+
+    function unfreezeMaybe() {
+      // Re-arm the 10s resume-from-now so a quick re-drag doesn't cut it short.
+      if (state.frozen) freezeModelForEdit(pnCountdown);
+    }
+
+    async function commitPn(row, paramId, value) {
+      const api = window.__live2dAgent && window.__live2dAgent.sheet;
+      if (!api || !api.saveParamNote) return;
+      try {
+        await api.saveParamNote(paramId, value);
+        setPnStatus(row, 'tersimpan', 'ok');
+      } catch (e) {
+        setPnStatus(row, 'gagal: ' + e.message, 'err');
+      }
+    }
+
+    // Flush EVERY note field in the popup at once. The per-field autosave already
+    // persists on its own, but an explicit "Simpan Catatan" gives the user a clear
+    // single action (matching the rest of the panels) and guarantees nothing is
+    // left in the 500ms debounce queue when they close the popup.
+    async function saveAllParamNotes() {
+      if (pnTimer) { clearTimeout(pnTimer); pnTimer = null; }
+      const rows = pnList ? Array.from(pnList.querySelectorAll('.pn-row')) : [];
+      let count = 0, failed = 0;
+      for (const row of rows) {
+        const id = row.dataset && row.dataset.id;
+        if (!id) continue;
+        const ta = row.querySelector('.pn-input');
+        const val = ta ? ta.value : '';
+        try {
+          const api = window.__live2dAgent && window.__live2dAgent.sheet;
+          if (!api || !api.saveParamNote) throw new Error('API sheet tidak tersedia');
+          await api.saveParamNote(id, val);
+          count++;
+        } catch (e) {
+          failed++;
+          setPnStatus(row, 'gagal: ' + e.message, 'err');
+        }
+      }
+      if (pnSaveStatus) {
+        if (failed) {
+          pnSaveStatus.textContent = count + ' tersimpan, ' + failed + ' gagal';
+          pnSaveStatus.className = 'note-status err';
+        } else {
+          pnSaveStatus.textContent = count + ' catatan tersimpan';
+          pnSaveStatus.className = 'note-status ok';
+        }
+      }
+    }
+
+    function openParamNotesPopup() {
+      const sheet = state.lastSheet || loadCharacterSheet();
+      if (!sheet || (!sheet.params && !sheet.parts)) {
+        if (window.__addChat) window.__addChat('agent', 'Belum ada sheet. Inspeksi model dulu (tab 📁 Model → 🔍 Inspeksi Model).');
+        return;
+      }
+      renderParamNotesPopup(sheet);
+      if (pnPopup) { pnPopup.classList.remove('hidden'); pnPopup.setAttribute('aria-hidden', 'false'); }
+    }
+
+    function closeParamNotesPopup() {
+      if (pnPopup) { pnPopup.classList.add('hidden'); pnPopup.setAttribute('aria-hidden', 'true'); }
+      // Release every sticky override we set so the model returns to its own
+      // rigged behaviour (smooth — idle eases back in from current values).
+      for (const id of pnStuckIds) {
+        try { delete state.overrides[id]; } catch (e) {}
+      }
+      pnStuckIds.clear();
+      unfreezeModelForEdit();
+    }
+
+    if (pnOpenBtn) pnOpenBtn.addEventListener('click', openParamNotesPopup);
+    if (pnCloseBtn) pnCloseBtn.addEventListener('click', closeParamNotesPopup);
+    if (pnSaveAll) pnSaveAll.addEventListener('click', saveAllParamNotes);
+
     function paintDraft() {
       const box = shEls.values;
       if (!box) return;
@@ -2913,7 +3297,7 @@
       if (!rows.length) {
         const p = document.createElement('div');
         p.className = 'preset-empty';
-        p.textContent = 'Belum ada nilai. Atur pose model lalu tekan 📸 Ambil Pose Sekarang.';
+        p.textContent = 'Belum ada nilai. Geser slider di atas, atau tekan 📸 Ambil Pose Sekarang untuk memulai dari pose live.';
         box.appendChild(p);
         return;
       }
@@ -2927,6 +3311,74 @@
         b.textContent = Number(v).toFixed(2);
         r.appendChild(a); r.appendChild(b);
         box.appendChild(r);
+      }
+    }
+
+    // Release the live preview we drove via the editor sliders: clear every
+    // override we stuck and unfreeze idle. Called on Save/Clear so the model
+    // returns to normal instead of staying locked in the edited pose.
+    function releasePresetPreview() {
+      for (const id of presetStuckIds) { try { delete state.overrides[id]; } catch (e) {} }
+      presetStuckIds.clear();
+      unfreezeModelForEdit();
+    }
+
+    // Render an editable slider for EVERY parameter + part of the model, wired to
+    // the draft (and previewed live). Dragging updates draft.values/parts (only
+    // non-default values are stored, matching captureCurrentPose()) and drives
+    // the model via setParameter/setPartOpacity while frozen, so the slider is
+    // the sole writer and actually moves the model.
+    function renderPresetSliders(sheet) {
+      if (!presetSliders) return;
+      presetSliders.textContent = '';
+      const params = (sheet && sheet.params) || [];
+      const parts = (sheet && sheet.parts) || [];
+      if (!params.length && !parts.length) {
+        const p = document.createElement('div');
+        p.className = 'pn-empty';
+        p.textContent = 'Belum ada sheet. Inspeksi model dulu.';
+        presetSliders.appendChild(p);
+        return;
+      }
+      for (const p of params) {
+        if (!p || !p.id || typeof p.min !== 'number' || typeof p.max !== 'number') continue;
+        const dflt = Number.isFinite(p.def) ? p.def : 0;
+        const live = readAny(p.id, false);
+        const startVal = (draft.values[p.id] != null) ? draft.values[p.id]
+          : (live != null && Number.isFinite(live)) ? live : dflt;
+        const { row } = buildParamSliderRow({
+          id: p.id, label: p.id, group: p.group, min: p.min, max: p.max, def: dflt, isPart: false, value: startVal,
+          onInput: (id, v) => {
+            if (Math.abs(v - dflt) > 1e-3) draft.values[id] = Number(v.toFixed(3));
+            else delete draft.values[id];
+            window.__live2dAgent.setParameter(id, v);
+            presetStuckIds.add(id);
+            freezeModelForEdit(presetFreezeInfo, true);
+            paintDraft();
+          },
+          onCommit: () => { if (state.frozen) freezeModelForEdit(presetFreezeInfo, true); },
+        });
+        presetSliders.appendChild(row);
+      }
+      for (const p of parts) {
+        if (!p || !p.id) continue;
+        const dflt = (typeof p.def === 'number') ? p.def : 1;
+        const live = readAny(p.id, true);
+        const startVal = (draft.parts[p.id] != null) ? draft.parts[p.id]
+          : (live != null && Number.isFinite(live)) ? live : dflt;
+        const { row } = buildParamSliderRow({
+          id: p.id, label: p.id, group: 'Bagian (Parts)', min: 0, max: 1, def: dflt, isPart: true, value: startVal,
+          onInput: (id, v) => {
+            if (Math.abs(v - dflt) > 1e-3) draft.parts[id] = Number(v.toFixed(3));
+            else delete draft.parts[id];
+            window.__live2dAgent.setPartOpacity(id, v);
+            presetStuckIds.add(id);
+            freezeModelForEdit(presetFreezeInfo, true);
+            paintDraft();
+          },
+          onCommit: () => { if (state.frozen) freezeModelForEdit(presetFreezeInfo, true); },
+        });
+        presetSliders.appendChild(row);
       }
     }
 
@@ -2978,6 +3430,8 @@
         }
         draft = { values: res.values, parts: res.parts };
         paintDraft();
+        renderPresetSliders(state.lastSheet || loadCharacterSheet());
+        freezeModelForEdit(presetFreezeInfo, true);
         const n = Object.keys(res.values).length + Object.keys(res.parts).length;
         if (shEls.captureInfo) {
           shEls.captureInfo.textContent = n
@@ -2992,7 +3446,9 @@
       shEls.clear.addEventListener('click', () => {
         draft = { values: {}, parts: {} };
         if (shEls.name) shEls.name.value = '';
+        releasePresetPreview();
         paintDraft();
+        renderPresetSliders(state.lastSheet || loadCharacterSheet());
         setPresetStatus('editor dikosongkan', '');
         if (shEls.captureInfo) { shEls.captureInfo.textContent = ''; shEls.captureInfo.className = 'note-status'; }
       });
@@ -3039,6 +3495,7 @@
           });
           setPresetStatus('tersimpan: ' + saved.name, 'ok');
           sheetCatFilter = saved.category;
+          releasePresetPreview();
           refreshSheetUI();
         } catch (e) {
           setPresetStatus('gagal: ' + e.message, 'err');
@@ -3082,13 +3539,26 @@
       });
     }
 
+    // Declared early (before the first refreshSheetUI() call) so loadAdoption()
+    // can reference them without hitting the const TDZ during wireUI().
+    const adEls = {
+      list: $('#adoption-list'),
+      save: $('#btn-adoption-save'),
+      status: $('#adoption-status'),
+    };
+    let adDisabled = new Set();   // current (unsaved) disabled names
+
     // Assigned to the module-scope hook so loadModel() can repaint on swap.
     refreshSheetUI = () => {
       const sheet = state.lastSheet || loadCharacterSheet();
       paintSheetSummary(sheet);
       paintSheetCats(sheet);
       paintPresetList(sheet);
+      // Penjelasan parameter kini di popup terpisah; render ulang hanya bila
+      // popup sedang terbuka agar nilai slider/deskripsi tetap sinkron.
+      if (pnPopup && !pnPopup.classList.contains('hidden')) renderParamNotesPopup(sheet);
       paintDraft();
+      renderPresetSliders(sheet);
       loadAdoption();   // Langkah 2d: keep the opt-out list in sync with the model
     };
     refreshSheetUI();
@@ -3097,13 +3567,6 @@
     // Renders each auto-adopted orphaned .exp3 with a checkbox, and saves the
     // user's disabled set via POST /api/model/expressions-adoption. Adoption
     // stays ON by default; this only lets the user switch specific files off.
-    const adEls = {
-      list: $('#adoption-list'),
-      save: $('#btn-adoption-save'),
-      status: $('#adoption-status'),
-    };
-    let adDisabled = new Set();   // current (unsaved) disabled names
-
     function currentModelFolder() {
       const parts = String(state.modelPath || '').split('/');
       return parts.length >= 2 ? parts[1] : null;
@@ -3749,6 +4212,17 @@
     applyPreset,
     findPreset,
     setParameter: (id, v) => { setSticky(id, v, 1); },
+    // Parts use a DIFFERENT engine call (setPartOpacityById), so expose it
+    // separately — merging the two would make a part-id a silent no-op.
+    setPartOpacity: (id, v) => {
+      const cm = coreModel();
+      if (!cm) return;
+      const val = Number(v);
+      if (!Number.isFinite(val)) return;
+      const clamped = Math.max(0, Math.min(1, val));
+      state.overrides[id] = clamped;
+      try { cm.setPartOpacityById(id, clamped); } catch (e) {}
+    },
     isReady: () => !!state.model,
     getMouth: () => { const mId = roleId('mouthOpenY'); return (mId && state.overrides[mId] != null ? state.overrides[mId] : state.mouthRest); },
     frameModel,
@@ -3879,6 +4353,10 @@
       applySuggestion: applyAISuggestion,
       applyPreset,
       saveNote: saveUserNote,
+      // Per-parameter description (params[i].userNote) — AUTHORITATIVE user
+      // context fed into the LLM prompt so it understands each param's meaning.
+      saveParamNote,
+      getParamNote,
       saveConfig: saveModelConfig,
       // AI classification of raw params (writes paramGroups.ai only)
       classifyParams: triggerAIParamClassification,
@@ -4339,7 +4817,7 @@
       try { detail = await res.json(); } catch (e) {}
       throw new Error(detail.error || ('server HTTP ' + res.status));
     }
-    invalidateCapabilityProfile();
+    try { window.__agent && typeof window.__agent.invalidateCapabilityProfile === 'function' && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
     return merged;
   }
 
@@ -4410,6 +4888,52 @@
     // drop it so the very next message sees the new note.
     try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
     return note;
+  }
+
+  // ── Per-parameter description (params[i].userNote) ──────────────
+  // A free-text note the USER writes to explain what a specific model parameter
+  // actually does on THIS rig ("ParamX = scale pupil kiri", "ParamY = buka
+  // kerah baju"). Unlike label (which is the rigger's own id, verbatim) and the
+  // AI .ai suggestion, this is AUTHORITATIVE user context and is fed straight
+  // into the LLM prompt so the model understands the parameter's real meaning.
+  //
+  // Capped at 300 chars (matches the v4 migration cap) so it can't blow the LLM
+  // context window when many params are annotated. Sanitised like saveUserNote.
+  const MAX_PARAM_NOTE = 300;
+
+  function sanitizeParamNote(text) {
+    let s = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+    if (s.length > MAX_PARAM_NOTE) {
+      s = s.slice(0, MAX_PARAM_NOTE);
+      const last = s.charCodeAt(s.length - 1);
+      if (last >= 0xD800 && last <= 0xDBFF) s = s.slice(0, -1);
+    }
+    return s;
+  }
+
+  // Persist a per-parameter note to the sheet (both stores). Throws if the
+  // paramId is not a real parameter of the current model — we never invent
+  // entries for ids the rig doesn't own (model-agnostic invariant: only the
+  // model's own parameters may carry descriptions).
+  async function saveParamNote(paramId, rawText) {
+    if (typeof paramId !== 'string' || !paramId) throw new Error('paramId wajib ada.');
+    const note = sanitizeParamNote(rawText);
+    const sheet = await sheetForWrite();
+    if (!Array.isArray(sheet.params)) sheet.params = [];
+    const pObj = sheet.params.find(p => p && p.id === paramId);
+    if (!pObj) throw new Error('Parameter "' + paramId + '" tidak ada di sheet model ini.');
+    pObj.userNote = note;
+    sheet.schemaVersion = SHEET_SCHEMA_VERSION;
+    await persistSheet(sheet);
+    return note;
+  }
+
+  // Fill a per-parameter note editor field for the CURRENT model's param.
+  function getParamNote(paramId) {
+    const sheet = state.lastSheet || loadCharacterSheet();
+    const p = (sheet && sheet.params || []).find(p => p && p.id === paramId);
+    return (p && typeof p.userNote === 'string') ? p.userNote : '';
   }
 
   // Fill the textarea with the stored note for the CURRENT model.
@@ -4848,10 +5372,21 @@
     // Sent so the LLM does not waste its budget re-proposing what the user owns.
     const existingNames = sheet.presets.user.map(p => p.name);
 
+    // Per-parameter descriptions the user wrote. AUTHORITATIVE: the LLM must
+    // honour these meanings when proposing presets, so a param the user has
+    // explained ("ParamX = scale pupil") is not re-guessed wrongly. Only params
+    // that actually carry a note are sent, keeping the payload small.
+    const notes = {};
+    for (const p of (sheet.params || [])) {
+      if (p && p.id && typeof p.userNote === 'string' && p.userNote.trim()) {
+        notes[p.id] = p.userNote.trim().slice(0, 300);
+      }
+    }
+
     const res = await fetch(API + '/api/model/analyze-sheet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ params, parts, existingNames }),
+      body: JSON.stringify({ params, parts, existingNames, notes }),
     });
     if (!res.ok) throw new Error('server menolak (HTTP ' + res.status + ')');
     const data = await res.json();
@@ -4879,7 +5414,7 @@
       // localStorage already has it; the file write is best-effort.
       console.warn('[analyze-sheet] file write failed, kept locally:', e.message);
     }
-    invalidateCapabilityProfile();
+    try { window.__agent && typeof window.__agent.invalidateCapabilityProfile === 'function' && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
     return { count: incoming.length };
   }
 

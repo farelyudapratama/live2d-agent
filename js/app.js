@@ -2695,6 +2695,8 @@
       list: $('#sheet-preset-list'),
       status: $('#sheet-status'),
       analyze: $('#btn-sheet-analyze'),
+      reloadFile: $('#btn-sheet-reload-file'),
+      reloadStatus: $('#reload-status'),
       name: $('#preset-name'),
       cat: $('#preset-cat'),
       capture: $('#btn-preset-capture'),
@@ -3535,6 +3537,40 @@
           refreshSheetUI();
         } finally {
           shEls.analyze.disabled = false;
+        }
+      });
+    }
+
+    // "🔄 Muat Ulang dari File": baca sheet dari file di server (bukan localStorage/
+    // cache in-memory) dan pakai itu sebagai kebenaran. Ini supaya edit manual pada
+    // sheets/<key>.json langsung terlihat di UI tanpa harus clear localStorage.
+    if (shEls.reloadFile) {
+      shEls.reloadFile.addEventListener('click', async () => {
+        shEls.reloadFile.disabled = true;
+        try {
+          const sheet = await fetchSheetFile();
+          if (!sheet) {
+            shEls.reloadStatus.textContent = 'tidak ada file sheet di server';
+            shEls.reloadStatus.className = 'note-status err';
+            return;
+          }
+          if (!sheet.presets || typeof sheet.presets !== 'object') sheet.presets = { user: [], ai: [] };
+          state.lastSheet = sheet;
+          try { localStorage.setItem(characterSheetKey(), JSON.stringify(sheet)); } catch (e) {}
+          hydrateCaps(sheet);
+          draft = { values: {}, parts: {} };
+          refreshSheetUI();
+          if (presetEditorPopup && !presetEditorPopup.classList.contains('hidden')) {
+            paintDraft();
+            renderPresetSliders(sheet);
+          }
+          shEls.reloadStatus.textContent = 'dimuat ulang dari file ✓';
+          shEls.reloadStatus.className = 'note-status ok';
+        } catch (e) {
+          shEls.reloadStatus.textContent = 'gagal: ' + e.message;
+          shEls.reloadStatus.className = 'note-status err';
+        } finally {
+          shEls.reloadFile.disabled = false;
         }
       });
     }

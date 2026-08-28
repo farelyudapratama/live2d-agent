@@ -834,34 +834,40 @@ Format:
         return line;
       }).join('\n');
 
-      const prompt = `Kamu pakar rigging Live2D Cubism. Berdasarkan daftar parameter model di bawah, usulkan preset pose yang masuk akal untuk model INI.
+      const prompt = `Kamu pakar rigging Live2D Cubism. Berdasarkan daftar parameter model di bawah, usulkan preset pose yang masuk akal dan SEBANYAK MUNGKIN VARIASI untuk model INI.
 
 PARAMETER TERSEDIA (hanya id di bawah yang boleh dipakai):
 ${paramLines}
 
-${parts.length ? `PART TERSEDIA (opacity 0..1):\n${parts.map(p => `- "${p}"`).join('\n')}` : '(model tidak punya part yang bisa diatur)'}
+${parts.length ? `PART TERSEDIA (opacity 0..1):\n${parts.map(p => `- "${p}"`).join('\n')}` : '(model ini tidak punya part yang bisa di-toggle — semua efek "aksesoris"/"properti" harus dibuat lewat kombinasi PARAMETER di atas, misalnya ParamEX01-12, ParamCollarChange, ParamCheekPuff*, ParamtongueOut, dsb, bukan lewat part.)'}
 
-PRESET YANG SUDAH ADA (jangan diusulkan lagi):
-${existing.length ? existing.join(', ') : '(belum ada)'}
+PRESET YANG SUDAH ADA DI PROJECT INI (jangan diusulkan ulang — cek nama & isinya, bukan sekadar nama umum):
+${existing.length ? existing.join(', ') : '(belum ada, kamu bebas berkreasi dari nol)'}
 
-TUGAS: usulkan maksimal 12 preset yang BERAGAM. Untuk tiap preset tentukan:
-- name: nama singkat bahasa Indonesia (maks 60 karakter), mis. "Senang", "Kacamata", "Pipi Merah"
+TUGAS: usulkan MINIMAL 12 preset yang BERAGAM, dan pastikan secara KESELURUHAN preset yang kamu usulkan menyentuh SEBANYAK MUNGKIN grup parameter yang tersedia di model ini (mata, alis, mulut, pipi, bola mata, sudut kepala/badan, custom EX, collar, breath, dll) — jangan cuma berputar di ParamMouthForm & ParamEyeLSmile terus-menerus.
+
+Untuk tiap preset tentukan:
+- name: nama singkat bahasa Indonesia (maks 60 karakter), unik, tidak boleh sama/mirip dengan preset yang sudah ada maupun sesama preset baru
 - category: salah satu dari ${CATS.join(' / ')}
-  · emosi     = ekspresi wajah (mata, alis, mulut)
-  · properti  = perubahan tampilan non-aksesoris (warna pipi, ganti kerah)
-  · aksesoris = toggle benda yang dipakai/dilepas
+  · emosi     = ekspresi wajah (mata, alis, mulut, pipi, bola mata)
+  · properti  = perubahan tampilan non-aksesoris (warna pipi, ganti kerah, bentuk custom lain)
+  · aksesoris = toggle benda yang dipakai/dilepas (via part jika ada, atau via parameter EX/kustom yang berfungsi sebagai toggle)
 - values: objek { "ParamId": angka } berisi HANYA id dari daftar di atas
-- parts: objek { "PartId": angka 0..1 }, boleh kosong
+- parts: objek { "PartId": angka 0..1 }, boleh kosong jika model tidak punya part
 
 ATURAN KERAS:
 1. JANGAN mengarang id parameter atau part yang tidak ada di daftar.
 2. JANGAN menyertakan min, max, def, atau steps. Itu bukan tugasmu.
 3. Sertakan hanya parameter yang benar-benar berubah dari default (3-8 per preset).
 4. Kategori "gerak" TIDAK BOLEH diusulkan.
-5. WAJIB BERAGAM — jangan cuma 1 emosi. Usulkan MINIMAL 3 preset kategori "emosi" dengan NAMA BERBEDA yang didukung parameter wajah (mis. Senang, Sedih, Kaget, Malu, Marah — pilih yang masuk akal untuk model ini, JANGAN ulang "Senang" saja). Bila model punya part, tambahkan 1-2 preset kategori "aksesoris"/"properti". Semua "name" harus unik & berbeda satu sama lain.
+5. WAJIB BERAGAM:
+   - MINIMAL 6 preset kategori "emosi" dengan nama & kombinasi parameter yang benar-benar berbeda satu sama lain (contoh arah: senang, sedih, kaget, malu, marah/kesal, bingung, mengantuk, jijik, takut, bangga — pilih & sesuaikan dengan parameter yang tersedia, JANGAN ulang preset yang sudah ada di daftar existing).
+   - Sisanya campuran "properti" dan "aksesoris" yang memanfaatkan parameter non-wajah/non-emosi seperti ParamEX01-12, ParamCollarChange, ParamCheekPuff*, ParamtongueOut, ParamBreath, atau part (jika tersedia).
+   - Usahakan setiap preset punya kombinasi parameter yang unik — hindari 2 preset dengan isi "values" yang nyaris identik.
+   - Jika model punya banyak parameter custom/EX yang belum kepakai sama sekali di preset manapun, prioritaskan membuat preset baru yang memakainya, selama hasilnya tetap masuk akal secara visual.
 
 KEMBALIKAN HANYA JSON array valid, tanpa markdown atau kata pembuka/penutup.
-Format (contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti dengan emosi & part milik model ini):
+Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti dengan emosi & parameter milik model ini):
 [
   { "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} },
   { "name": "Sedih", "category": "emosi", "values": { "ParamMouthForm": -1, "ParamEyeLSmile": -1 }, "parts": {} },

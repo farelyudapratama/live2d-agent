@@ -67,6 +67,14 @@
         for (const p of byGroup[g]) {
           paramRef += '  ' + p.id + ' (' + p.label + '): ' + p.min + '..' + p.max + ', default=' + p.def +
             (p.estimated ? ' [estimasi]' : '') + '\n';
+          // User-authored per-parameter description: AUTHORITATIVE context the
+          // user wrote to explain what this exact parameter does on their rig.
+          // When present, the LLM MUST respect it over any guess — this is the
+          // whole point of letting the user annotate params. Keep it tight.
+          const pn = (p.userNote || '').trim();
+          if (pn) {
+            paramRef += '    📝 penjelasan user: ' + pn.slice(0, 300) + '\n';
+          }
         }
       }
     }

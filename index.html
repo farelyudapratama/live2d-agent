@@ -193,6 +193,16 @@
             <p class="hint">Belum ada sheet. Buka tab 📁 Model → <b>Inspeksi Model</b> dulu.</p>
           </div>
 
+            <!-- Penjelasan per-parameter (user-authored). Field params[i].userNote.
+               Dibuka sebagai popup mengambang di sisi kanan via tombol di bawah,
+               supaya tidak menutupi model di stage kiri. Menampilkan SEMUA
+               param + part dengan slider live + textarea deskripsi. -->
+          <div class="section-title" style="margin-top:14px">📝 Penjelasan Parameter</div>
+          <div class="note-row">
+            <button id="btn-open-paramnotes" class="mini-btn" style="width:auto;padding:5px 12px;font-size:12px">📝 Jelaskan Parameter</button>
+            <span id="paramnotes-open-status" class="note-status"></span>
+          </div>
+
           <!-- Daftar preset per kategori. Entri user dan saran AI tampil
                berdampingan; yang AI diberi badge 🤖 supaya asalnya jelas. -->
           <div class="section-title" style="margin-top:14px">🎭 Preset</div>
@@ -204,35 +214,12 @@
           </div>
           <p class="hint">Saran AI (🤖) tidak aktif sampai kamu tekan <b>Pakai</b>. Preset milikmu selalu menang atas saran AI dan atas nama bawaan.</p>
 
-          <!-- Editor preset: nilai diambil dari pose model yang sedang tampil,
-               jadi user tidak perlu mengetik angka parameter satu per satu. -->
-          <div class="section-title" style="margin-top:14px">✏️ Editor Preset</div>
-          <div class="cfg-box">
-            <label class="cfg-row" for="preset-name">
-              <span class="cfg-label">Nama</span>
-              <input id="preset-name" type="text" maxlength="60" placeholder="mis. Senang, Kacamata, Melambai" />
-            </label>
-            <label class="cfg-row" for="preset-cat">
-              <span class="cfg-label">Kategori</span>
-              <select id="preset-cat">
-                <option value="emosi">emosi</option>
-                <option value="properti">properti</option>
-                <option value="aksesoris">aksesoris</option>
-                <option value="gerak">gerak</option>
-              </select>
-            </label>
-            <div class="note-row">
-              <button id="btn-preset-capture" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">📸 Ambil Pose Sekarang</button>
-              <span id="preset-capture-info" class="note-status"></span>
-            </div>
-            <div id="preset-values" class="preset-values"></div>
-            <div class="note-row">
-              <button id="btn-preset-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Preset</button>
-              <button id="btn-preset-clear" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">✖ Kosongkan</button>
-              <span id="preset-status" class="note-status" role="status" aria-live="polite"></span>
-            </div>
-            <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
+          <!-- Editor preset dipindah ke popup mengambang (#preset-editor-popup)
+               supaya tampilannya seragam dengan 📝 Jelaskan Parameter. -->
+          <div class="note-row">
+            <button id="btn-open-preset-editor" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">✏️ Editor Preset</button>
           </div>
+          <p class="hint">Tekan <b>✏️ Editor Preset</b> untuk menyusun pose lewat slider (popup mengambang, serupa dengan 📝 Jelaskan Parameter).</p>
 
           <!-- Ekspresi teradopsi (opt-out) — Langkah 2d.
                Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox
@@ -369,6 +356,73 @@
     <div class="loader-inner">
       <div class="loader-spinner"></div>
       <p>Memuat model...</p>
+    </div>
+  </div>
+
+  <!-- § Popup Penjelasan Parameter (mengambang di sisi kanan, tidak menutupi model) -->
+  <div id="paramnotes-popup" class="pn-popup hidden" aria-hidden="true">
+    <div class="pn-popup-head">
+      <span class="pn-popup-title">📝 Penjelasan Parameter</span>
+      <button id="pn-popup-close" class="pn-popup-x" title="Tutup">✕</button>
+    </div>
+    <div class="pn-popup-sub">
+      Geser slider untuk melihat efeknya langsung di model. Saat kamu menggeser,
+      gerak idle & mouse-follow dibekukan; setelah 10 dtk tidak digeser, gerak
+      idle kembali mulus.
+    </div>
+    <div class="pn-popup-actions">
+      <button id="pn-save-all" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Catatan</button>
+      <span id="pn-save-status" class="note-status" role="status" aria-live="polite"></span>
+    </div>
+    <div id="pn-countdown" class="pn-countdown"></div>
+    <div id="paramnotes-popup-list" class="paramnotes-list"></div>
+  </div>
+
+  <!-- § Popup Editor Preset (mengambang di sisi kanan, serupa dengan 📝 Jelaskan Parameter) -->
+  <div id="preset-editor-popup" class="pn-popup hidden" aria-hidden="true">
+    <div class="pn-popup-head">
+      <span class="pn-popup-title">✏️ Editor Preset</span>
+      <button id="preset-editor-close" class="pn-popup-x" title="Tutup">✕</button>
+    </div>
+    <div class="pn-popup-sub">
+      Susun pose preset lewat slider. Geser slider → langsung terlihat di model &amp; tersimpan ke draft.
+      Saat mengedit, model dibekukan sepenuhnya (tanpa idle / blink / napas); bekuan lepas setelah Simpan / Kosongkan / Terap / Tutup.
+    </div>
+    <div class="preset-editor-body">
+      <div class="cfg-box">
+        <label class="cfg-row" for="preset-name">
+          <span class="cfg-label">Nama</span>
+          <input id="preset-name" type="text" maxlength="60" placeholder="mis. Senang, Kacamata, Melambai" />
+        </label>
+        <label class="cfg-row" for="preset-cat">
+          <span class="cfg-label">Kategori</span>
+          <select id="preset-cat">
+            <option value="emosi">emosi</option>
+            <option value="properti">properti</option>
+            <option value="aksesoris">aksesoris</option>
+            <option value="gerak">gerak</option>
+          </select>
+        </label>
+        <div class="note-row">
+          <button id="btn-preset-capture" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">📸 Ambil Pose Sekarang</button>
+          <span id="preset-capture-info" class="note-status"></span>
+        </div>
+        <div class="preset-sliders-wrap">
+          <div class="note-row">
+            <span class="cfg-label">🎛 Atur Parameter</span>
+            <span id="preset-freeze-info" class="note-status"></span>
+          </div>
+          <p class="hint">Geser slider untuk menyusun pose preset secara bebas — muka, tubuh, maupun bagian. Perubahan langsung terlihat di model &amp; tersimpan ke draft. "Ambil Pose Sekarang" bisa dipakai untuk mulai dari pose live, lalu disempurnakan di sini.</p>
+          <div id="preset-param-sliders" class="param-sliders"></div>
+        </div>
+        <div id="preset-values" class="preset-values"></div>
+        <div class="note-row">
+          <button id="btn-preset-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Preset</button>
+          <button id="btn-preset-clear" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">✖ Kosongkan</button>
+          <span id="preset-status" class="note-status" role="status" aria-live="polite"></span>
+        </div>
+        <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
+      </div>
     </div>
   </div>
 

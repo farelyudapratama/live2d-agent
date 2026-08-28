@@ -1,0 +1,22 @@
+{
+  "name": "live2d-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agen maskot Live2D Cubism 4 lokal — ngomong (TTS), gerak ngikutin mouse, otak LLM, bereaksi sendiri, diatur dari panel web. Model-agnostic.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-all.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "live2d",
+    "cubism",
+    "vtuber",
+    "llm",
+    "agent",
+    "desktop-pet"
+  ],
+  "license": "UNLICENSED"
+}

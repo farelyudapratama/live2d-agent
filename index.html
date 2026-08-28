@@ -55,6 +55,16 @@
     <!-- Thinking indicator -->
     <div id="thinking" class="thinking hidden">🧠 lagi mikir...</div>
 
+    <!-- Indikator keadaan hidup — Langkah 2b.
+         Mencerminkan window.__agent._reactiveState(): presence, mood + sumbernya,
+         dan masa tenang. Sebelumnya satu-satunya cara tahu kenapa karakter diam
+         adalah membaca console ([agent] masa tenang, skip event). -->
+    <div id="live-state" class="live-state" aria-live="polite">
+      <span class="ls-item" id="ls-presence">👤 presence: —</span>
+      <span class="ls-item" id="ls-mood">😶 mood: —</span>
+      <span class="ls-item" id="ls-quiet">⏳ masa tenang: —</span>
+    </div>
+
     <!-- Input -->
     <div class="chat-input">
       <button id="btn-mic" title="Voice (segera hadir)" disabled>🎤</button>
@@ -223,6 +233,19 @@
             </div>
             <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
           </div>
+
+          <!-- Ekspresi teradopsi (opt-out) — Langkah 2d.
+               Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox
+               untuk mematikan adopsi per-file. Data dari GET /api/model/expressions-adoption. -->
+          <div class="section-title" style="margin-top:14px">🧬 Ekspresi Teradopsi</div>
+          <div class="cfg-box" id="adoption-box">
+            <p class="hint">File .exp3 di folder model yang lupa didaftarkan di model3.json diadopsi otomatis agar tidak mati. Matikan yang tak perlu.</p>
+            <div id="adoption-list" class="preset-list"></div>
+            <div class="note-row">
+              <button id="btn-adoption-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Pilihan</button>
+              <span id="adoption-status" class="note-status" role="status" aria-live="polite"></span>
+            </div>
+          </div>
         </div>
 
         <!-- AI Connections (9router-style) -->
@@ -248,6 +271,55 @@
             </div>
             <p class="hint" id="camera-hint">Semua inferensi jalan di browser — frame kamera tidak pernah dikirim ke mana pun. Saat mati, kehadiran ditebak dari fokus/visibilitas tab.</p>
           </div>
+        </div>
+
+        <!-- Kelakuan (Behaviour) — Langkah 2a.
+             Menyelesaikan Temuan A: karakter diam 30 menit karena config, bukan
+             bug. User bisa atur masa tenang / idle lewat profil atau slider mentah,
+             tanpa menyentuh config.json manual. Aksi mengupdate EVENTS live + persist. -->
+        <div class="section-title" style="margin-top:14px">🎚️ Kelakuan (Proaktivitas)</div>
+        <div class="cfg-box" id="behaviour-box">
+          <p class="hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
+            Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.</p>
+          <div class="behaviour-profiles">
+            <button class="mini-btn profil" data-profil="hidup">⚡ Hidup</button>
+            <button class="mini-btn profil" data-profil="sedang">🌤️ Sedang</button>
+            <button class="mini-btn profil" data-profil="tenang">😴 Tenang</button>
+          </div>
+          <div class="note-row">
+            <span id="behaviour-profil-status" class="note-status" role="status" aria-live="polite"></span>
+          </div>
+
+          <div class="cfg-checks">
+            <label class="cfg-check"><input type="checkbox" id="beh-idleSpeak" /> <span>Bicara saat diam (idle)</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-awaySpeak" /> <span>Bicara saat kamu pergi</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-returnSpeak" /> <span>Sapa saat kamu balik</span></label>
+          </div>
+
+          <details class="beh-advanced">
+            <summary>⚙️ Mode lanjutan (angka mentah)</summary>
+            <label class="cfg-row" for="beh-quietMs">
+              <span class="cfg-label">Masa tenang awal</span>
+              <input type="range" id="beh-quietMs" min="0" max="600000" step="1000" />
+              <output id="beh-quietMs-out" class="cfg-out"></output>
+            </label>
+            <label class="cfg-row" for="beh-idleMs">
+              <span class="cfg-label">Tunggu sebelum idle</span>
+              <input type="range" id="beh-idleMs" min="5000" max="600000" step="1000" />
+              <output id="beh-idleMs-out" class="cfg-out"></output>
+            </label>
+            <label class="cfg-row" for="beh-idleRepeatMs">
+              <span class="cfg-label">Ulangi tiap</span>
+              <input type="range" id="beh-idleRepeatMs" min="10000" max="600000" step="1000" />
+              <output id="beh-idleRepeatMs-out" class="cfg-out"></output>
+            </label>
+          </details>
+
+          <div class="note-row">
+            <button id="btn-beh-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Kelakuan</button>
+            <span id="beh-save-status" class="note-status" role="status" aria-live="polite"></span>
+          </div>
+          <p class="hint" id="beh-quiet-countdown">Masa tenang: —</p>
         </div>
 
       </div>

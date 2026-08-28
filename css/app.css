@@ -731,4 +731,26 @@ input[type="range"] {
 
 /* ===== FOCUS / SELECTION ===== */
 ::selection { background: rgba(124,111,255,0.35); color: #fff; }
+
+/* ===== Kelakuan (Behaviour) panel — Langkah 2a ===== */
+.behaviour-profiles { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
+.behaviour-profiles .profil { flex: 1 1 auto; padding: 6px 8px; font-size: 12px; }
+.behaviour-profiles .profil.active {
+  border-color: var(--accent); background: rgba(124,111,255,0.22);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+.cfg-checks { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.beh-advanced { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; }
+.beh-advanced summary { cursor: pointer; font-size: 12px; color: var(--text-dim); padding: 2px 0; }
+.beh-advanced summary:hover { color: var(--text); }
+.beh-advanced .cfg-row { margin-top: 6px; }
+#beh-quiet-countdown { font-variant-numeric: tabular-nums; margin-top: 6px; }
+.live-state {
+  display: flex; flex-wrap: wrap; gap: 6px 10px;
+  padding: 6px 10px; margin: 6px 10px;
+  font-size: 11px; color: var(--text-dim);
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: rgba(10,8,24,0.4);
+}
+.live-state .ls-item { white-space: nowrap; font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -221,6 +221,12 @@ async function clientTests() {
   const fnSrc = extractFn(appSrc, 'buildModelSettings');
   ok('buildModelSettings() found in js/app.js', !!fnSrc);
   if (!fnSrc) return;
+  // buildModelSettings() now delegates orphan filtering to filterAdoptable()
+  // (a separate pure helper), so we must ship that function into the sandbox too
+  // or the extracted body throws on the first call.
+  const filterSrc = extractFn(appSrc, 'filterAdoptable');
+  ok('filterAdoptable() found in js/app.js', !!filterSrc);
+  const combined = (filterSrc ? filterSrc + '\n' : '') + fnSrc;
 
   // Drive the real body with a stubbed fetch. Each scenario returns a manifest
   // and a discovery payload; we assert on what the function hands the loader.
@@ -232,6 +238,9 @@ async function clientTests() {
       URL,
       console: { log: (...a) => logs.push(a.join(' ')), warn: (...a) => logs.push('WARN ' + a.join(' ')) },
       fetch: async (url) => {
+        if (String(url).includes('/api/model/expressions-adoption')) {
+          return { ok: true, json: async () => ({ expressions: [], disabled: [] }) };
+        }
         if (String(url).includes('/api/model/expressions')) {
           return { ok: discovery !== null, json: async () => discovery };
         }
@@ -241,7 +250,7 @@ async function clientTests() {
       result: undefined,
     };
     vm.createContext(sandbox);
-    vm.runInContext(fnSrc + `\n;result = buildModelSettings(${JSON.stringify(modelPath)});`, sandbox);
+    vm.runInContext(combined + `;result = buildModelSettings(${JSON.stringify(modelPath)});`, sandbox);
     return { out: await sandbox.result, logs };
   }
 

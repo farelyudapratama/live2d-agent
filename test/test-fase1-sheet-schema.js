@@ -560,11 +560,22 @@ ok('emosi presets are projected into supportedEmotions',
   /projectEmotionPresets\(sheet\)/.test(appSrc));
 ok('the projection only reads the user branch',
   /for \(const p of \(sheet\.presets\.user \|\| \[\]\)\)/.test(appSrc));
-// Deliberate omission, recorded so it reads as a decision and not an oversight.
-ok('the properti deferral is documented, not silent',
-  /'properti' presets are DELIBERATELY not merged/.test(appSrc));
-ok('presetNames() is never called with properti',
+// Langkah 1 is DONE: 'properti' presets are now surfaced to the LLM via a
+// dedicated `properties` field built by capabilityPropertyNames(sheet). These
+// assertions lock the COMPLETED behaviour (previously they locked the TODO that
+// the deferral was documented — the deferral is gone now).
+ok('getCapabilityProfile advertises properties via capabilityPropertyNames(sheet)',
+  /properties:\s*capabilityPropertyNames\(sheet\)/.test(appSrc));
+ok('capabilityPropertyNames() helper exists (pure, testable)',
+  /function capabilityPropertyNames\(sheet\)/.test(appSrc));
+ok('properties are NOT merged into nativeExpressions (provenance kept separate)',
+  !/nativeExpressions:\s*sheet\.nativeExpressions\.concat\([^)]*'properti'/.test(appSrc));
+ok('the old presetNames(\'properti\') TODO path is gone',
   !/presetNames\('properti'\)/.test(appSrc));
+// The field must actually be WIRED (a comment is not the work) — and the helper
+// only reads the user branch, so .ai suggestions never leak into capabilities.
+ok('capabilityPropertyNames only reads the user branch',
+  /for \(const p of \(sheet\.presets\.user \|\| \[\]\)\)/.test(appSrc));
 
 section('13. preset apply path');
 ok('gerak presets route through playGesture, not a frozen pose',

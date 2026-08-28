@@ -1,5 +1,6 @@
 # ── Secrets / local config ──
 config.json
+config.json.bak
 *.log
 .DS_Store
 

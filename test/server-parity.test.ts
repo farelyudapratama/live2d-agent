@@ -1,0 +1,54 @@
+import { describe, it, expect } from "bun:test";
+import { sanitizeMotionAsset, FIELD_BOUNDS } from "../src/client/animation/motion-dsl";
+import { mergeEventsIntoConfig, KNOWN_EVENT_KEYS } from "../src/shared/config";
+import { classifyError } from "../src/shared/llm-client";
+
+describe("FIELD_BOUNDS parity with js/motion-dsl.js", () => {
+  it("ax/ay/ex/ey/mouthForm bound 30/1", () => {
+    expect(FIELD_BOUNDS.ax).toBe(30);
+    expect(FIELD_BOUNDS.ay).toBe(30);
+    expect(FIELD_BOUNDS.ex).toBe(1);
+    expect(FIELD_BOUNDS.mouthForm).toBe(1);
+  });
+  it("supports v2 angleX alias", () => {
+    expect(FIELD_BOUNDS.angleX).toBe(30);
+  });
+});
+
+describe("mergeEventsIntoConfig", () => {
+  it("keeps only KNOWN_EVENT_KEYS", () => {
+    const prev = { events: { idleSpeak: true, foo: 123 } };
+    const out = mergeEventsIntoConfig(prev, { idleMs: 5000, bar: 99 });
+    expect(out.events.foo).toBeUndefined();
+    expect(out.events.bar).toBeUndefined();
+    expect(out.events.idleMs).toBe(5000);
+  });
+  it("preserves UNKNOWN_EVENT not dropped if known", () => {
+    const out = mergeEventsIntoConfig({ events: { quietMs: 100 } }, { quietMs: 200 });
+    expect(out.events.quietMs).toBe(200);
+  });
+});
+
+describe("sanitizeMotionAsset rejects out-of-bounds injection", () => {
+  it("clamps role value to FIELD_BOUNDS", () => {
+    const r = sanitizeMotionAsset({ id: "t", duration: 1, tracks: [{ target: "ax", keys: [{ t: 0, v: 999 }] }] } as any, { requireTracks: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect((r.asset.tracks[0] as any).keys[0].v).toBe(30);
+  });
+  it("rejects unknown target", () => {
+    const r = sanitizeMotionAsset({ id: "t", tracks: [{ target: "hax", keys: [{ t: 0, v: 0 }] }] } as any, { requireTracks: true });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("classifyError parity", () => {
+  it("rate limit shouldFallback", () => {
+    const c = classifyError(429, "rate limit exceeded");
+    expect(c.shouldFallback).toBe(true);
+    expect(c.cooldownMs).toBeGreaterThan(0);
+  });
+  it("401 cooldown 120s", () => {
+    const c = classifyError(401, "unauthorized");
+    expect(c.cooldownMs).toBe(120_000);
+  });
+});

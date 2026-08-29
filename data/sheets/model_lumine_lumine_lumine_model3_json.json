@@ -1,0 +1,3463 @@
+{
+  "schemaVersion": 4,
+  "modelName": "model_lumine_lumine_lumine_model3_json",
+  "inspectedAt": "2026-08-29T02:42:16.553Z",
+  "paramCount": 223,
+  "rangesEstimated": false,
+  "rangeSource": "core-arrays",
+  "params": [
+    {
+      "id": "ParamAngleX2",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleX2"
+    },
+    {
+      "id": "ParamAngleY2",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleY2"
+    },
+    {
+      "id": "ParamAngleX3",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleX3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamAngleY3",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleY3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamAngleZ2",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleZ2"
+    },
+    {
+      "id": "ParamAngleZ3",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleZ3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyAngleX2",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleX2"
+    },
+    {
+      "id": "ParamBodyPotisionZ2",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyPotisionZ2"
+    },
+    {
+      "id": "ParamBodyAngleY2",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleY2"
+    },
+    {
+      "id": "ParamBodyAngleZ2",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleZ2"
+    },
+    {
+      "id": "ParamBodyAngleZ3",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleZ3"
+    },
+    {
+      "id": "ParamMouthForm",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthForm"
+    },
+    {
+      "id": "ParamMouthOpenY",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthOpenY"
+    },
+    {
+      "id": "ParamMouthX",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthX",
+      "blendShape": true
+    },
+    {
+      "id": "ParamtongueOut",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamtongueOut"
+    },
+    {
+      "id": "ParamMouthFunnel",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthFunnel"
+    },
+    {
+      "id": "ParamMouthPressLipOpen",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthPressLipOpen"
+    },
+    {
+      "id": "ParamMouthShrug",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthShrug"
+    },
+    {
+      "id": "ParamMouthPuckerWiden",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Mulut (Mouth)",
+      "label": "ParamMouthPuckerWiden"
+    },
+    {
+      "id": "ParamJawOpen",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamJawOpen"
+    },
+    {
+      "id": "ParamCheekPuffR",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamCheekPuffR",
+      "blendShape": true
+    },
+    {
+      "id": "ParamCheekPuffL",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamCheekPuffL",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX12",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX12"
+    },
+    {
+      "id": "ParamEX01",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX01",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX02",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX02",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX03",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX03",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX04",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX04",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX05",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX05",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX06",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX06",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX07",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX07",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX08",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX08",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX09",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX09",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX10",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX10",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEX11",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamEX11",
+      "blendShape": true
+    },
+    {
+      "id": "ParamCollarChange",
+      "min": 0,
+      "max": 7,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamCollarChange"
+    },
+    {
+      "id": "ParamBodyPhysicsRX1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX1_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX1_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX1_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX1_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX2_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX2_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX2_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX2_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX3_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX3_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX3_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX3_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX4_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX4_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX4_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX4_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX5_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX5_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsRX5_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsRX5_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX1_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX1_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX1_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX1_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX2_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX2_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX2_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX2_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX3_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX3_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX3_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX3_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX4_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX4_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX4_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX4_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX5_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX5_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsLX5_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsLX5_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX1_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX1_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX1_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX1_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX2_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX2_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX2_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX2_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX3_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX3_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX3_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX3_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX4_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX4_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX4_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX4_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX5_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX5_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsX5_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsX5_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBodyPhysicsY5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamBodyPhysicsY5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBreastX1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamBreastX1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBreastX2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamBreastX2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBreastY1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamBreastY1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBreastY2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamBreastY2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamBreastY3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamBreastY3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamSkirtX1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamSkirtX1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamSkirtX2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamSkirtX2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamSkirtY1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamSkirtY1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamSkirtY2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamSkirtY2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamSkirtY3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamSkirtY3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamSkirtXZ",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamSkirtXZ",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX1_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX1_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX1_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX1_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX2_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX2_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX2_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX2_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX3_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX3_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX3_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX3_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX4_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX4_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX4_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX4_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX5_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX5_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsRX5_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsRX5_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX1_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX1_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX1_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX1_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX2_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX2_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX2_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX2_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX3_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX3_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX3_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX3_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX4_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX4_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX4_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX4_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX5_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX5_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsLX5_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsLX5_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX1_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX1_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX1_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX1_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX2_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX2_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX2_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX2_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX3_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX3_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX3_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX3_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX4_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX4_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX4_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX4_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX5_3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX5_3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsX5_4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsX5_4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY1_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY1_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY1_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY1_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY2_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY2_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY2_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY2_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY3_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY3_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY3_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY3_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY4_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY4_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY4_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY4_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY5_1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY5_1",
+      "blendShape": true
+    },
+    {
+      "id": "ParamHeadPhysicsY5_2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamHeadPhysicsY5_2",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEyePhysics1",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics1"
+    },
+    {
+      "id": "ParamEyePhysics2",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics2"
+    },
+    {
+      "id": "ParamEyePhysics3",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics3",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEyePhysics4",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics4",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEyePhysics5",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics5",
+      "blendShape": true
+    },
+    {
+      "id": "ParamEyePhysics6",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics6"
+    },
+    {
+      "id": "ParamEyePhysics7",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics7"
+    },
+    {
+      "id": "ParamEyePhysics15",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics15"
+    },
+    {
+      "id": "ParamEyePhysics16",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics16"
+    },
+    {
+      "id": "ParamEyePhysics8",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics8"
+    },
+    {
+      "id": "ParamEyePhysics9",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics9"
+    },
+    {
+      "id": "ParamEyePhysics10",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics10"
+    },
+    {
+      "id": "ParamEyePhysics11",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics11"
+    },
+    {
+      "id": "ParamEyePhysics12",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics12"
+    },
+    {
+      "id": "ParamEyePhysics13",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics13"
+    },
+    {
+      "id": "ParamEyePhysics14",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics14"
+    },
+    {
+      "id": "ParamEyePhysics17",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics17"
+    },
+    {
+      "id": "ParamEyePhysics18",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Physics",
+      "label": "ParamEyePhysics18"
+    },
+    {
+      "id": "ParamEyeLOpen",
+      "min": 0,
+      "max": 2,
+      "def": 1,
+      "group": "Mata (Eye)",
+      "label": "ParamEyeLOpen"
+    },
+    {
+      "id": "ParamEyeROpen",
+      "min": 0,
+      "max": 2,
+      "def": 1,
+      "group": "Mata (Eye)",
+      "label": "ParamEyeROpen"
+    },
+    {
+      "id": "ParamEyeLSmile",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Mata (Eye)",
+      "label": "ParamEyeLSmile"
+    },
+    {
+      "id": "ParamEyeBallX",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Mata (Eye)",
+      "label": "ParamEyeBallX"
+    },
+    {
+      "id": "ParamEyeBallY",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Mata (Eye)",
+      "label": "ParamEyeBallY"
+    },
+    {
+      "id": "ParamBrowLForm",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Alis (Eyebrow)",
+      "label": "ParamBrowLForm"
+    },
+    {
+      "id": "ParamBrowRForm",
+      "min": -1,
+      "max": 1,
+      "def": 0,
+      "group": "Alis (Eyebrow)",
+      "label": "ParamBrowRForm"
+    },
+    {
+      "id": "ParamBreath",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBreath"
+    },
+    {
+      "id": "Parametc",
+      "min": 0,
+      "max": 1,
+      "def": 0,
+      "group": "Kustom",
+      "label": "Parametc"
+    },
+    {
+      "id": "ParamAnime01",
+      "min": 0,
+      "max": 360,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamAnime01"
+    },
+    {
+      "id": "ParamAnime2",
+      "min": 0,
+      "max": 10,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamAnime2"
+    },
+    {
+      "id": "ParamAnime3",
+      "min": 0,
+      "max": 10,
+      "def": 0,
+      "group": "Kustom",
+      "label": "ParamAnime3"
+    },
+    {
+      "id": "ParamAngleX",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleX"
+    },
+    {
+      "id": "ParamAngleY",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleY"
+    },
+    {
+      "id": "ParamAngleZ",
+      "min": -30,
+      "max": 30,
+      "def": 0,
+      "group": "Sudut (Angle)",
+      "label": "ParamAngleZ"
+    },
+    {
+      "id": "ParamBodyAngleX",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleX"
+    },
+    {
+      "id": "ParamBodyAngleY",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleY"
+    },
+    {
+      "id": "ParamBodyPotisionZ",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyPotisionZ"
+    },
+    {
+      "id": "ParamBodyAngleZ",
+      "min": -10,
+      "max": 10,
+      "def": 0,
+      "group": "Badan (Body)",
+      "label": "ParamBodyAngleZ"
+    }
+  ],
+  "parts": [],
+  "paramRange": {
+    "ParamAngleX2": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleY2": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleX3": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleY3": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleZ2": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleZ3": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamBodyAngleX2": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyPotisionZ2": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyAngleY2": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyAngleZ2": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyAngleZ3": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamMouthForm": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamMouthOpenY": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamMouthX": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamtongueOut": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamMouthFunnel": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamMouthPressLipOpen": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamMouthShrug": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamMouthPuckerWiden": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamJawOpen": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamCheekPuffR": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamCheekPuffL": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX12": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX01": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX02": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX03": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX04": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX05": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX06": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX07": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX08": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX09": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX10": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEX11": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamCollarChange": {
+      "min": 0,
+      "max": 7,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX1_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX1_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX2_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX2_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX3_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX3_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX4_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX4_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX5_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsRX5_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX1_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX1_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX2_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX2_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX3_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX3_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX4_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX4_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX5_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsLX5_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX1_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX1_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX2_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX2_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX3_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX3_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX4_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX4_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX5_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsX5_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBodyPhysicsY5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBreastX1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBreastX2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBreastY1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBreastY2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBreastY3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamSkirtX1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamSkirtX2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamSkirtY1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamSkirtY2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamSkirtY3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamSkirtXZ": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX1_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX1_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX2_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX2_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX3_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX3_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX4_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX4_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX5_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsRX5_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX1_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX1_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX2_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX2_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX3_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX3_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX4_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX4_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX5_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsLX5_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX1_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX1_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX2_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX2_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX3_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX3_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX4_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX4_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX5_3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsX5_4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY1_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY1_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY2_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY2_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY3_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY3_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY4_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY4_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY5_1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamHeadPhysicsY5_2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics1": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics2": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics3": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics4": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics5": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics6": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics7": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics15": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics16": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics8": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics9": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics10": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics11": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics12": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics13": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics14": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics17": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyePhysics18": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyeLOpen": {
+      "min": 0,
+      "max": 2,
+      "def": 1
+    },
+    "ParamEyeROpen": {
+      "min": 0,
+      "max": 2,
+      "def": 1
+    },
+    "ParamEyeLSmile": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyeBallX": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamEyeBallY": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBrowLForm": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBrowRForm": {
+      "min": -1,
+      "max": 1,
+      "def": 0
+    },
+    "ParamBreath": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "Parametc": {
+      "min": 0,
+      "max": 1,
+      "def": 0
+    },
+    "ParamAnime01": {
+      "min": 0,
+      "max": 360,
+      "def": 0
+    },
+    "ParamAnime2": {
+      "min": 0,
+      "max": 10,
+      "def": 0
+    },
+    "ParamAnime3": {
+      "min": 0,
+      "max": 10,
+      "def": 0
+    },
+    "ParamAngleX": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleY": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamAngleZ": {
+      "min": -30,
+      "max": 30,
+      "def": 0
+    },
+    "ParamBodyAngleX": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyAngleY": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyPotisionZ": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    },
+    "ParamBodyAngleZ": {
+      "min": -10,
+      "max": 10,
+      "def": 0
+    }
+  },
+  "roleIds": {
+    "angleX": "ParamAngleX",
+    "angleY": "ParamAngleY",
+    "angleZ": "ParamAngleZ",
+    "eyeBallX": "ParamEyeBallX",
+    "eyeBallY": "ParamEyeBallY",
+    "eyeLOpen": "ParamEyeLOpen",
+    "eyeROpen": "ParamEyeROpen",
+    "eyeLSmile": "ParamEyeLSmile",
+    "mouthOpenY": "ParamMouthOpenY",
+    "mouthForm": "ParamMouthForm",
+    "bodyAngleX": "ParamBodyAngleX",
+    "bodyAngleY": "ParamBodyAngleY",
+    "bodyAngleZ": "ParamBodyAngleZ",
+    "breath": "ParamBreath",
+    "browLForm": "ParamBrowLForm",
+    "browRForm": "ParamBrowRForm"
+  },
+  "accessories": [
+    "ParamtongueOut",
+    "ParamJawOpen",
+    "ParamCheekPuffR",
+    "ParamCheekPuffL",
+    "ParamEX12",
+    "ParamEX01",
+    "ParamEX02",
+    "ParamEX03",
+    "ParamEX04",
+    "ParamEX05",
+    "ParamEX06",
+    "ParamEX07",
+    "ParamEX08",
+    "ParamEX09",
+    "ParamEX10",
+    "ParamEX11",
+    "Parametc"
+  ],
+  "supportedEmotions": {
+    "senang": {
+      "ParamMouthForm": 0.9,
+      "ParamEyeLSmile": 0.8,
+      "ParamBrowLForm": 0.4,
+      "ParamBrowRForm": 0.4,
+      "ParamMouthOpenY": 0.35,
+      "ParamAngleZ": 4
+    },
+    "tersenyum": {
+      "ParamMouthForm": 0.6,
+      "ParamEyeLSmile": 0.5,
+      "ParamAngleZ": 3
+    },
+    "sedih": {
+      "ParamMouthForm": -0.8,
+      "ParamBrowLForm": -0.7,
+      "ParamBrowRForm": -0.7,
+      "ParamEyeBallY": -0.4,
+      "ParamAngleY": -6
+    },
+    "malu": {
+      "ParamMouthForm": 0.3,
+      "ParamEyeLSmile": 0.4,
+      "ParamEyeBallX": -0.5,
+      "ParamAngleZ": 6
+    },
+    "kaget": {
+      "ParamMouthOpenY": 0.8,
+      "ParamBrowLForm": 0.3,
+      "ParamBrowRForm": 0.3,
+      "ParamEyeBallY": 0.2,
+      "ParamAngleY": 5
+    },
+    "kesal": {
+      "ParamMouthForm": -0.6,
+      "ParamBrowLForm": -0.9,
+      "ParamBrowRForm": -0.9,
+      "ParamEyeBallX": 0.3,
+      "ParamAngleZ": -3
+    },
+    "bingung": {
+      "ParamAngleZ": 9,
+      "ParamBrowLForm": 0.2,
+      "ParamMouthForm": -0.2,
+      "ParamEyeBallX": 0.5
+    },
+    "Marah Meledak": {
+      "ParamBrowLForm": -1,
+      "ParamBrowRForm": -1,
+      "ParamMouthForm": -1,
+      "ParamMouthOpenY": 0.6,
+      "ParamEyeLOpen": 0.3,
+      "ParamEyeROpen": 0.3,
+      "ParamAngleZ": -5
+    },
+    "Mengantuk": {
+      "ParamEyeLOpen": 0.2,
+      "ParamEyeROpen": 0.2,
+      "ParamMouthOpenY": 0.15,
+      "ParamBrowLForm": -0.2,
+      "ParamBrowRForm": -0.2,
+      "ParamAngleY": -8,
+      "ParamBreath": 0.5
+    },
+    "Terkejut Total": {
+      "ParamEyeLOpen": 2,
+      "ParamEyeROpen": 2,
+      "ParamMouthOpenY": 1,
+      "ParamBrowLForm": 0.9,
+      "ParamBrowRForm": 0.9,
+      "ParamAngleY": 8
+    },
+    "Penasaran": {
+      "ParamAngleZ": 12,
+      "ParamBrowLForm": 0.3,
+      "ParamBrowRForm": -0.1,
+      "ParamEyeBallX": 0.4,
+      "ParamMouthForm": 0.2
+    },
+    "Cemburu": {
+      "ParamMouthForm": -0.5,
+      "ParamMouthPuckerWiden": -0.6,
+      "ParamCheekPuffL": 0.4,
+      "ParamBrowLForm": -0.4,
+      "ParamBrowRForm": -0.4,
+      "ParamEyeBallX": -0.6
+    },
+    "Genit": {
+      "ParamEyeLSmile": 0.6,
+      "ParamEyeLOpen": 0.5,
+      "ParamEyeROpen": 1,
+      "ParamMouthForm": 0.7,
+      "ParamMouthX": 0.3,
+      "ParamAngleZ": 8,
+      "ParamEyeBallX": 0.3
+    }
+  },
+  "nativeExpressions": [],
+  "motionGroups": [],
+  "userNote": "",
+  "config": {
+    "blink": true,
+    "idle": true,
+    "framing": "upper",
+    "ttsRate": 1,
+    "ttsPitch": 1.15,
+    "ttsLang": "id-ID",
+    "displayName": ""
+  },
+  "paramGroups": {
+    "user": {},
+    "ai": {}
+  },
+  "presets": {
+    "user": [
+      {
+        "name": "Marah Meledak",
+        "category": "emosi",
+        "values": {
+          "ParamBrowLForm": -1,
+          "ParamBrowRForm": -1,
+          "ParamMouthForm": -1,
+          "ParamMouthOpenY": 0.6,
+          "ParamEyeLOpen": 0.3,
+          "ParamEyeROpen": 0.3,
+          "ParamAngleZ": -5
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.261Z"
+      },
+      {
+        "name": "Mengantuk",
+        "category": "emosi",
+        "values": {
+          "ParamEyeLOpen": 0.2,
+          "ParamEyeROpen": 0.2,
+          "ParamMouthOpenY": 0.15,
+          "ParamBrowLForm": -0.2,
+          "ParamBrowRForm": -0.2,
+          "ParamAngleY": -8,
+          "ParamBreath": 0.5
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Terkejut Total",
+        "category": "emosi",
+        "values": {
+          "ParamEyeLOpen": 2,
+          "ParamEyeROpen": 2,
+          "ParamMouthOpenY": 1,
+          "ParamBrowLForm": 0.9,
+          "ParamBrowRForm": 0.9,
+          "ParamAngleY": 8
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Penasaran",
+        "category": "emosi",
+        "values": {
+          "ParamAngleZ": 12,
+          "ParamBrowLForm": 0.3,
+          "ParamBrowRForm": -0.1,
+          "ParamEyeBallX": 0.4,
+          "ParamMouthForm": 0.2
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Cemburu",
+        "category": "emosi",
+        "values": {
+          "ParamMouthForm": -0.5,
+          "ParamMouthPuckerWiden": -0.6,
+          "ParamCheekPuffL": 0.4,
+          "ParamBrowLForm": -0.4,
+          "ParamBrowRForm": -0.4,
+          "ParamEyeBallX": -0.6
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Genit",
+        "category": "emosi",
+        "values": {
+          "ParamEyeLSmile": 0.6,
+          "ParamEyeLOpen": 0.5,
+          "ParamEyeROpen": 1,
+          "ParamMouthForm": 0.7,
+          "ParamMouthX": 0.3,
+          "ParamAngleZ": 8,
+          "ParamEyeBallX": 0.3
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Kerah Sekolah",
+        "category": "properti",
+        "values": {
+          "ParamCollarChange": 3,
+          "ParamBodyAngleX": 2,
+          "ParamAngleY": 2
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Dada Bernafas Berat",
+        "category": "properti",
+        "values": {
+          "ParamBreastY1": 0.6,
+          "ParamBreastY2": 0.4,
+          "ParamBreath": 1,
+          "ParamMouthOpenY": 0.2
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Rok Tertiup Angin",
+        "category": "properti",
+        "values": {
+          "ParamSkirtX1": 0.7,
+          "ParamSkirtX2": -0.5,
+          "ParamSkirtXZ": 0.3,
+          "ParamBodyAngleZ": 2
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Pose Badan Miring",
+        "category": "properti",
+        "values": {
+          "ParamBodyAngleX2": 6,
+          "ParamBodyAngleY2": -4,
+          "ParamBodyAngleZ2": 3,
+          "ParamAngleX2": 10
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Efek Animasi Berputar",
+        "category": "properti",
+        "values": {
+          "ParamAnime01": 180,
+          "ParamAnime2": 5,
+          "ParamAnime3": 3
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Bibir Mengerucut",
+        "category": "properti",
+        "values": {
+          "ParamMouthPuckerWiden": -1,
+          "ParamMouthFunnel": 0.5,
+          "ParamMouthShrug": 0.3,
+          "ParamMouthX": -0.2
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Melirik Serong",
+        "category": "properti",
+        "values": {
+          "ParamEyeBallX": 1,
+          "ParamEyeBallY": -0.3,
+          "ParamAngleX": 5
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Anggukan Kepala Sekunder",
+        "category": "properti",
+        "values": {
+          "ParamAngleX3": 8,
+          "ParamAngleY3": -5,
+          "ParamAngleZ3": 4
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Lidah Menjulur Jahil",
+        "category": "aksesoris",
+        "values": {
+          "ParamtongueOut": 1,
+          "ParamJawOpen": 0.4,
+          "ParamMouthForm": 0.4
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      },
+      {
+        "name": "Pipi Digembungkan",
+        "category": "aksesoris",
+        "values": {
+          "ParamCheekPuffL": 1,
+          "ParamCheekPuffR": 1,
+          "ParamMouthPressLipOpen": -0.5
+        },
+        "parts": {},
+        "source": "user",
+        "updatedAt": "2026-08-29T02:42:12.263Z"
+      }
+    ],
+    "ai": []
+  },
+  "controls": {
+    "head": true,
+    "eyes": true,
+    "eyebrows": true,
+    "mouth": true,
+    "body": true,
+    "hair": false
+  }
+}

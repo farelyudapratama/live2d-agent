@@ -39,6 +39,27 @@
     console.log('[agent] capability profile loaded:', capProfile);
   }
 
+  // Katalog Motion Studio untuk prompt (SPEC §19). Hanya ditulis kalau user
+  // memang punya gerakan sendiri — model dengan katalog kosong tidak boleh
+  // dibebani blok instruksi tentang fitur yang tak ada isinya, dan LLM tidak
+  // boleh diberi kesan bisa mengarang id.
+  function motionCatalogBlock(profile) {
+    const cat = (profile && Array.isArray(profile.motionCatalog)) ? profile.motionCatalog : [];
+    if (!cat.length) return '';
+    let s = '\n=== GERAKAN BUATAN USER (Motion Studio) ===\n' +
+      'Format: [MOTION:id] — PAKAI PERSIS id di bawah, jangan mengarang.\n';
+    for (const m of cat.slice(0, 24)) {
+      s += '- ' + m.id + ': ' + (m.description || m.id);
+      if (m.tags && m.tags.length) s += ' [tag: ' + m.tags.join(', ') + ']';
+      if (m.compatibleEmotions && m.compatibleEmotions.length) s += ' (cocok saat: ' + m.compatibleEmotions.join(', ') + ')';
+      s += '\n';
+    }
+    s += 'Gerakan ini dirancang user sendiri, jadi UTAMAKAN dipakai kalau maknanya pas.\n' +
+      'Jangan pakai kalau bertabrakan dengan emosi segmen itu. Boleh tambah\n' +
+      '[INTENSITY:0.3-1.0] untuk mengatur seberapa kuat gerakannya.\n';
+    return s;
+  }
+
   // ── Build system prompt with FULL capability context ──
   function buildSystemPrompt(basePrompt) {
     let sys = basePrompt || '';
@@ -126,6 +147,7 @@ nebak angka sendiri. UTAMAKAN pilih dari daftar ini setiap ada momen ekspresif
 (setuju→nod, nolak/gak percaya→shake, kaget→recoil_surprised, mikir→think,
 malu→look_away_shy, seneng banget→lean_excited, ketawa→laugh_bounce,
 sapa→wave_hi, penasaran→tilt_curious).
+${motionCatalogBlock(capProfile)}
 
 === FORMAT DIRECTIVE ===
 1. EMOSI:    [EMOTION:senang] [EMOTION:sedih] [EMOTION:malu] [EMOTION:kaget] [EMOTION:normal]
@@ -167,15 +189,23 @@ Contoh pendek:
   }
 
   // ── Parse into multi-segment array ──
+  // MOTION ditambahkan sebagai tipe directive BARU dan opsional. GESTURE lama
+  // TIDAK diubah — keduanya diterima dan dinormalisasi ke satu representasi
+  // internal (actions.gesture / actions.motion), sesuai CONSTRAINTS §7.
+  const DIRECTIVE_TYPES = 'ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE|MOTION|INTENSITY';
+  const DIRECTIVE_RE = new RegExp('\\[(?:' + DIRECTIVE_TYPES + '):[^\\]]+\\]', 'gi');
+  function stripDirectives(text) { return String(text || '').replace(DIRECTIVE_RE, '').trim(); }
+  function hasDirectives(text) { return new RegExp('\\[(?:' + DIRECTIVE_TYPES + '):', 'i').test(String(text || '')); }
+
   function parseSegments(text) {
     const segments = [];
-    const parts = text.split(/(\[(?:ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE):[^\]]+\]\s*)/gi);
+    const parts = text.split(new RegExp('(\\[(?:' + DIRECTIVE_TYPES + '):[^\\]]+\\]\\s*)', 'gi'));
 
     let currentActions = {};
     let currentText = '';
 
     for (const part of parts) {
-      const blockMatch = part.match(/^\[(ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE):([^\]]+)\]\s*$/i);
+      const blockMatch = part.match(new RegExp('^\\[(' + DIRECTIVE_TYPES + '):([^\\]]+)\\]\\s*$', 'i'));
       if (blockMatch) {
         const clean = currentText.trim();
         if (clean) {
@@ -224,6 +254,17 @@ Contoh pendek:
           case 'GESTURE':
             currentActions.gesture = val;
             break;
+          // Motion Studio: [MOTION:id] menunjuk entri Motion Registry (gerakan
+          // buatan user). Disimpan di field TERPISAH dari gesture supaya
+          // resolusi lama tidak berubah; applyActions() memutuskan urutannya.
+          case 'MOTION':
+            currentActions.motion = val;
+            break;
+          case 'INTENSITY': {
+            const n = Number(val);
+            if (Number.isFinite(n)) currentActions.intensity = Math.max(0.1, Math.min(1, n));
+            break;
+          }
         }
       } else {
         currentText += part;
@@ -385,9 +426,25 @@ Contoh pendek:
 
     // Gesture verb — played AFTER the pose target above, so its deltas
     // compose on top of whatever HEAD/EMOTION just set for this segment.
-    const gestureToPlay = actions.gesture || (actions.emotion && EMOTION_GESTURE_FALLBACK[actions.emotion]) || null;
-    if (gestureToPlay && agent.playGesture) {
-      agent.playGesture(gestureToPlay);
+    //
+    // [MOTION:id] dari Motion Studio didahulukan bila ada: itu gerakan yang
+    // user rancang sendiri dan beri deskripsi, jadi lebih spesifik daripada
+    // gesture generik. Validasi ada di runtime (id asing → false), lalu kita
+    // JATUH ke jalur gesture lama supaya segmen tetap bergerak.
+    let handledByMotion = false;
+    if (actions.motion && agent.playMotion) {
+      handledByMotion = agent.playMotion(actions.motion, {
+        fromLLM: true,
+        intensity: actions.intensity != null ? actions.intensity : undefined,
+        priority: 80,   // "explicit LLM motion" pada tabel prioritas SPEC §12
+      });
+      if (!handledByMotion) console.warn('[agent] motion tidak dikenal/ditolak:', actions.motion);
+    }
+    if (!handledByMotion) {
+      const gestureToPlay = actions.gesture || (actions.emotion && EMOTION_GESTURE_FALLBACK[actions.emotion]) || null;
+      if (gestureToPlay && agent.playGesture) {
+        agent.playGesture(gestureToPlay);
+      }
     }
   }
 
@@ -471,6 +528,9 @@ Contoh pendek:
           capabilities: {
             emotions: profile?.emotions || ['senang', 'tersenyum', 'sedih', 'malu', 'kaget', 'kesal', 'bingung', 'normal'],
             gestures: profile?.gestures || Object.keys(EMOTION_GESTURE_FALLBACK),
+            // Katalog Motion Studio: director boleh memilih motion buatan user,
+            // dan server memvalidasi id-nya terhadap daftar ini (id asing → null).
+            motions: (profile && profile.motionCatalog) || [],
           },
         }),
       });
@@ -483,6 +543,7 @@ Contoh pendek:
           actions: {
             emotion: s.emotion || 'normal',
             gesture: s.gesture || null,
+            motion: s.motion || null,
             intensity: typeof s.intensity === 'number' ? s.intensity : 0.8,
           }
         })).filter(s => s.text.trim().length > 0);
@@ -530,12 +591,11 @@ Contoh pendek:
       const data = await resp.json();
       const reply = (data.reply || '').trim();
       if (reply) {
-        const clean = reply.replace(/\[(?:ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE):[^\]]+\]/gi, '').trim();
+        const clean = stripDirectives(reply);
         let segments = parseSegments(reply);
 
         // If the reply is clean text (no bracket directives), run Pass 2 (Animation Director)
-        const hasDirectives = /\[(?:ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE):/i.test(reply);
-        if (!hasDirectives || segments.length <= 1) {
+        if (!hasDirectives(reply) || segments.length <= 1) {
           console.log('[agent] Running Pass 2: Animation Director for long response...');
           segments = await animateTextViaDirector(clean, capProfile);
         }
@@ -745,14 +805,13 @@ Contoh pendek:
       const data = await resp.json();
       const reply = (data.reply || '').trim();
       if (reply) {
-        const cleanFullReply = reply.replace(/\[(?:ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE):[^\]]+\]/gi, '').trim();
+        const cleanFullReply = stripDirectives(reply);
         // `segments` was never built here — speakSegments(segments) threw a
         // ReferenceError, so every ambient event reaction died silently.
         // Mirror the think() pipeline: parse directives, and fall back to the
         // Animation Director when the reply is plain prose.
         let segments = parseSegments(reply);
-        const hasDirectives = /\[(?:ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPERTY|GESTURE):/i.test(reply);
-        if (!hasDirectives || segments.length <= 1) {
+        if (!hasDirectives(reply) || segments.length <= 1) {
           segments = await animateTextViaDirector(cleanFullReply, capProfile);
         }
         speakSegments(segments);

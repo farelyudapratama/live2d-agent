@@ -290,7 +290,9 @@ section('I) Guard: no numbered id may appear in ROLE_KEYWORDS');
                             src.indexOf('const GROUP_PATTERNS'));
   // Strip // comments first: the block deliberately DISCUSSES Param91 in prose
   // explaining why numbered ids are banned, and that must not trip the guard.
-  const kwCode = kwBlock.split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  // CRLF-safe: `.` never matches \r, so /\/\/.*$/ fails to anchor on a line that
+  // ends with \r — the comment then survives and the guard reports a false hit.
+  const kwCode = kwBlock.split('\n').map(l => l.replace(/\r$/, '').replace(/\/\/.*$/, '')).join('\n');
   const badKw = kwCode.match(/'Param\d+'/g) || [];
   ok('js/app.js ROLE_KEYWORDS has no numbered ids',
     badKw.length === 0, badKw.join(',') || 'clean');

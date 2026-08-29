@@ -16,6 +16,9 @@ const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
 const { execSync } = require('child_process');
+// Motion Studio (SPEC §7/§28): validator Motion Asset dipakai bersama oleh
+// endpoint /api/motions dan sisi browser — satu sumber aturan, bukan dua.
+const MotionDSL = require('./js/motion-dsl.js');
 
 // Detach from stdin so the server survives headless/background launch
 // (node otherwise exits with "stdin is not a tty" when no TTY is attached).
@@ -954,6 +957,9 @@ Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti den
       const caps = incoming.capabilities || {};
       const emotions = (caps.emotions && caps.emotions.length) ? caps.emotions : ['senang', 'sedih', 'malu', 'kaget', 'normal'];
       const gestures = (caps.gestures && caps.gestures.length) ? caps.gestures : ['nod', 'shake', 'tilt_curious', 'lean_excited', 'recoil_surprised', 'look_away_shy', 'laugh_bounce', 'think', 'wave_hi'];
+      // Katalog Motion Studio (opsional). Kalau kosong, blok motion tidak
+      // dimunculkan sama sekali di prompt — jangan tawarkan fitur tanpa isi.
+      const motions = Array.isArray(caps.motions) ? caps.motions.filter(m => m && m.id) : [];
 
       if (!text) {
         res.writeHead(200); res.end(JSON.stringify({ segments: [] })); return;
@@ -970,13 +976,16 @@ Karakter baru saja berbicara teks berikut:
 
 Daftar Emosi yang didukung model: [${emotions.join(', ')}]
 Daftar Gesture yang tersedia: [${gestures.join(', ')}]
-
+${motions.length ? 'Gerakan buatan user (Motion Studio) — pakai field "motion" dengan id PERSIS:\n'
+  + motions.slice(0, 24).map(m => '- ' + m.id + ': ' + (m.description || m.id)
+      + (m.compatibleEmotions && m.compatibleEmotions.length ? ' (cocok saat: ' + m.compatibleEmotions.join(', ') + ')' : '')).join('\n')
+  + '\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n' : ''}
 TUGAS:
 1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup (jangan diam selama bicara!).
 2. Untuk setiap segment, tentukan:
    - "text": teks klausa/kalimat tersebut (harus sama persis dengan teks asli bila digabung kembali)
    - "emotion": emosi yang SANGAT SESUAI dengan makna klausa tersebut (dari daftar emosi di atas)
-   - "gesture": nama gesture yang pas (atau null jika netral)
+   - "gesture": nama gesture yang pas (atau null jika netral)${motions.length ? '\n   - "motion": id gerakan user bila ada yang sangat pas (atau null)' : ''}
    - "intensity": angka 0.3 s/d 1.0 (seberapa kuat ekspresinya, 0.4=halus, 0.8=ekspresif)
 
 KEMBALIKAN HANYA JSON array valid tanpa markdown formatting atau kata pengantar.
@@ -999,6 +1008,9 @@ Contoh format:
         // null (neutral), intensity clamped to the documented 0.3–1.0 band.
         const okEmotion = new Set(emotions);
         const okGesture = new Set(gestures);
+        // Motion id yang tidak ada di katalog DIBUANG (null), tidak diteruskan —
+        // pola yang sama dengan gesture: runtime tidak boleh menerima id asing.
+        const okMotion = new Set(motions.map(m => m.id));
         const segments = (Array.isArray(parsed) ? parsed : []).reduce((acc, s) => {
           if (!s || typeof s !== 'object') return acc;
           const t = typeof s.text === 'string' ? s.text : '';
@@ -1009,6 +1021,7 @@ Contoh format:
             text: t,
             emotion: okEmotion.has(s.emotion) ? s.emotion : 'normal',
             gesture: okGesture.has(s.gesture) ? s.gesture : null,
+            motion: okMotion.has(s.motion) ? s.motion : null,
             intensity: Math.min(1.0, Math.max(0.3, inten)),
           });
           return acc;
@@ -1037,6 +1050,11 @@ Contoh format:
   // can read it synchronously without hitting the temporal-dead-zone of a const
   // declared further down in this same callback.
   const SHEETS_DIR = path.join(ROOT, 'sheets');
+  // Motion Studio assets live in their OWN file family (motions/<modelKey>/),
+  // deliberately NOT inside the sheet: a sheet is measured capability data
+  // rewritten by inspect/AI-classify, a motion asset is authored animation
+  // saved by the editor — two very different write cadences and lifecycles.
+  const MOTIONS_DIR = path.join(ROOT, 'motions');
 
   // Recursively find the FIRST *.model3.json under a directory.
   // Handles nested layouts (e.g. lumine_l2d/lumine/lumine.model3.json).
@@ -1314,6 +1332,347 @@ Contoh format:
       res.writeHead(200, JSON_HEAD); res.end(raw);
     } catch (e) {
       res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // ── Motion Studio: Motion Assets per model ───────────────────
+  // motions/<modelKey>/<id>.motion.json (SPEC §7/§26). Semua tulisan lewat
+  // queueJsonWrite (atomic + serial per path, pola yang sama dengan sheet),
+  // dan SEMUA payload melewati MotionDSL.sanitizeMotionAsset — endpoint ini
+  // adalah satu-satunya pintu masuk motion user, jadi validasi di sini melindungi
+  // runtime dari file yang di-edit tangan maupun hasil LLM yang menyusup.
+  function motionsDirFor(modelKey) {
+    const dir = path.join(MOTIONS_DIR, sanitizeKey(modelKey));
+    if (!dir.startsWith(MOTIONS_DIR)) throw new Error('model key tidak valid');
+    return dir;
+  }
+  function motionFileFor(modelKey, id) {
+    if (!/^[A-Za-z0-9_\-]{1,60}$/.test(id || '')) throw new Error('motion id tidak valid');
+    const file = path.join(motionsDirFor(modelKey), id + '.motion.json');
+    if (!file.startsWith(MOTIONS_DIR)) throw new Error('motion id tidak valid');
+    return file;
+  }
+  function listMotions(modelKey) {
+    const dir = motionsDirFor(modelKey);
+    const out = [];
+    let entries = [];
+    try { entries = fs.readdirSync(dir); } catch (e) { return out; }
+    for (const f of entries) {
+      if (!f.endsWith('.motion.json')) continue;
+      try { out.push(JSON.parse(stripBom(fs.readFileSync(path.join(dir, f), 'utf8')))); } catch (e) {}
+    }
+    return out;
+  }
+  function readBody(res, cb, maxBytes) {
+    let body = '';
+    let aborted = false;
+    req.on('data', c => { body += c; if (body.length > (maxBytes || 1024 * 1024)) { aborted = true; req.destroy(); } });
+    req.on('end', () => {
+      if (aborted) return;
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      cb(body);
+    });
+  }
+
+  // GET /api/motions?model=<key> -> semua motion asset milik model itu
+  if (req.method === 'GET' && urlPath === '/api/motions') {
+    try {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const motions = listMotions(q.get('model') || 'default');
+      res.writeHead(200, JSON_HEAD);
+      res.end(JSON.stringify({ motions }));
+    } catch (e) {
+      res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // ── POST /api/motions/analyze (Fase 6) ────────────────────────
+  // Kirim representasi SEMANTIK motion (durasi, range per track, jumlah key) —
+  // BUKAN state internal aplikasi, dan bukan keyframe mentah: LLM tidak perlu
+  // angkanya untuk menulis deskripsi, dan mengirim lebih banyak hanya memperbesar
+  // permukaan halusinasi. Hasilnya divalidasi, dan UI WAJIB minta persetujuan
+  // user sebelum menyimpan (pola badge 🤖 seperti presets.ai).
+  //
+  // Didaftarkan SEBELUM handler /api/motions/<id> supaya 'analyze' tidak
+  // dibaca sebagai motion id.
+  if (req.method === 'POST' && urlPath === '/api/motions/analyze') {
+    readBody(res, (body) => {
+      let incoming;
+      try { incoming = JSON.parse(body); } catch (e) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'body JSON rusak' })); return;
+      }
+      const m = incoming.motion || {};
+      const emotions = Array.isArray(incoming.emotions) && incoming.emotions.length
+        ? incoming.emotions.slice(0, 12).map(String) : ['senang', 'sedih', 'malu', 'kaget', 'normal'];
+      const tracks = (Array.isArray(m.tracks) ? m.tracks : []).map(tr => {
+        const vals = (tr.keys || []).map(k => Number(k.v)).filter(Number.isFinite);
+        return {
+          // Raw Parameter Mode: sasaran track bisa berupa id parameter model.
+          // Label yang dikirim ke LLM diutamakan (nama yang ditulis rigger,
+          // mis. "Rambut Depan") karena itu yang punya arti; id mentah dipakai
+          // kalau tidak ada label.
+          target: tr.label || tr.param || tr.target || tr.field,
+          range: vals.length ? [Math.min.apply(null, vals), Math.max.apply(null, vals)] : [0, 0],
+          keyframes: (tr.keys || []).length,
+        };
+      }).filter(t => t.target);
+      if (!tracks.length) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'motion tanpa track' })); return;
+      }
+
+      const active = getActiveConnection();
+      if (!active) { res.writeHead(503); res.end(JSON.stringify({ error: 'belum ada koneksi AI aktif' })); return; }
+
+      const prompt = `Kamu menganalisa satu gerakan (motion) karakter Live2D.
+Data gerakan (peran semantik, bukan parameter mentah):
+durasi: ${Number(m.duration) || 1} detik
+${tracks.map(t => `- ${t.target}: rentang ${t.range[0]}..${t.range[1]}, ${t.keyframes} keyframe`).join('\n')}
+
+Nama track bisa berupa nama peran singkat atau nama parameter rig:
+ax=kepala kiri/kanan, ay=kepala atas/bawah, bodyZ=badan miring,
+bodyX/bodyY=badan geser, ex/ey=arah bola mata, mouthForm=bentuk mulut.
+Nama lain (mis. ParamHairFront, ParamArmLA, "Alis Kiri") adalah parameter rig —
+tebak maknanya dari namanya sendiri. Rentang nilai tiap track sudah diberikan
+di atas; satuannya berbeda-beda per parameter, jadi baca rentangnya, jangan
+mengasumsikan derajat.
+
+TUGAS: tebak gerakan ini sedang menyampaikan apa, lalu balas JSON:
+{
+  "description": "satu kalimat bahasa Indonesia, deskriptif, maksimal 120 karakter",
+  "tags": ["3-5 tag bahasa Indonesia satu kata"],
+  "emotionCompatibility": { "<emosi>": 0.0-1.0 }
+}
+Emosi yang boleh dipakai HANYA: [${emotions.join(', ')}]
+KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
+
+      llmWithFallback([{ role: 'user', content: prompt }]).then(({ reply }) => {
+        let clean = String(reply || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+        let parsed = null;
+        try { parsed = JSON.parse(clean); } catch (e) {
+          const mm = clean.match(/\{[\s\S]*\}/);
+          if (mm) { try { parsed = JSON.parse(mm[0]); } catch (e2) {} }
+        }
+        if (!parsed || typeof parsed !== 'object') {
+          res.writeHead(200); res.end(JSON.stringify({ warning: 'AI tidak mengembalikan JSON valid' })); return;
+        }
+        // Validasi keluaran: emosi di luar daftar dibuang, skor di-clamp, teks
+        // dipotong. Pola yang sama dengan analyze-sheet (server.js ~885).
+        const okEmo = new Set(emotions);
+        const emo = {};
+        if (parsed.emotionCompatibility && typeof parsed.emotionCompatibility === 'object') {
+          for (const [k, v] of Object.entries(parsed.emotionCompatibility)) {
+            const n = Number(v);
+            if (!okEmo.has(k) || !Number.isFinite(n)) continue;
+            emo[k] = Math.max(0, Math.min(1, n));
+          }
+        }
+        const tags = Array.isArray(parsed.tags)
+          ? parsed.tags.slice(0, 5).map(t => String(t).trim().toLowerCase().slice(0, 30)).filter(Boolean)
+          : [];
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          description: String(parsed.description || '').trim().slice(0, 200),
+          tags,
+          emotionCompatibility: emo,
+          source: 'ai',
+        }));
+      }).catch(err => {
+        console.warn('[motions/analyze] gagal:', err.message);
+        res.writeHead(200); res.end(JSON.stringify({ warning: err.message }));
+      });
+    });
+    return;
+  }
+
+  // ── POST /api/motions/generate (Fase 7) ───────────────────────
+  // Prompt bahasa alami → Motion DSL. Hasilnya HANYA dikembalikan sebagai draft:
+  // tidak disimpan, tidak dieksekusi. Editor memutar preview lalu user
+  // menyetujui. Keluaran LLM melewati sanitizeMotionAsset yang sama dengan
+  // endpoint simpan, jadi track/keyframe ngawur tidak pernah sampai runtime.
+  if (req.method === 'POST' && urlPath === '/api/motions/generate') {
+    readBody(res, (body) => {
+      let incoming;
+      try { incoming = JSON.parse(body); } catch (e) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'body JSON rusak' })); return;
+      }
+      const desc = String(incoming.prompt || '').trim().slice(0, 300);
+      if (!desc) { res.writeHead(400); res.end(JSON.stringify({ error: 'prompt kosong' })); return; }
+      const emotions = Array.isArray(incoming.emotions) && incoming.emotions.length
+        ? incoming.emotions.slice(0, 12).map(String) : ['senang', 'sedih', 'malu', 'kaget', 'normal'];
+
+      const active = getActiveConnection();
+      if (!active) { res.writeHead(503); res.end(JSON.stringify({ error: 'belum ada koneksi AI aktif' })); return; }
+
+      const prompt = `Kamu membuat gerakan (motion) untuk karakter Live2D dari deskripsi user.
+Permintaan user: "${desc}"
+
+Kamu HANYA boleh memakai nama track berikut. Ini nama PERAN, bukan nama parameter
+model — klien yang akan menerjemahkannya ke parameter rig yang sesuai:
+ax    = kepala kiri(-)/kanan(+), derajat, batas ±30
+ay    = kepala atas(-)/bawah(+), derajat, batas ±30
+bodyZ = badan miring, derajat, batas ±30
+bodyX = badan geser kiri/kanan, derajat, batas ±30
+bodyY = badan naik/turun, derajat, batas ±30
+ex    = bola mata kiri(-)/kanan(+), −1..1
+ey    = bola mata atas(-)/bawah(+), −1..1
+mouthForm = bentuk mulut, −1..1
+
+JANGAN menyebut nama parameter model seperti ParamAngleX atau ParamHairFront —
+kamu tidak tahu nama parameter rig ini dan menebaknya akan ditolak.
+
+Aturan:
+- Maksimal 4 track, maksimal 6 keyframe per track.
+- t dalam detik, mulai 0, tidak melebihi durasi.
+- Durasi 0.6 sampai 3 detik.
+- Gerakan yang bagus PULANG ke 0 di keyframe terakhir supaya tidak nyangkut.
+- Nilai realistis: ±5..15 derajat untuk kepala, ±0.2..0.6 untuk mata.
+
+Balas JSON persis format ini:
+{
+  "id": "nama_id_snake_case",
+  "name": "Nama Singkat",
+  "description": "satu kalimat bahasa Indonesia",
+  "tags": ["dua-empat tag"],
+  "duration": 1.4,
+  "emotionCompatibility": { "<emosi>": 0.0-1.0 },
+  "tracks": [
+    { "target": "ay", "keys": [{ "t": 0, "v": 0 }, { "t": 0.4, "v": 8 }, { "t": 1.4, "v": 0 }] }
+  ]
+}
+Emosi yang boleh dipakai HANYA: [${emotions.join(', ')}]
+KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
+
+      llmWithFallback([{ role: 'user', content: prompt }]).then(({ reply }) => {
+        let clean = String(reply || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+        let parsed = null;
+        try { parsed = JSON.parse(clean); } catch (e) {
+          const mm = clean.match(/\{[\s\S]*\}/);
+          if (mm) { try { parsed = JSON.parse(mm[0]); } catch (e2) {} }
+        }
+        if (!parsed || typeof parsed !== 'object') {
+          res.writeHead(200); res.end(JSON.stringify({ error: 'AI tidak mengembalikan JSON valid' })); return;
+        }
+        // Emosi di luar daftar dibuang SEBELUM sanitasi, supaya asset draft tidak
+        // membawa nama emosi yang model ini tak punya.
+        if (parsed.emotionCompatibility && typeof parsed.emotionCompatibility === 'object') {
+          const okEmo = new Set(emotions);
+          for (const k of Object.keys(parsed.emotionCompatibility)) {
+            if (!okEmo.has(k)) delete parsed.emotionCompatibility[k];
+          }
+        }
+        // ID hasil LLM sering mengandung spasi/huruf besar — normalkan dulu,
+        // kalau tidak sanitizeMotionAsset menolak seluruh hasil hanya karena id.
+        parsed.id = String(parsed.id || desc).toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 60) || 'gerakan_ai';
+        const r = MotionDSL.sanitizeMotionAsset(parsed, { requireTracks: true, source: 'user' });
+        if (!r.ok) {
+          console.warn('[motions/generate] hasil AI ditolak:', r.errors.join('; '));
+          res.writeHead(200); res.end(JSON.stringify({ error: 'hasil AI tidak valid: ' + r.errors.join('; ') })); return;
+        }
+        res.writeHead(200);
+        res.end(JSON.stringify({ motion: r.asset, source: 'ai' }));
+      }).catch(err => {
+        console.warn('[motions/generate] gagal:', err.message);
+        res.writeHead(200); res.end(JSON.stringify({ error: err.message }));
+      });
+    });
+    return;
+  }
+
+  // GET /api/motions/<id>?model=<key>
+  if (req.method === 'GET' && urlPath.startsWith('/api/motions/')) {
+    try {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const id = decodeURIComponent(urlPath.slice('/api/motions/'.length));
+      const file = motionFileFor(q.get('model') || 'default', id);
+      if (!fs.existsSync(file)) { res.writeHead(404, JSON_HEAD); res.end(JSON.stringify({ error: 'not found' })); return; }
+      res.writeHead(200, JSON_HEAD);
+      res.end(stripBom(fs.readFileSync(file, 'utf8')));
+    } catch (e) {
+      res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // POST /api/motions {model, motion} — simpan BARU. ID yang sudah ada DITOLAK
+  // (bukan ditimpa senyap): user harus sadar sedang menimpa (pakai PUT).
+  if (req.method === 'POST' && urlPath === '/api/motions') {
+    readBody(res, (body) => {
+      try {
+        const data = JSON.parse(body);
+        const modelKey = data.model || 'default';
+        const raw = data.motion || data;
+        const sanitized = MotionDSL.sanitizeMotionAsset(raw, {
+          requireTracks: true, source: 'user',
+          // Model asal dicatat dari parameter query yang sama dengan lokasi
+          // file, jadi motion tidak bisa mengaku milik model lain lewat body.
+          sourceModelId: raw.sourceModelId || modelKey,
+        });
+        if (!sanitized.ok) throw new Error('motion invalid: ' + sanitized.errors.join('; '));
+        const asset = sanitized.asset;
+        const file = motionFileFor(modelKey, asset.id);
+        if (fs.existsSync(file)) {
+          res.writeHead(409, JSON_HEAD);
+          res.end(JSON.stringify({ error: 'motion "' + asset.id + '" sudah ada. Pakai nama lain atau Simpan (timpa).' }));
+          return;
+        }
+        queueJsonWrite(file, asset).then(() => {
+          console.log('[motions] saved ->', path.relative(ROOT, file).split(path.sep).join('/'));
+          res.writeHead(200, JSON_HEAD);
+          res.end(JSON.stringify({ ok: true, motion: asset }));
+        }).catch(e => {
+          res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+        });
+      } catch (e) {
+        res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // PUT /api/motions/<id> {model, motion} — timpa eksplisit (Save).
+  if (req.method === 'PUT' && urlPath.startsWith('/api/motions/')) {
+    readBody(res, (body) => {
+      try {
+        const data = JSON.parse(body);
+        const modelKey = data.model || 'default';
+        const id = decodeURIComponent(urlPath.slice('/api/motions/'.length));
+        const raw = data.motion || data;
+        const sanitized = MotionDSL.sanitizeMotionAsset(Object.assign({}, raw, { id }), {
+          requireTracks: true, source: 'user',
+          sourceModelId: raw.sourceModelId || modelKey,
+        });
+        if (!sanitized.ok) throw new Error('motion invalid: ' + sanitized.errors.join('; '));
+        const asset = sanitized.asset;
+        const file = motionFileFor(modelKey, id);
+        queueJsonWrite(file, asset).then(() => {
+          console.log('[motions] updated ->', path.relative(ROOT, file).split(path.sep).join('/'));
+          res.writeHead(200, JSON_HEAD);
+          res.end(JSON.stringify({ ok: true, motion: asset }));
+        }).catch(e => {
+          res.writeHead(500, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+        });
+      } catch (e) {
+        res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // DELETE /api/motions/<id>?model=<key>
+  if (req.method === 'DELETE' && urlPath.startsWith('/api/motions/')) {
+    try {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const id = decodeURIComponent(urlPath.slice('/api/motions/'.length));
+      const file = motionFileFor(q.get('model') || 'default', id);
+      if (!fs.existsSync(file)) throw new Error('not found');
+      fs.unlinkSync(file);
+      res.writeHead(200, JSON_HEAD); res.end(JSON.stringify({ ok: true }));
+    } catch (e) {
+      res.writeHead(400, JSON_HEAD); res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }

@@ -52,7 +52,9 @@ export class MotionRuntime {
 
   constructor(registry: MotionRegistry, bridge?: RuntimeBridge) {
     this.registry = registry;
-    this.bridge = bridge ?? {};
+    // Bridge boleh parsial saat dibuat sebelum engine siap — tick() menjaga
+    // setiap pemakaian method dengan optional chaining / typeof check.
+    this.bridge = bridge ?? ({} as RuntimeBridge);
   }
 
   attach(bridge: RuntimeBridge): void {
@@ -204,7 +206,9 @@ export class MotionRuntime {
     // Apply role deltas (scaled by amplitude)
     const scaled: Record<string, number> = {};
     for (const k in ev.roles) scaled[k] = ev.roles[k] * amp;
-    this.bridge.applyPoseDelta(scaled);
+    // Guard: bridge bisa jadi parsial saat runtime dibuat sebelum engine siap
+    // (v1 mengecek keberadaan method ini sebelum memanggil).
+    if (typeof this.bridge.applyPoseDelta === "function") this.bridge.applyPoseDelta(scaled);
 
     // Apply param drive (absolute values, interpolated)
     const paramBaseRef = this.active.paramBase;
@@ -253,5 +257,12 @@ export class MotionRuntime {
       clearTimeout(this.watchdogId);
       this.watchdogId = null;
     }
+  }
+
+  // Factory facade so the proven engine (static/js/app.js) can keep calling
+  // MotionRuntime.createRuntime(registry, bridge) exactly as it did with the
+  // legacy UMD module.
+  static createRuntime(registry: MotionRegistry, bridge?: RuntimeBridge): MotionRuntime {
+    return new MotionRuntime(registry, bridge);
   }
 }

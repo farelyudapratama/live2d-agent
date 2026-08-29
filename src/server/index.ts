@@ -9,6 +9,11 @@ import { sanitizeMotionAsset } from "../client/animation/motion-dsl";
 import { readdirSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from "fs";
 import { join, extname, dirname, relative, resolve, normalize, sep } from "path";
 import { execSync } from "child_process";
+// Motion taxonomy: v2's OWN copy (static/js/motion-taxonomy.js). No dependency on the
+// v1 sibling repo — the server must be self-contained.
+// @ts-ignore — modul JS polos tanpa file deklarasi tipe
+import * as MotionTaxonomyMod from "../../static/js/motion-taxonomy.js";
+const MotionTaxonomy: any = (MotionTaxonomyMod as any).default ?? MotionTaxonomyMod;
 
 const PORT = Number(process.env.PORT) || 8310;
 const ROOT = import.meta.dir;
@@ -36,35 +41,80 @@ function json(data: unknown, status=200): Response {
   return new Response(JSON.stringify(data), { status, headers:{ "Content-Type":"application/json; charset=utf-8", "Access-Control-Allow-Origin":"*" } });
 }
 function cors(res: Response){ res.headers.set("Access-Control-Allow-Origin","*"); res.headers.set("Access-Control-Allow-Methods","POST, GET, PUT, DELETE, OPTIONS"); res.headers.set("Access-Control-Allow-Headers","Content-Type"); return res; }
-async function readBody(req: Request): Promise<any>{ const t=await req.text(); try{ return JSON.parse(t);}catch{ return null; } }
+
+// Body-size caps (v1 parity). v1 menghancurkan socket body yang kelebihan
+// batas; di sini kita lempar BodyTooLargeError yang dijawab 413 JSON supaya
+// client dapat error yang terbaca. Tabel batas = batas v1 per endpoint.
+class BodyTooLargeError extends Error {}
+function bodyLimitFor(path: string): number {
+  if (path === "/api/model/import-zip") return 500 * 1024 * 1024;
+  if (path === "/api/model/upload") return 200 * 1024 * 1024;
+  if (path === "/api/sheet") return 5 * 1024 * 1024;
+  if (path === "/api/config" || path === "/api/test" || path === "/api/model/expressions-adoption") return 100 * 1024;
+  return 1024 * 1024; // chat, classify, analyze-sheet, animate-text, motions, tts
+}
+async function readBody(req: Request): Promise<any> {
+  const max = bodyLimitFor(new URL(req.url).pathname);
+  const declared = Number(req.headers.get("content-length") || 0);
+  if (declared > max) throw new BodyTooLargeError("body terlalu besar (maks " + max + " bytes)");
+  const reader = req.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = []; let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { try { await reader.cancel(); } catch {} throw new BodyTooLargeError("body terlalu besar (maks " + max + " bytes)"); }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(total); let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  const t = new TextDecoder().decode(buf);
+  try { return JSON.parse(t); } catch { return null; }
+}
 function stripBom(s:string){ return s.charCodeAt(0)===0xFEFF? s.slice(1): s; }
 function cleanStr(s:string){ return String(s||"").replace(/[\u0000-\u001F\u007F\u00A0\u200B-\u200D\uFEFF]+/g,"").trim(); }
 
 // ── safe path ───────────────────────────────────────────────────
-function safeJoinStatic(reqPath: string): string | null {
+// Resolve path statis dengan proteksi traversal. Hasil:
+//   { file: string, forbidden: false } — ok
+//   { file: null, forbidden: false }   — tidak ada (boleh SPA fallback)
+//   { file: null, forbidden: true }    — traversal / file sensitif → 403
+const SENSITIVE_FILES = new Set(["config.json", "config.json.bak"]); // berisi apiKey plaintext
+function safeJoinStatic(reqPath: string): { file: string | null; forbidden: boolean } {
   let decoded: string;
   try{ decoded = decodeURIComponent(reqPath.split("?")[0]); } catch{ decoded = reqPath.split("?")[0]; }
-  // normalize and prevent traversal
-  const normalized = normalize(decoded).replace(/^(\.\.[\/\\])+/, "");
+  const normalized = normalize(decoded); // separator platform
+  // Cek ".." pada path DECODED (sebelum normalize): di Windows normalize
+  // menciutkan ".." root-relatif ("\\..\\x" → "\\x"), jadi pengecekan sesudah
+  // normalize bisa lolos. URL statis yang sah tidak pernah punya segmen "..".
+  const hasDotDot = (s: string) => s.split(/[\\/]/).includes("..");
+  if (hasDotDot(decoded) || hasDotDot(normalized)) return { file: null, forbidden: true };
+  const rel = normalized.replace(/^[\\/]+/, "");
+  const resolveUnder = (base: string, r: string): string | null => {
+    const full = normalize(join(base, r));
+    return full === base || full.startsWith(base + sep) ? full : null;
+  };
   // model files live under DATA, not STATIC
-  if (normalized.startsWith("/model/") || normalized.startsWith("model/")) {
-    const rel = normalized.replace(/^\/+/, "");
-    const full = join(DATA, rel);
-    if (!full.startsWith(DATA)) return null;
-    return full;
+  if (/^model[\\/]/.test(rel)) {
+    const full = resolveUnder(DATA, rel);
+    return full ? { file: full, forbidden: false } : { file: null, forbidden: true };
   }
-  const full = join(STATIC, normalized);
-  if (!full.startsWith(STATIC) && !full.startsWith(DATA)) return null;
-  // also allow DATA/model fallback
-  if (existsSync(full)) return full;
-  // try DATA/model for bare paths
-  const alt = join(DATA, normalized.replace(/^\/+/,""));
-  if (existsSync(alt)) return alt;
-  return full;
+  // config.json / .bak menyimpan apiKey plaintext — tidak boleh disajikan statis
+  if (SENSITIVE_FILES.has(rel)) return { file: null, forbidden: true };
+  const full = resolveUnder(STATIC, rel);
+  if (!full) return { file: null, forbidden: true };
+  if (existsSync(full)) return { file: full, forbidden: false };
+  // DATA fallback untuk path polos yang tak ada di STATIC
+  const alt = resolveUnder(DATA, rel);
+  if (alt && existsSync(alt)) return { file: alt, forbidden: false };
+  return { file: full, forbidden: false };
 }
 
 function serveStatic(reqPath: string): Response | null {
-  const fp = safeJoinStatic(reqPath);
+  const r = safeJoinStatic(reqPath);
+  if (r.forbidden) return new Response("Forbidden", { status: 403, headers:{ "Access-Control-Allow-Origin":"*" } });
+  const fp = r.file;
   if (!fp || !existsSync(fp) || !statSync(fp).isFile()) return null;
   // detect mime by longest suffix
   let mime = "application/octet-stream";
@@ -106,10 +156,6 @@ function discoverExpressions(name:string){
 }
 function sanitizeKey(name:string){ return (name||"default").replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g,"_"); }
 function sheetPathFor(name:string){ return join(SHEETS_DIR, sanitizeKey(name)+".json"); }
-function filterAdoptable(onDisk:any[], disabled:any){
-  const isOff=(n:string)=>{ if(disabled && typeof disabled.has==="function") return disabled.has(n); if(Array.isArray(disabled)) return disabled.indexOf(n)!==-1; return false; };
-  return (Array.isArray(onDisk)?onDisk:[]).filter(e=>e && !e.declared && e.File && e.Name && !isOff(e.Name));
-}
 
 // ── MOTION helpers ──────────────────────────────────────────────
 function motionsDirFor(modelKey:string){
@@ -243,9 +289,19 @@ ${Object.entries(knownRoles).map(([r,id])=>`  ${r} -> ${id}`).join("\n")||"(belu
 Daftar semantic roles yang tersedia:
 [${KNOWN_ROLES.join(", ")}]
 
-TUGAS: Analisis setiap parameter di atas. Tentukan id, role (salah satu di atas atau null), group, label, isAccessory.
-KEMBALIKAN HANYA JSON array valid tanpa markdown.
-Format: [{ "id": "ParamX", "role": "angleX", "group": "Sudut (Angle)", "label": "Kepala X", "isAccessory": false }]`;
+TUGAS: Analisis setiap parameter di atas (berdasarkan nama ID, range, naming convention JP/CN/EN, dan fungsinya di Live2D).
+Tentukan:
+- id: ID parameter yang bersangkutan
+- role: salah satu nama role di atas, atau null jika ini aksesoris/parts kustom/fisika
+- group: "Sudut (Angle)", "Mata (Eye)", "Alis (Eyebrow)", "Mulut (Mouth)", "Badan (Body)", "Rambut (Hair)", "Aksesoris (Accessory)", "Physics", atau "Kustom"
+- label: nama ringkas yang mudah dipahami manusia (misal "Kedip Mata Kiri", "Pipi Merah")
+- isAccessory: boolean true jika ini toggle aksesoris/properti (0/1)
+
+KEMBALIKAN HANYA JSON array valid tanpa markdown formatting tambahan atau pembuka/penutup kata.
+Format:
+[
+  { "id": "ParamX", "role": "angleX", "group": "Sudut (Angle)", "label": "Kepala X", "isAccessory": false }
+]`;
   try{
     const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
@@ -275,17 +331,40 @@ async function handleAnalyzeSheet(req:Request):Promise<Response>{
 PARAMETER TERSEDIA (hanya id di bawah yang boleh dipakai):
 ${paramLines}
 
-${parts.length? `PART TERSEDIA (opacity 0..1):\n${parts.map((p:string)=>`- "${p}"`).join("\n")}`:"(model ini tidak punya part yang bisa di-toggle — semua efek harus lewat PARAMETER di atas)"}
+${parts.length? `PART TERSEDIA (opacity 0..1):\n${parts.map((p:string)=>`- "${p}"`).join("\n")}`:"(model ini tidak punya part yang bisa di-toggle — semua efek \"aksesoris\"/\"properti\" harus dibuat lewat kombinasi PARAMETER di atas, misalnya ParamEX01-12, ParamCollarChange, ParamCheekPuff*, ParamtongueOut, dsb, bukan lewat part.)"}
 
-PRESET YANG SUDAH ADA (jangan diusulkan ulang):
-${existing.length? existing.join(", "):"(belum ada)"}
+PRESET YANG SUDAH ADA DI PROJECT INI (jangan diusulkan ulang — cek nama & isinya, bukan sekadar nama umum):
+${existing.length? existing.join(", "):"(belum ada, kamu bebas berkreasi dari nol)"}
 
-TUGAS: usulkan MINIMAL 12 preset yang BERAGAM, menyentuh sebanyak mungkin grup parameter.
-Untuk tiap preset: name (max 60), category (${CATS.join(" / ")}), values: { ParamId: angka }, parts: { PartId: 0..1 }
+TUGAS: usulkan MINIMAL 12 preset yang BERAGAM, dan pastikan secara KESELURUHAN preset yang kamu usulkan menyentuh SEBANYAK MUNGKIN grup parameter yang tersedia di model ini (mata, alis, mulut, pipi, bola mata, sudut kepala/badan, custom EX, collar, breath, dll) — jangan cuma berputar di ParamMouthForm & ParamEyeLSmile terus-menerus.
 
-ATURAN: JANGAN mengarang id, JANGAN sertakan min/max/def/steps, hanya 3-8 param per preset, kategori "gerak" DIBUANG, WAJIB BERAGAM (minimal 6 emosi berbeda + campuran properti/aksesoris).
-KEMBALIKAN HANYA JSON array valid tanpa markdown.
-Format: [{ "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} }]`;
+Untuk tiap preset tentukan:
+- name: nama singkat bahasa Indonesia (maks 60 karakter), unik, tidak boleh sama/mirip dengan preset yang sudah ada maupun sesama preset baru
+- category: salah satu dari ${CATS.join(" / ")}
+  · emosi     = ekspresi wajah (mata, alis, mulut, pipi, bola mata)
+  · properti  = perubahan tampilan non-aksesoris (warna pipi, ganti kerah, bentuk custom lain)
+  · aksesoris = toggle benda yang dipakai/dilepas (via part jika ada, atau via parameter EX/kustom yang berfungsi sebagai toggle)
+- values: objek { "ParamId": angka } berisi HANYA id dari daftar di atas
+- parts: objek { "PartId": angka 0..1 }, boleh kosong jika model tidak punya part
+
+ATURAN KERAS:
+1. JANGAN mengarang id parameter atau part yang tidak ada di daftar.
+2. JANGAN menyertakan min, max, def, atau steps. Itu bukan tugasmu.
+3. Sertakan hanya parameter yang benar-benar berubah dari default (3-8 per preset).
+4. Kategori "gerak" TIDAK BOLEH diusulkan.
+5. WAJIB BERAGAM:
+   - MINIMAL 6 preset kategori "emosi" dengan nama & kombinasi parameter yang benar-benar berbeda satu sama lain (contoh arah: senang, sedih, kaget, malu, marah/kesal, bingung, mengantuk, jijik, takut, bangga — pilih & sesuaikan dengan parameter yang tersedia, JANGAN ulang preset yang sudah ada di daftar existing).
+   - Sisanya campuran "properti" dan "aksesoris" yang memanfaatkan parameter non-wajah/non-emosi seperti ParamEX01-12, ParamCollarChange, ParamCheekPuff*, ParamtongueOut, ParamBreath, atau part (jika tersedia).
+   - Usahakan setiap preset punya kombinasi parameter yang unik — hindari 2 preset dengan isi "values" yang nyaris identik.
+   - Jika model punya banyak parameter custom/EX yang belum kepakai sama sekali di preset manapun, prioritaskan membuat preset baru yang memakainya, selama hasilnya tetap masuk akal secara visual.
+
+KEMBALIKAN HANYA JSON array valid, tanpa markdown atau kata pembuka/penutup.
+Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti dengan emosi & parameter milik model ini):
+[
+  { "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} },
+  { "name": "Sedih", "category": "emosi", "values": { "ParamMouthForm": -1, "ParamEyeLSmile": -1 }, "parts": {} },
+  { "name": "Kacamata", "category": "aksesoris", "values": {}, "parts": { "PartGlasses": 1 } }
+]`;
   try{
     const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
@@ -298,7 +377,7 @@ Format: [{ "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 
       if(!name||!category){dropped++;return acc;}
       const key=category+"\u0000"+name.toLowerCase(); if(existingSet.has(name.toLowerCase())||seen.has(key)){dropped++;return acc;}
       const values:Record<string,number>={};
-      if(it.values&&typeof it.values==="object"&&!Array.isArray(it.values)){ for(const k of Object.keys(it.values)){ const r=ranges.get(k); const n=Number((it.values as any)[k]); if(!r||!Number.isFinite(n)) continue; values[k]=Math.max(r.lo, Math.min(r.hi,n)); } }
+      if(it.values&&typeof it.values==="object"&&!Array.isArray(it.values)){ for(const k of Object.keys(it.values)){ const r=ranges.get(k) as {lo:number;hi:number}|undefined; const n=Number((it.values as any)[k]); if(!r||!Number.isFinite(n)) continue; values[k]=Math.max(r.lo, Math.min(r.hi,n)); } }
       const pparts:Record<string,number>={};
       if(it.parts&&typeof it.parts==="object"&&!Array.isArray(it.parts)){ for(const k of Object.keys(it.parts)){ const n=Number((it.parts as any)[k]); if(!partIds.has(k)||!Number.isFinite(n)) continue; pparts[k]=Math.max(0,Math.min(1,n)); } }
       if(!Object.keys(values).length && !Object.keys(pparts).length){dropped++;return acc;}
@@ -325,10 +404,19 @@ Daftar Emosi yang didukung model: [${emotions.join(", ")}]
 Daftar Gesture yang tersedia: [${gestures.join(", ")}]
 ${motions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+motions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}
 TUGAS:
-1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup.
-2. Untuk setiap segment, tentukan: "text", "emotion", "gesture" (atau null)${motions.length?', "motion"':''}, "intensity" 0.3..1.0
-KEMBALIKAN HANYA JSON array valid tanpa markdown.
-Contoh: [{ "text": "Halo semuanya!", "emotion": "senang", "gesture": "wave_hi", "intensity": 0.9 }]`;
+1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup (jangan diam selama bicara!).
+2. Untuk setiap segment, tentukan:
+   - "text": teks klausa/kalimat tersebut (harus sama persis dengan teks asli bila digabung kembali)
+   - "emotion": emosi yang SANGAT SESUAI dengan makna klausa tersebut (dari daftar emosi di atas)
+   - "gesture": nama gesture yang pas (atau null jika netral)${motions.length? '\n   - "motion": id gerakan user bila ada yang sangat pas (atau null)':""}
+   - "intensity": angka 0.3 s/d 1.0 (seberapa kuat ekspresinya, 0.4=halus, 0.8=ekspresif)
+
+KEMBALIKAN HANYA JSON array valid tanpa markdown formatting atau kata pengantar.
+Contoh format:
+[
+  { "text": "Halo semuanya!", "emotion": "senang", "gesture": "wave_hi", "intensity": 0.9 },
+  { "text": "Aku senang banget ketemu kalian lagi.", "emotion": "senang", "gesture": "lean_excited", "intensity": 0.8 }
+]`;
   try{
     const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:directorPrompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
@@ -350,12 +438,26 @@ async function handleMotionsAnalyze(req:Request):Promise<Response>{
   if(!tracks.length) return json({error:"motion tanpa track"},400);
   if(!config.activeConnection) return json({error:"belum ada koneksi AI aktif"},503);
   const prompt=`Kamu menganalisa satu gerakan (motion) karakter Live2D.
-Data gerakan:
+Data gerakan (peran semantik, bukan parameter mentah):
 durasi: ${Number(m.duration)||1} detik
 ${tracks.map((t:any)=>`- ${t.target}: rentang ${t.range[0]}..${t.range[1]}, ${t.keyframes} keyframe`).join("\n")}
-TUGAS: tebak gerakan ini menyampaikan apa, balas JSON: { "description": "satu kalimat id max 120", "tags": ["3-5 tag"], "emotionCompatibility": { "<emosi>": 0.0-1.0 } }
+
+Nama track bisa berupa nama peran singkat atau nama parameter rig:
+ax=kepala kiri/kanan, ay=kepala atas/bawah, bodyZ=badan miring,
+bodyX/bodyY=badan geser, ex/ey=arah bola mata, mouthForm=bentuk mulut.
+Nama lain (mis. ParamHairFront, ParamArmLA, "Alis Kiri") adalah parameter rig —
+tebak maknanya dari namanya sendiri. Rentang nilai tiap track sudah diberikan
+di atas; satuannya berbeda-beda per parameter, jadi baca rentangnya, jangan
+mengasumsikan derajat.
+
+TUGAS: tebak gerakan ini sedang menyampaikan apa, lalu balas JSON:
+{
+  "description": "satu kalimat bahasa Indonesia, deskriptif, maksimal 120 karakter",
+  "tags": ["3-5 tag bahasa Indonesia satu kata"],
+  "emotionCompatibility": { "<emosi>": 0.0-1.0 }
+}
 Emosi yang boleh dipakai HANYA: [${emotions.join(", ")}]
-KEMBALIKAN HANYA JSON tanpa markdown.`;
+KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
   try{
     const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=null; try{parsed=JSON.parse(clean);}catch{ const mm=clean.match(/\{[\s\S]*\}/); if(mm) try{parsed=JSON.parse(mm[0]);}catch{}}
@@ -374,11 +476,42 @@ async function handleMotionsGenerate(req:Request):Promise<Response>{
   if(!config.activeConnection) return json({error:"belum ada koneksi AI aktif"},503);
   const prompt=`Kamu membuat gerakan (motion) untuk karakter Live2D dari deskripsi user.
 Permintaan user: "${desc}"
-HANYA boleh memakai track: ax(kepala kiri/kanan ±30), ay(atas/bawah ±30), bodyZ(miring ±30), bodyX/Y(geser ±30), ex/ey(bola mata -1..1), mouthForm(-1..1)
-JANGAN menyebut Param... Aturan: maksimal 4 track, 6 keyframe per track, t mulai 0, durasi 0.6..3s, gerakan pulang ke 0 di keyframe terakhir.
-Balas JSON: { "id": "snake_case", "name": "Nama", "description": "satu kalimat", "tags": ["2-4 tag"], "duration": 1.4, "emotionCompatibility": {"<emosi>":0..1}, "tracks": [{ "target": "ay", "keys": [{ "t":0,"v":0 },{"t":0.4,"v":8},{"t":1.4,"v":0}] }] }
-Emosi HANYA: [${emotions.join(", ")}]
-KEMBALIKAN HANYA JSON tanpa markdown.`;
+
+Kamu HANYA boleh memakai nama track berikut. Ini nama PERAN, bukan nama parameter
+model — klien yang akan menerjemahkannya ke parameter rig yang sesuai:
+ax    = kepala kiri(-)/kanan(+), derajat, batas ±30
+ay    = kepala atas(-)/bawah(+), derajat, batas ±30
+bodyZ = badan miring, derajat, batas ±30
+bodyX = badan geser kiri/kanan, derajat, batas ±30
+bodyY = badan naik/turun, derajat, batas ±30
+ex    = bola mata kiri(-)/kanan(+), −1..1
+ey    = bola mata atas(-)/bawah(+), −1..1
+mouthForm = bentuk mulut, −1..1
+
+JANGAN menyebut nama parameter model seperti ParamAngleX atau ParamHairFront —
+kamu tidak tahu nama parameter rig ini dan menebaknya akan ditolak.
+
+Aturan:
+- Maksimal 4 track, maksimal 6 keyframe per track.
+- t dalam detik, mulai 0, tidak melebihi durasi.
+- Durasi 0.6 sampai 3 detik.
+- Gerakan yang bagus PULANG ke 0 di keyframe terakhir supaya tidak nyangkut.
+- Nilai realistis: ±5..15 derajat untuk kepala, ±0.2..0.6 untuk mata.
+
+Balas JSON persis format ini:
+{
+  "id": "nama_id_snake_case",
+  "name": "Nama Singkat",
+  "description": "satu kalimat bahasa Indonesia",
+  "tags": ["dua-empat tag"],
+  "duration": 1.4,
+  "emotionCompatibility": { "<emosi>": 0.0-1.0 },
+  "tracks": [
+    { "target": "ay", "keys": [{ "t": 0, "v": 0 }, { "t": 0.4, "v": 8 }, { "t": 1.4, "v": 0 }] }
+  ]
+}
+Emosi yang boleh dipakai HANYA: [${emotions.join(", ")}]
+KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
   try{
     const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=null; try{parsed=JSON.parse(clean);}catch{ const mm=clean.match(/\{[\s\S]*\}/); if(mm) try{parsed=JSON.parse(mm[0]);}catch{}}
@@ -459,8 +592,8 @@ function handleMotionTaxonomy(req:Request):Response{
     (function walk(d:string,rel:string){ for(const e of readdirSync(d,{withFileTypes:true})){ const full=join(d,e.name); const r=rel?rel+"/"+e.name:e.name; if(e.isDirectory()) walk(full,r); else if(/\.motion3\.json$/i.test(e.name)) clips.push({file:r,abs:full}); } })(dir,"");
     const groupOf:Record<string,{group:string;index:number}>= {};
     try{ const m3=findModel3(dir); if(m3){ const j=JSON.parse(readFileSync(m3,"utf8")); const motions=(j.FileReferences&&j.FileReferences.Motions)||{}; const m3dir=dirname(m3); for(const g in motions){ (motions[g]||[]).forEach((entry:any,idx:number)=>{ if(!entry||!entry.File) return; const abs=resolve(m3dir,entry.File); groupOf[abs]={group:g,index:idx}; }); } } }catch{}
-    // dynamic import taxonomy if available
-    let taxo:any=null; try{ taxo=require(join(ROOT,"../../js/motion-taxonomy.js")); }catch{ try{ taxo=require("../../../live2d-agent/js/motion-taxonomy.js"); }catch{ taxo=null; } }
+    // taxonomy is a v2-owned module imported at the top of this file
+    const taxo:any = MotionTaxonomy;
     let roleMap:any=null;
     try{ const cdi3Path=findCdi3(dir); if(cdi3Path && taxo?.buildRoleMap){ const built=taxo.buildRoleMap(JSON.parse(readFileSync(cdi3Path,"utf8"))); roleMap=built.map; } }catch{}
     const input:any[]=[];
@@ -554,28 +687,29 @@ function handleMotionsDelete(req:Request):Response{
   }catch(e:any){ return json({error:e.message},400); }
 }
 
-// legacy wrappers for servercompat (handleAPI expects them)
-async function handleListMotionsLegacy(req:Request):Promise<Response>{ return handleListMotions(req); }
-async function handleSaveMotion(req:Request):Promise<Response>{ return handleMotionsPost(req); }
-function handleDeleteMotion(pathStr:string):Response{
-  const id=decodeURIComponent(pathStr.split("/api/motions/")[1]||""); const file=motionFileFor("default",id);
-  try{ if(existsSync(file)) unlinkSync(file); return json({ok:true}); }catch(e:any){ return json({error:e.message},500); }
-}
-function handleListModelsLegacy():Response{ return handleListModels(); }
-function handleModelInfo(pathStr:string):Response{ const req=new Request("http://x"+pathStr); return handleModelPath(req); }
-
 // ── start server (only when run directly, not when imported for type-check) ─
 export { handleAPI, serveStatic, config };
 let server: ReturnType<typeof Bun.serve> | null = null;
 if (import.meta.main) {
 server = Bun.serve({
   port: PORT,
+  // Default bind loopback seperti v1: server ini memegang apiKey plaintext di
+  // config — tidak boleh telanjang ke LAN. Set HOST=0.0.0.0 bila memang mau
+  // diakses dari jaringan (frontend pakai location.origin, jadi tetap jalan).
+  hostname: process.env.HOST || "127.0.0.1",
   async fetch(req){
     if(req.method==="OPTIONS") return cors(new Response(null,{status:204}));
     const url=new URL(req.url); let pathname=url.pathname;
     // api first
-    const apiResp=await handleAPI(req);
-    if(apiResp) return apiResp;
+    try{
+      const apiResp=await handleAPI(req);
+      if(apiResp) return apiResp;
+    }catch(e:any){
+      if(e instanceof BodyTooLargeError) return json({error:e.message},413);
+      throw e;
+    }
+    // Unknown /api/* → 404 JSON, BUKAN SPA fallback (v1 semantics)
+    if(pathname.startsWith("/api/")) return json({error:"not found"},404);
     if(pathname==="/") pathname="/index.html";
     const staticResp=serveStatic(pathname);
     if(staticResp) return staticResp;

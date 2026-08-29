@@ -68,4 +68,10 @@ export class MotionRegistry {
   markPlayed(id: string, now: number): void {
     const a=this.byId.get(id); if(!a||!a.cooldown) return; this.cooldownUntil.set(id,(now||0)+a.cooldown);
   }
+
+  // Factory facade so the proven engine (static/js/app.js) can keep calling
+  // MotionRegistry.createRegistry() exactly as it did with the legacy UMD module.
+  static createRegistry(): MotionRegistry {
+    return new MotionRegistry();
+  }
 }

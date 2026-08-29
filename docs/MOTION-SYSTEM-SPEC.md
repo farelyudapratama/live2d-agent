@@ -12,9 +12,9 @@
 src/client/animation/motion-dsl.ts        Format Motion Asset + evaluator keyframe + sanitize
 src/client/animation/motion-registry.ts   Registry 3 sumber gerakan
 src/client/animation/motion-runtime.ts    Satu-satunya pemutar animasi (scheduler + blending)
+src/client/engine/motion-taxonomy.ts      Klasifikasi klip .motion3.json (dipakai server & bundle)
 src/client/agent/brain.ts                 AI Motion Director (prompt, directive, arbitrase)
 static/js/motion-editor.js                UI Motion Studio (timeline, metadata, preview)
-static/js/motion-taxonomy.js              Klasifikasi klip .motion3.json
 static/js/app.js                          Bridge runtime ↔ render loop ↔ state.aiPose
 POST /api/motions, /api/motions/analyze, /api/motions/generate   (src/server/index.ts)
 ```

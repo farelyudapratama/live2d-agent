@@ -86,8 +86,8 @@ sebagai tengah membuat kepalanya miring permanen.
 |---|---|
 | `mapRoles()`, `pokeRole*`, resolusi role, `inspectModel()` | `static/js/app.js` (port 1:1 dari v1 — **belum** di-port ke TS) |
 | Pipeline motion (evaluator, sanitize, bounds) | `src/client/animation/motion-dsl.ts` → `static/js/bundle.js` |
+| Klasifikasi klip native (kurva + cdi3 + name-hint) | `src/client/engine/motion-taxonomy.ts` (server & bundle) |
 | Adopsi `.exp3` yatim (`discoverExpressions`) | `src/server/index.ts` |
-| Taxonomy klip native | `static/js/motion-taxonomy.js` (port 1:1 dari v1) |
 
 Aturan model-agnostic berlaku ke SEMUA lokasi itu — termasuk file TS baru: jangan
 pernah memasukkan nama model, id `Param…`, atau range spesifik ke

@@ -28,12 +28,14 @@ HOST=0.0.0.0 bun run src/server/index.ts  # ekspos ke LAN (default loopback!)
 | Server (API, LLM proxy, static, upload) | `server.js` 1.945 baris | `src/server/index.ts` (729) + `src/shared/{config,llm-client,types}.ts` (505) | ✅ rewrite TS penuh |
 | Otak agent (prompt, directive, proaktif) | `agent.js` 840 baris | `src/client/agent/{brain,directive-parser}.ts` (970) | ✅ rewrite TS penuh |
 | Motion core (DSL, registry, runtime, easing) | `js/motion-{dsl,registry,runtime}.js` 856 baris | `src/client/animation/*.ts` (734) → bundle | ✅ rewrite TS penuh |
+| Motion taxonomy | `js/motion-taxonomy.js` 555 baris | `src/client/engine/motion-taxonomy.ts` (tahap 2 dimulai) | ✅ port TS (dipakai server & bundle) |
 | Engine/UI (render loop, chat, panel, sheet) | `js/app.js` 6.339 baris | `static/js/app.js` **identik isinya** (beda line-ending saja) | ⬜ legacy by design |
 | Motion Studio UI | `js/motion-editor.js` 1.101 baris | `static/js/motion-editor.js` identik | ⬜ legacy by design |
 | Webcam presence | `js/camera-presence.js` 216 baris | `static/js/camera-presence.js` identik | ⬜ legacy by design |
-| Motion taxonomy | `js/motion-taxonomy.js` 555 baris | `static/js/motion-taxonomy.js` identik | ⬜ legacy by design |
 
-Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (server, otak, motion). UI dipertahankan byte-faithful supaya paritas bisa diverifikasi dengan `diff` — dan sistem bridge `window.*` membuat keduanya satu aplikasi, bukan dua sistem. Melanjutkan port `app.js` ke TS adalah tahap 2 yang belum dimulai; guard suite v1 (lihat [Test](#-test)) wajib ikut pindah saat itu terjadi.
+Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (server, otak, motion, taxonomy). UI dipertahankan byte-faithful supaya paritas bisa diverifikasi dengan `diff` — dan sistem bridge `window.*` membuat keduanya satu aplikasi, bukan dua sistem.
+
+**Titik berhenti rewrite (keputusan final):** rewrite dinyatakan selesai — bukan karena semua baris sudah TS, tapi karena nilai porting selanjutnya sudah mengendap. Sisa legacy mengikuti aturan **"port saat disentuh"**: bagian yang perlu diubah suatu hari di-port potongannya di commit yang sama dengan perubahannya, bersama guard-nya. Dua area logika yang bernilai port bila kelak disentuh: **sistem sheet** (`migrateSheet`/`resolvePresets` — guard 220 assertion siap di `test/legacy/`) dan **role mapping + inspect model** (`mapRoles`/`pokeRole*` — guard 84 assertion). Chat UI/panel DOM di `app.js`, `motion-editor.js`, dan `camera-presence.js` **sengaja tidak** direncanakan port (lihat `docs/UI-CONSTRAINTS.md`). Pekerjaan berikutnya yang benar-benar menambah nilai adalah fitur, bukan refactor: **STT 2 arah** dan **lip-sync presisi dari audio** (⬜ di tabel Fitur).
 
 ## 🎮 Fitur & Status
 
@@ -72,15 +74,16 @@ Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (
 src/server/index.ts        # Bun.serve (loopback default) — 27 route API + static
 src/shared/{types,config,llm-client}.ts
 src/client/animation/{easing,motion-dsl,motion-registry,motion-runtime}.ts  # → bundle.js
+src/client/engine/motion-taxonomy.ts   # klasifikasi klip native — server & bundle
 src/client/agent/{directive-parser,brain}.ts   # otak agent → window.__agent
 src/build.ts               # bundle-entry.ts → static/js/bundle.js (IIFE, dimuat SEBELUM app.js)
 static/{index.html,css/app.css,js/app.js}      # engine/UI legacy (identik v1, punya render loop)
-static/js/{bundle.js,motion-editor.js,camera-presence.js,motion-taxonomy.js}
+static/js/{bundle.js,motion-editor.js,camera-presence.js}
 data/{config.json,sheets/,motions/,model/}     # data user — TIDAK disajikan sembarangan
 docs/                      # panduan mengikat (lihat bawah)
 ```
 
-Urutan muat `index.html`: `motion-taxonomy.js` → **`bundle.js`** → `app.js` → `motion-editor.js` → `camera-presence.js`. `bundle-entry.ts` memasang `window.MotionDSL / MotionRegistry / MotionRuntime / __agent`; `app.js` mengonsumsinya persis seperti dulu mengonsumsi 4 script v1 yang kini tidak ada lagi.
+Urutan muat `index.html`: **`bundle.js`** (Taxonomy+DSL+Registry+Runtime+brain) → `app.js` → `motion-editor.js` → `camera-presence.js`. `bundle-entry.ts` memasang `window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent`; `app.js` mengonsumsinya persis seperti dulu mengonsumsi script v1 yang kini sudah seluruhnya diganti TS.
 
 LLM: `browser → POST /api/chat → llmWithFallback (active dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text) → MotionRuntime`.
 
@@ -112,13 +115,13 @@ Catatan QA: `bun test` memanggil dispatcher langsung — endpoint yang menyentuh
 ## 🧪 Test
 
 ```bash
-bun run test         # SEMUA: 95 unit test (bun test) + 428 guard legacy (6 suite)
-bun run test:unit    # hanya unit test TS (parser, DSL/registry, dispatcher server)
+bun run test         # SEMUA: 140 unit test (bun test) + 381 guard legacy (5 suite)
+bun run test:unit    # hanya unit test TS (parser, DSL/registry/taxonomy, dispatcher server)
 bun run test:guards  # hanya guard legacy
 bun run build && bunx tsc --noEmit   # build + type-check (keduanya bersih)
 ```
 
-Guard legacy (`test/legacy/`) adalah port dari suite v1 paling bernilai: role-mapping & param-scaling (model-agnostic), sheet schema v4 (220 assertion, mengekstrak `migrateSheet()` dari `app.js` asli via `vm`), exp3-adoption (endpoint diuji in-process via `handleAPI` dengan model sintetis yang dihapus otomatis), api-origin, motion-taxonomy. Tidak ada guard yang memanggil jaringan. Suite yang belum dipindah: motion-dsl/registry/runtime v1 — file `js/motion-*.js` sudah tidak ada di v2 (DSL/registry terkunci test TS; runtime guard menyusul saat tahap 2). Saat `app.js` di-port ke TS (tahap 2), guard-guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
+Guard legacy (`test/legacy/`) adalah port dari suite v1 paling bernilai: role-mapping & param-scaling (model-agnostic), sheet schema v4 (220 assertion, mengekstrak `migrateSheet()` dari `app.js` asli via `vm`), exp3-adoption (endpoint diuji in-process via `handleAPI` dengan model sintetis yang dihapus otomatis), api-origin. Tidak ada guard yang memanggil jaringan. Suite taxonomy v1 sudah **lulus** — konversinya kini `test/motion-taxonomy.test.ts` yang mengimpor modul TS langsung. Suite yang belum dipindah: motion-dsl/registry/runtime v1 — file `js/motion-*.js` sudah tidak ada di v2 (DSL/registry terkunci test TS; runtime guard menyusul). Saat `app.js` di-port ke TS, guard-guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 
 ## 📚 Dokumentasi (lokal, mengikat)
 

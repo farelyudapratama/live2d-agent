@@ -609,16 +609,12 @@
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>
   <script src="js/pixi-live2d-0.4.0.js"></script>
-  <!-- Semantic motion-clip classifier (verb taxonomy + emotion gating).
-       Must load BEFORE app.js: app.js reads window.MotionTaxonomy at startup to
-       decide which of the model's own clips are safe to play for a given
-       emotion. Without it app.js silently falls back to synthetic gestures. -->
-  <script src="js/motion-taxonomy.js"></script>
-  <!-- TS client core (source-of-truth): DSL → Registry → Runtime installed as
-       window.MotionDSL / MotionRegistry / MotionRuntime, and the agent brain as
-       window.__agent. Built from src/client/* by `bun run build`. Classic script
+  <!-- TS client core (source-of-truth): Taxonomy → DSL → Registry → Runtime installed as
+       window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime, and the agent
+       brain as window.__agent. Built from src/client/* by `bun run build`. Classic script
        (iife) so it runs in document order BEFORE app.js, exactly like the old
-       motion-*.js. app.js keeps owning the model loader, render loop and UI. -->
+       motion-*.js (motion-taxonomy.js dihapus dari daftar ini — sudah ada di bundle).
+       app.js keeps owning the model loader, render loop and UI. -->
   <script src="js/bundle.js"></script>
   <script src="js/app.js"></script>
   <!-- Motion Studio UI: TERISOLASI (CONSTRAINTS §9). Dimuat SETELAH app.js

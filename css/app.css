@@ -872,4 +872,140 @@ input[type="range"] {
 .param-sliders .pn-row { gap: 2px; }
 .param-sliders .pn-input { display: none; } /* editor sliders are pose-only, no note field */
 
+/* ===== Motion Studio (aditif — memakai .pn-popup, .mini-btn, .cfg-box yang ada) ===== */
+/* Lebih lebar dari popup lain: timeline butuh ruang horizontal supaya jarak
+   antar keyframe masih terbaca. Tetap dibatasi viewport agar model tak tertutup. */
+.ms-popup { width: 460px; }
+.ms-body { flex: 1 1 auto; overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.ms-lib-row { display: flex; gap: 6px; align-items: center; }
+.ms-lib-row select {
+  flex: 1 1 auto; min-width: 0; padding: 5px 8px; font-size: 12px;
+  background: rgba(0,0,0,0.35); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.mini-btn.ms-icon { width: 30px; padding: 5px 0; font-size: 13px; text-align: center; flex: 0 0 auto; }
+.mini-btn.ms-small { width: auto; padding: 5px 12px; font-size: 11px; }
+
+/* Panel daftar parameter model — sumber track (Raw Parameter Mode) */
+.ms-params > summary { cursor: pointer; font-size: 12px; color: var(--accent); padding: 4px 0; }
+.ms-param-search-row { display: flex; gap: 6px; margin: 4px 0 6px; }
+.ms-param-search-row input[type=search], .ms-param-search-row select {
+  flex: 1 1 auto; min-width: 0; padding: 5px 8px; font-size: 11px;
+  background: rgba(0,0,0,0.35); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.ms-param-search-row select { flex: 0 0 40%; }
+.ms-param-list {
+  max-height: 200px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(255,255,255,0.015); padding: 4px;
+}
+.ms-param-item {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 4px 6px; font-size: 11px; text-align: left; cursor: pointer;
+  background: transparent; color: var(--text);
+  border: 1px solid transparent; border-radius: 6px;
+}
+.ms-param-item:hover { background: rgba(124,111,255,0.18); border-color: var(--border); }
+/* Parameter yang sudah punya track: jelas berbeda supaya user tidak
+   menambahkannya dua kali pada rig dengan ratusan parameter. */
+.ms-param-item.added { color: var(--accent); border-color: var(--accent); }
+.ms-param-item.added::after { content: '✓'; margin-left: auto; font-size: 10px; }
+.ms-param-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-param-group { flex: 0 0 auto; font-size: 9px; color: var(--text-dim); }
+
+.ms-transport { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ms-loop { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+.ms-loop input { accent-color: var(--accent); }
+.ms-time { margin-left: auto; font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.ms-timeline-wrap {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(255,255,255,0.015); padding: 6px 8px 8px;
+}
+/* Ruler & scrub harus sejajar PERSIS dengan lane, kalau tidak posisi keyframe
+   yang dibaca user dari ruler tidak cocok dengan waktu sebenarnya.
+   Kiri: lebar nama track (92) + gap (6) = 98. Kanan: tombol hapus (18) + gap (6) = 24. */
+.ms-ruler {
+  position: relative; height: 14px; margin: 0 24px 0 98px;
+  font-size: 9px; color: var(--text-dim); border-bottom: 1px solid var(--border);
+}
+.ms-ruler span { position: absolute; top: 0; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.ms-tracks { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.ms-track { display: flex; align-items: center; gap: 6px; }
+/* Nama track = id/label parameter mentah, bisa panjang → beri ruang lebih
+   dan tampilkan penuh lewat title saat terpotong. */
+.ms-track-name {
+  flex: 0 0 92px; font-size: 10px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Parameter yang TIDAK ada di model yang sedang dimuat: track tetap terlihat
+   (datanya tidak hilang) tapi jelas mati, dan runtime melewatinya. */
+.ms-track-name.off { opacity: 0.45; text-decoration: line-through; }
+.ms-track-lane.off { background: rgba(255,255,255,0.03); }
+.ms-track-lane.off .ms-key { background: var(--text-dim); }
+.ms-track-x {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: 0;
+  font-size: 10px; line-height: 1; cursor: pointer;
+  background: transparent; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.ms-track-x:hover { color: #ff7a7a; border-color: #ff7a7a; }
+/* Key stepped digambar kotak, supaya bentuk kurva terbaca dari timeline saja. */
+.ms-key.stepped { border-radius: 2px; }
+.ms-range-hint { font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.ms-track-lane {
+  position: relative; flex: 1 1 auto; height: 20px; cursor: crosshair;
+  border-radius: 4px; background: rgba(124,111,255,0.07);
+}
+.ms-track-lane:hover { background: rgba(124,111,255,0.13); }
+.ms-key {
+  position: absolute; top: 50%; width: 9px; height: 9px; margin: -5px 0 0 -5px;
+  border-radius: 50%; background: var(--accent); border: 1px solid rgba(255,255,255,0.55);
+  cursor: pointer;
+}
+.ms-key.sel { background: var(--pink); box-shadow: 0 0 0 3px rgba(255,126,179,0.3); }
+.ms-playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--pink); pointer-events: none; }
+.ms-scrub-row { margin: 6px 24px 0 98px; }
+.ms-scrub-row input[type=range] { width: 100%; accent-color: var(--pink); }
+
+.ms-emo-list { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px; }
+.ms-emo-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.ms-emo-row .ms-emo-name { flex: 0 0 84px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+.ms-emo-row input[type=range] { flex: 1 1 auto; accent-color: var(--accent); }
+.ms-emo-row output { flex: 0 0 26px; font-size: 10px; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.cfg-row.ms-col { flex-direction: column; align-items: stretch; gap: 4px; }
+.cfg-row.ms-col textarea {
+  width: 100%; padding: 6px 8px; font-size: 11px; resize: vertical;
+  background: rgba(0,0,0,0.35); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; font-family: inherit;
+}
+
+.ms-meta > summary, .ms-advanced > summary {
+  cursor: pointer; font-size: 12px; color: var(--accent); padding: 4px 0;
+}
+.ms-role-map { display: flex; flex-direction: column; gap: 2px; font-size: 10px; }
+.ms-role-map div { display: flex; justify-content: space-between; gap: 8px; }
+.ms-role-map .ms-role-id {
+  color: var(--text-dim);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+.ms-role-map .ms-role-missing { color: #ff7a7a; }
+
+.ms-footer {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 12px; border-top: 1px solid var(--border); background: rgba(10,8,24,0.4);
+}
+.motion-card {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 11px; background: rgba(255,255,255,0.02);
+}
+.motion-card .mc-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.motion-card .mc-src { font-size: 9px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
+.motion-card .mc-src.user { color: var(--accent); border-color: var(--accent); }
+
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

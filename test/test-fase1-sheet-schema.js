@@ -351,11 +351,16 @@ ok('applyModelConfig pushes idle into state',
   /state\.idleEnabled = c\.idle/.test(appSrc));
 ok('config is applied during model load',
   /applyModelConfig\(loadModelConfigLocal\(\)\)/.test(appSrc));
+// Nama & bentuk kode berubah sejak assertion ini ditulis: pemanggilan
+// invalidateCapabilityProfile() kini dibungkus try/catch (agar agent.js yang
+// belum termuat tidak menggagalkan Save). Invariannya sama — localStorage
+// ditulis SEBELUM jaringan, dan cache kapabilitas dibatalkan setelah simpan
+// sukses — jadi yang dicek adalah urutannya, bukan teks persisnya.
 ok('saveModelConfig writes localStorage before the network',
   appSrc.indexOf('[config] localStorage write failed') <
-  appSrc.indexOf("invalidateCapabilityProfile();\n    return merged;"));
+  appSrc.indexOf("body: JSON.stringify({ modelName: key, sheet: sheet })"));
 ok('saveModelConfig invalidates the capability cache',
-  /invalidateCapabilityProfile\(\);\s*\n\s*return merged;/.test(appSrc));
+  /invalidateCapabilityProfile\(\);[\s\S]{0,40}\n\s*return merged;/.test(appSrc));
 ok('the config panel is re-synced on model swap',
   /refreshConfigForm\(\)/.test(appSrc));
 

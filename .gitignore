@@ -22,6 +22,9 @@ js/agent.js
 
 # ── Generated data / agent tooling (not core source) ──
 sheets/
+# Motion Assets buatan user dari Motion Studio — data per-model milik user,
+# satu kelas dengan sheets/, bukan source code.
+motions/
 .agents/
 .claude/
 skills-lock.json

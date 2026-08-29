@@ -65,7 +65,12 @@ ok('buildSystemPrompt extracted', !!bspSrc, bspSrc ? bspSrc.length + ' chars' : 
 if (bspSrc) {
   // The function reads the module-global `capProfile`. We provide it via a
   // closure wrapper so we can drive it directly without the full IIFE.
-  const harness = bspSrc + '\nglobalThis.__bsp = buildSystemPrompt;';
+  // buildSystemPrompt() also calls motionCatalogBlock() (Motion Studio catalog),
+  // so that helper is extracted into the same sandbox rather than stubbed —
+  // stubbing it would hide a real break in the prompt.
+  const mcbSrc = sliceFn(agentSrc, 'motionCatalogBlock');
+  ok('motionCatalogBlock extracted', !!mcbSrc);
+  const harness = (mcbSrc || '') + '\n' + bspSrc + '\nglobalThis.__bsp = buildSystemPrompt;';
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     globalThis: {},
@@ -199,11 +204,17 @@ ok('tick() suppresses fidget when state.frozen (no fighting the slider)',
   /const frozen = !!state\.frozen;/.test(appSrc)
   && /const fx = frozen \? 0 :/.test(appSrc)
   && /const fy = frozen \? 0 :/.test(appSrc));
-ok('freezeForDrag flips aiLock (pauses mouse-follow) + starts 10s timer',
-  /function freezeForDrag\(\)/.test(appSrc)
-  && /remaining = 10;/.test(appSrc));
+// Fungsi freeze ini dinamai freezeForDrag saat assertion ini ditulis; sekarang
+// freezeModelForEdit(statusEl, persistent) — satu freeze dipakai bersama oleh
+// popup catatan parameter, editor preset, dan Motion Studio. Perilakunya sama:
+// aiLock dinyalakan (mouse-follow berhenti) + hitungan 10 detik untuk mode
+// non-persistent.
+ok('freezeModelForEdit flips aiLock (pauses mouse-follow) + starts 10s timer',
+  /function freezeModelForEdit\(/.test(appSrc)
+  && /remaining = 10;/.test(appSrc)
+  && /if \(!state\.aiLock\) \{ state\.aiLock = true; \}/.test(appSrc));
 ok('unfreeze restores idle smoothly (aiLock=false, eases from current)',
-  /function unfreeze\(\)/.test(appSrc) && /state\.aiLock = false;/.test(appSrc));
+  /function unfreezeModelForEdit\(\)/.test(appSrc) && /state\.aiLock = false;/.test(appSrc));
 ok('popup close releases sticky overrides (model returns to rig)',
   /for \(const id of pnStuckIds\)/.test(appSrc) && /delete state\.overrides\[id\]/.test(appSrc));
 

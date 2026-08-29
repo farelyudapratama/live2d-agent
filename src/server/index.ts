@@ -183,7 +183,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
   // config
   if(method==="GET" && path==="/api/config"){
     const cfg=config.load(); const conns=cfg.connections.map(c=>{ const o={...c} as any; if(o.apiKey && !o.apiKey.startsWith("MASUKKAN")) o.apiKey=config.maskKey(o.apiKey); return o; });
-    return json({ activeId:cfg.activeId, connections:conns, tts:cfg.tts||{}, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{} });
+    return json({ activeId:cfg.activeId, connections:conns, tts:cfg.tts||{}, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{} });
   }
   if(method==="POST" && path==="/api/config") return handleConfigPost(req);
   if(method==="POST" && path==="/api/test") return handleTestConnection(req);

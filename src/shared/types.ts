@@ -34,6 +34,7 @@ export interface Config {
   events: EventConfig;
   camera: CameraConfig;
   motion: MotionConfig;
+  stt: SttConfig;
 }
 
 export interface EventConfig {
@@ -60,6 +61,16 @@ export interface CameraConfig {
 export interface MotionConfig {
   enabled: boolean;
   gain: number;
+}
+
+// STT dua arah — Whisper lokal di browser (push-to-talk, audio tidak di-upload).
+export interface SttConfig {
+  model: string;       // repo HF, mis. Xenova/whisper-base | Xenova/whisper-small
+  language: string;    // "indonesian" | "auto" | kode bahasa Whisper lain
+  autoSend: boolean;   // true = kirim otomatis; false = isi input untuk direview
+  silenceMs: number;   // auto-stop setelah sekian ms senyap (sempat bicara)
+  maxMs: number;       // batas keras durasi rekaman
+  device: string;      // "" = auto (webgpu → wasm) | "wasm" = paksa CPU
 }
 
 // ── Model / Sheet ──────────────────────────────────────────────

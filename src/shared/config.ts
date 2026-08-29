@@ -29,6 +29,16 @@ const DEFAULT_CONFIG: Config = {
     moodStableTicks: 2,
   },
   motion: { enabled: false, gain: 1.5 },
+  // STT dua arah (push-to-talk, Whisper lokal di browser — audio tidak di-upload).
+  // device "" = auto (webgpu bila ada, lalu wasm); language "auto" = deteksi sendiri.
+  stt: {
+    model: "Xenova/whisper-base",
+    language: "indonesian",
+    autoSend: true,
+    silenceMs: 1500,
+    maxMs: 30_000,
+    device: "",
+  },
 };
 
 export const KNOWN_EVENT_KEYS = ["idleSpeak","idleMs","idleRepeatMs","awaySpeak","returnSpeak","awayHiddenMs","quietMs"];
@@ -87,7 +97,9 @@ export class ConfigManager {
   load(): Config {
     try {
       const base = JSON.parse(readFileSync(this.path, "utf8"));
-      this.cache = { ...base, ...this.runtimeOverrides };
+      // Section yang belum ada di file user (mis. `stt` pada config lama) diisi
+      // dari default; section yang sudah ada tetap milik user utuh.
+      this.cache = { ...DEFAULT_CONFIG, ...base, ...this.runtimeOverrides };
     } catch {
       this.cache = { ...DEFAULT_CONFIG, ...this.runtimeOverrides } as Config;
     }

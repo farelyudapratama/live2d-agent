@@ -35,7 +35,7 @@ HOST=0.0.0.0 bun run src/server/index.ts  # ekspos ke LAN (default loopback!)
 
 Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (server, otak, motion, taxonomy). UI dipertahankan byte-faithful supaya paritas bisa diverifikasi dengan `diff` — dan sistem bridge `window.*` membuat keduanya satu aplikasi, bukan dua sistem.
 
-**Titik berhenti rewrite (keputusan final):** rewrite dinyatakan selesai — bukan karena semua baris sudah TS, tapi karena nilai porting selanjutnya sudah mengendap. Sisa legacy mengikuti aturan **"port saat disentuh"**: bagian yang perlu diubah suatu hari di-port potongannya di commit yang sama dengan perubahannya, bersama guard-nya. Dua area logika yang bernilai port bila kelak disentuh: **sistem sheet** (`migrateSheet`/`resolvePresets` — guard 220 assertion siap di `test/legacy/`) dan **role mapping + inspect model** (`mapRoles`/`pokeRole*` — guard 84 assertion). Chat UI/panel DOM di `app.js`, `motion-editor.js`, dan `camera-presence.js` **sengaja tidak** direncanakan port (lihat `docs/UI-CONSTRAINTS.md`). Pekerjaan berikutnya yang benar-benar menambah nilai adalah fitur, bukan refactor: **STT 2 arah** dan **lip-sync presisi dari audio** (⬜ di tabel Fitur).
+**Titik berhenti rewrite (keputusan final):** rewrite dinyatakan selesai — bukan karena semua baris sudah TS, tapi karena nilai porting selanjutnya sudah mengendap. Sisa legacy mengikuti aturan **"port saat disentuh"**: bagian yang perlu diubah suatu hari di-port potongannya di commit yang sama dengan perubahannya, bersama guard-nya. Dua area logika yang bernilai port bila kelak disentuh: **sistem sheet** (`migrateSheet`/`resolvePresets` — guard 220 assertion siap di `test/legacy/`) dan **role mapping + inspect model** (`mapRoles`/`pokeRole*` — guard 84 assertion). Chat UI/panel DOM di `app.js`, `motion-editor.js`, dan `camera-presence.js` **sengaja tidak** direncanakan port (lihat `docs/UI-CONSTRAINTS.md`). Pekerjaan berikutnya yang benar-benar menambah nilai adalah fitur — STT 2 arah sudah datang (lihat 🎤 di atas); sisa: **lip-sync presisi dari audio** (⬜).
 
 ## 🎮 Fitur & Status
 
@@ -62,11 +62,16 @@ Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (
 | Motion dipakai AI | ✅ | `[MOTION:id]` divalidasi runtime & server |
 | ✨ Analisa AI motion | ✅ | `POST /api/motions/analyze` — butuh persetujuan user |
 | 🪄 Buat motion dari teks | ✅ | `POST /api/motions/generate` — draft, di-preview lalu disetujui |
-| STT mic (ngobrol 2 arah) | ⬜ | belum ada di v1, belum ada di v2 |
+| 🎤 STT mic (ngobrol 2 arah) | ✅ | push-to-talk — Whisper lokal di browser (transformers.js); audio tidak pernah di-upload |
 | Lip-sync presisi (dari audio) | ⬜ | masih timer-osilasi di kedua versi |
 
 ### Interaksi
 - **Gerak mouse** → mata + kepala + badan ikut · **Drag** → geser posisi · **Scroll** → zoom · **Double-click** → reset framing
+
+### 🎤 Ngobrol 2 arah (STT)
+Klik **🎤** di panel chat → bicara → berhenti otomatis saat senyap (atau klik lagi) → teks masuk chat dan terkirim. Push-to-talk murni: **tidak ada perekaman latar**, dan memulai rekam **ditolak saat karakter sedang bicara TTS** (anti-echo — kalau tidak, dia mengobrol dengan dirinya sendiri). Inferensi 100% lokal di browser; audio tidak pernah di-upload. Model Whisper diunduh dari CDN **saat pertama dipakai** (butuh internet sekali, lalu ter-cache browser): default `Xenova/whisper-base` — untuk bahasa Indonesia yang lebih akurat ganti `stt.model` ke `Xenova/whisper-small` di `data/config.json` (lebih besar, ±250 MB). `stt.autoSend: false` bila mau review teks sebelum kirim. Bagian murni (RMS, resampler 16 kHz, auto-stop) diuji di `test/voice-input.test.ts`.
+
+Catatan arsitektur: fitur ini butuh **nol perubahan `app.js`** — semua hook yang dibutuhkan sudah disiapkan v1 (`#btn-mic` yang dulu disabled, `window.__l2dDebug.state.talking`, kirim via klik `#btn-bubble`).
 
 ## 🧠 Arsitektur
 
@@ -78,7 +83,7 @@ src/client/engine/motion-taxonomy.ts   # klasifikasi klip native — server & bu
 src/client/agent/{directive-parser,brain}.ts   # otak agent → window.__agent
 src/build.ts               # bundle-entry.ts → static/js/bundle.js (IIFE, dimuat SEBELUM app.js)
 static/{index.html,css/app.css,js/app.js}      # engine/UI legacy (identik v1, punya render loop)
-static/js/{bundle.js,motion-editor.js,camera-presence.js}
+static/js/{bundle.js,motion-editor.js,camera-presence.js,voice-input.js}
 data/{config.json,sheets/,motions/,model/}     # data user — TIDAK disajikan sembarangan
 docs/                      # panduan mengikat (lihat bawah)
 ```

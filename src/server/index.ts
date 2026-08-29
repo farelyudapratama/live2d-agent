@@ -9,11 +9,11 @@ import { sanitizeMotionAsset } from "../client/animation/motion-dsl";
 import { readdirSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from "fs";
 import { join, extname, dirname, relative, resolve, normalize, sep } from "path";
 import { execSync } from "child_process";
-// Motion taxonomy: v2's OWN copy (static/js/motion-taxonomy.js). No dependency on the
+// Motion taxonomy: modul TS milik v2 (src/client/engine/motion-taxonomy.ts),
+// dipakai bersama oleh server & bundle browser. No dependency on the
 // v1 sibling repo — the server must be self-contained.
-// @ts-ignore — modul JS polos tanpa file deklarasi tipe
-import * as MotionTaxonomyMod from "../../static/js/motion-taxonomy.js";
-const MotionTaxonomy: any = (MotionTaxonomyMod as any).default ?? MotionTaxonomyMod;
+// @ts-ignore — modul TS client, dipakai bareng oleh server & bundle browser
+import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 
 const PORT = Number(process.env.PORT) || 8310;
 const ROOT = import.meta.dir;

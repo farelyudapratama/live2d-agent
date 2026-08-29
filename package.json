@@ -1,0 +1,15 @@
+{
+  "name": "live2d-agent-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Live2D AI Agent — rewrite dengan arsitektur modular & TypeScript",
+  "scripts": {
+    "dev": "bun run src/server/index.ts",
+    "start": "bun run src/server/index.ts",
+    "build": "bun run src/build.ts",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "model": "lumine",
+  "generatedAt": "2026-08-27T06:00:14.420Z",
+  "clipCount": 1,
+  "byVerb": {
+    "neutral": [
+      "idle"
+    ]
+  },
+  "clips": [
+    {
+      "name": "idle",
+      "verb": "neutral",
+      "valence": "neutral",
+      "confidence": 0.35,
+      "duration": 9.983,
+      "evidence": "name hint \"neutral\"",
+      "group": null,
+      "index": null,
+      "file": "lumine/idle.motion3.json"
+    }
+  ],
+  "stats": {
+    "total": 1,
+    "curveClassified": 1,
+    "nameOnly": 0,
+    "unclassified": 0
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/config.json
+data/config.json.bak
+data/motions/
+data/model/
+# bundle is build output — keep app.js (legacy parity) tracked
+static/js/bundle.js
+*.tmp
+.DS_Store

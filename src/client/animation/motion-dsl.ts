@@ -21,7 +21,7 @@ export const FIELD_BOUNDS: Record<string, number> = {
   mouthOpen: 0.8, breath: 1,
 };
 
-const ROLE_ALIASES: Record<string, string> = {
+export const ROLE_ALIASES: Record<string, string> = {
   // original -> canonical (js/motion-dsl.js)
   angleX: "ax", angleY: "ay",
   eyeX: "ex", eyeY: "ey",
@@ -61,6 +61,7 @@ export function normalizeTarget(name: string): string | null {
 }
 
 function ease(t: number, mode: EasingMode): number { return easeFn(t, mode); }
+export { ease };
 
 // ── eval single track ────────────────────────────────────────────
 export function evalTrack(track: MotionTrack, t: number): number {
@@ -81,7 +82,7 @@ export function evalTrack(track: MotionTrack, t: number): number {
   return last.v;
 }
 
-function fieldCapability(field: string): string {
+export function fieldCapability(field: string): string {
   if (field === "ax" || field === "ay") return "head";
   if (field === "ex" || field === "ey") return "eyes";
   if (field === "mouthForm") return "mouth";
@@ -290,7 +291,7 @@ export function sanitizeMotionAsset(raw: any, opts?: any): { ok: true; asset: Mo
   return { ok: true, asset: asset as MotionAsset };
 }
 
-const ROLE_FOR_FIELD: Record<string, string> = {
+export const ROLE_FOR_FIELD: Record<string, string> = {
   ax: "angleX", ay: "angleY",
   ex: "eyeBallX", ey: "eyeBallY",
   bodyX: "bodyAngleX", bodyY: "bodyAngleY", bodyZ: "bodyAngleZ",

@@ -16,7 +16,7 @@ if %ERRORLEVEL% EQU 0 (
     if %ERRORLEVEL% NEQ 0 (
         echo   [!] Build gagal — lanjut pakai static/js/app.js legacy.
     ) else (
-        echo   [OK] Build -> static/js/bundle.js
+        echo   [OK] Build -^> static/js/bundle.js
     )
     echo   [2/3] Starting Bun server (http://127.0.0.1:8310)...
     echo   Tekan Ctrl+C untuk stop. Buka browser manual ke URL di atas jika tidak auto-open.

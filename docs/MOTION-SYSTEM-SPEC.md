@@ -250,9 +250,10 @@ Minimal: registry (register/get/remove/search/duplicate), parser (valid,
 invalid, missing fields, keyframe invalid, target asing), runtime
 (play/stop/blend/intensity/cooldown/priority/ownership), LLM (motion valid,
 ID asing, intensity invalid, format lama + baru), capability (full model,
-head-only, tanpa mata, tanpa body). Di v2: `bun test` (parser, DSL/registry,
-server-parity). Suite runtime/paritas v1 di `../live2d-agent/test/` tetap
-guard sampai dipindah.
+head-only, tanpa mata, tanpa body). Di v2: `bun run test` — unit TS
+(parser, DSL/registry, server-parity) + guard legacy `test/legacy/`
+(taxonomy 47 assertion; dsl/registry/runtime v1 tidak dipindah karena file
+`js/motion-*.js` sudah tidak ada — runtime guard menyusul saat tahap 2).
 
 # 30. Implementation Strategy (status v2)
 

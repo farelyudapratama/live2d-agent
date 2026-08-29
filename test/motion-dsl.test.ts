@@ -61,7 +61,9 @@ describe("evaluateAsset", () => {
       }],
     };
     const ev = evaluateAsset(asset, 0.5, 1);
-    expect(ev.roles.angleX).toBe(5);
+    expect(ev.roles.ax).toBe(5);
+    // alias SPEC dikanoniskan: tidak ada kunci duplikat gaya SPEC di roles
+    expect(ev.roles.angleX).toBeUndefined();
   });
 
   it("respects intensity scaling", () => {
@@ -78,7 +80,7 @@ describe("evaluateAsset", () => {
       }],
     };
     const ev = evaluateAsset(asset, 0.5, 0.5);
-    expect(ev.roles.angleX).toBe(5); // 10 * 0.5
+    expect(ev.roles.ax).toBe(5); // 10 * 0.5
   });
 
   it("clamps to field bounds", () => {
@@ -95,7 +97,7 @@ describe("evaluateAsset", () => {
       }],
     };
     const ev = evaluateAsset(asset, 1, 1);
-    expect(ev.roles.angleX).toBe(30); // clamped
+    expect(ev.roles.ax).toBe(30); // clamped
   });
 });
 

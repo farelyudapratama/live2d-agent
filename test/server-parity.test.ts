@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { sanitizeMotionAsset, FIELD_BOUNDS } from "../src/client/animation/motion-dsl";
+import { sanitizeMotionAsset, FIELD_BOUNDS, normalizeTarget } from "../src/client/animation/motion-dsl";
 import { mergeEventsIntoConfig, KNOWN_EVENT_KEYS } from "../src/shared/config";
 import { classifyError } from "../src/shared/llm-client";
 
@@ -10,8 +10,26 @@ describe("FIELD_BOUNDS parity with js/motion-dsl.js", () => {
     expect(FIELD_BOUNDS.ex).toBe(1);
     expect(FIELD_BOUNDS.mouthForm).toBe(1);
   });
-  it("supports v2 angleX alias", () => {
-    expect(FIELD_BOUNDS.angleX).toBe(30);
+  it("only canonical keys exist (v1 parity — no alias entries)", () => {
+    expect(FIELD_BOUNDS.angleX).toBeUndefined();
+    expect(FIELD_BOUNDS.mouthOpen).toBeUndefined();
+  });
+  it("SPEC-style alias names are canonicalized to internal fields (v1 parity)", () => {
+    expect(normalizeTarget("angleX")).toBe("ax");
+    expect(normalizeTarget("angleY")).toBe("ay");
+    expect(normalizeTarget("eyeX")).toBe("ex");
+    expect(normalizeTarget("eyeY")).toBe("ey");
+    expect(normalizeTarget("ax")).toBe("ax");
+    expect(normalizeTarget("bodyAngleX")).toBe(null);
+    expect(normalizeTarget("mouthOpen")).toBe(null);
+  });
+  it("sanitize canonicalizes alias target and clamps to bounds", () => {
+    const r = sanitizeMotionAsset({ id: "t", duration: 1, tracks: [{ target: "angleX", keys: [{ t: 0, v: 999 }] }] } as any, { requireTracks: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect((r.asset.tracks[0] as any).target).toBe("ax");
+      expect((r.asset.tracks[0] as any).keys[0].v).toBe(30);
+    }
   });
 });
 

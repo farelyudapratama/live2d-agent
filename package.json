@@ -7,7 +7,9 @@
     "dev": "bun run src/server/index.ts",
     "start": "bun run src/server/index.ts",
     "build": "bun run src/build.ts",
-    "test": "bun test"
+    "test": "bun test && bun run test/run-guards.js",
+    "test:unit": "bun test",
+    "test:guards": "bun run test/run-guards.js"
   },
   "engines": {
     "bun": ">=1.0"

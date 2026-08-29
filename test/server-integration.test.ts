@@ -2,10 +2,11 @@
  * server-integration.test.ts — prove the v2 server actually implements the API
  * contract the (legacy) static client depends on. We call the real dispatcher
  * (src/server/index.ts → handleAPI) with constructed Request objects — no socket,
- * no external LLM — so parity is verified by execution, not by reading prose.
+ * so parity is verified by execution, not by reading prose. Panggilan yang akan
+ * menyentuh LLM eksternal di-stub ke provider "mock" (lihat withMockLLM).
  */
 import { describe, it, expect } from "bun:test";
-import { handleAPI, serveStatic } from "../src/server/index";
+import { handleAPI, serveStatic, config } from "../src/server/index";
 
 const BASE = "http://localhost:8310";
 
@@ -16,6 +17,28 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
     init.body = JSON.stringify(body);
   }
   return handleAPI(new Request(BASE + path, init) as any);
+}
+
+/**
+ * Jalankan fn dengan LLM ter-stub ke provider "mock" — deterministik, tanpa
+ * jaringan. PENTING: llmWithFallback mem-persist connections (testStatus) di
+ * SETIAP panggilan, jadi saveConnections juga di-stub supaya test tidak
+ * pernah menulis data/config.json milik user. Override di-shadow di level
+ * instance (getter/method prototipe tetap utuh) dan dipulihkan di finally.
+ */
+async function withMockLLM<T>(fn: () => Promise<T>): Promise<T> {
+  const mock = { id: "conn_test_mock", name: "Mock", provider: "mock", apiKey: "mock" } as any;
+  const cfg = config as any;
+  Object.defineProperty(cfg, "connections", { get: () => [mock], configurable: true });
+  Object.defineProperty(cfg, "activeConnection", { get: () => mock, configurable: true });
+  cfg.saveConnections = () => {};
+  try {
+    return await fn();
+  } finally {
+    delete cfg.connections;
+    delete cfg.activeConnection;
+    delete cfg.saveConnections;
+  }
 }
 
 describe("server API parity (dispatcher-level)", () => {
@@ -55,11 +78,17 @@ describe("server API parity (dispatcher-level)", () => {
 
   for (const [method, path] of clientEndpoints) {
     it(`${method} ${path} is handled by the dispatcher`, async () => {
-      const res = await call(method as string, path as string, { model: "lumine" });
-      // Not every endpoint will succeed without setup, but ALL must be recognized
-      // (handleAPI returns non-null) — a null response would mean a 404/route miss.
-      expect(res).not.toBeNull();
-      expect(res).toBeInstanceOf(Response);
+      // /api/chat tanpa stub memanggil provider eksternal sungguhan dari
+      // data/config.json (latensi jaringan bisa melewati timeout test).
+      const run = async () => {
+        const res = await call(method as string, path as string, { model: "lumine" });
+        // Not every endpoint will succeed without setup, but ALL must be recognized
+        // (handleAPI returns non-null) — a null response would mean a 404/route miss.
+        expect(res).not.toBeNull();
+        expect(res).toBeInstanceOf(Response);
+      };
+      if (method === "POST" && path === "/api/chat") await withMockLLM(run);
+      else await run();
     });
   }
 

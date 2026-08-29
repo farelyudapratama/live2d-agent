@@ -8,31 +8,20 @@ import type { MotionAsset, MotionTrack, EasingMode } from "../../shared/types";
 import { ease as easeFn, clamp } from "./easing";
 
 // ── Field bounds (semantic role limits) ──────────────────────────
-// Canonical is ax/ay/ex/ey (js/motion-dsl.js), but v2 tests use angleX/eyeBallX.
-// We support BOTH by aliasing — canonical maps to ax, test-friendly maps to angleX.
-// FIELD_BOUNDS contains both so interpolate bounds work for either.
+// HARUS identik dengan js/motion-dsl.js v1: hanya 8 field kanonik. Nama gaya
+// SPEC (angleX/eyeX/...) diterima lewat ROLE_ALIASES lalu DIKANONISKAN ke
+// field internal — supaya dedup track, gating capability, dan format file
+// selalu satu kosakata, dan file motion v2 tetap terbaca runtime v1.
 export const FIELD_BOUNDS: Record<string, number> = {
   ax: 30, ay: 30, bodyX: 30, bodyY: 30, bodyZ: 30,
   ex: 1, ey: 1, mouthForm: 1,
-  // v2 test compat (canonical TS names)
-  angleX: 30, angleY: 30, angleZ: 30,
-  eyeBallX: 1, eyeBallY: 1,
-  bodyAngleX: 30, bodyAngleY: 30, bodyAngleZ: 30,
-  mouthOpen: 0.8, breath: 1,
 };
 
 export const ROLE_ALIASES: Record<string, string> = {
-  // original -> canonical (js/motion-dsl.js)
   angleX: "ax", angleY: "ay",
   eyeX: "ex", eyeY: "ey",
   bodyX: "bodyX", bodyY: "bodyY", bodyZ: "bodyZ",
   mouthForm: "mouthForm",
-  // reverse for test compat: ax -> angleX
-  ax: "angleX", ay: "angleY",
-  ex: "eyeBallX", ey: "eyeBallY",
-  // extra v2
-  eyeBallX: "eyeBallX", eyeBallY: "eyeBallY",
-  bodyAngleX: "bodyAngleX", bodyAngleY: "bodyAngleY", bodyAngleZ: "bodyAngleZ",
 };
 
 export const KNOWN_REQUIRES = ["head", "eyes", "mouth", "body"];
@@ -89,7 +78,9 @@ export function fieldCapability(field: string): string {
   return "body";
 }
 
-// ── evaluateAsset (returns roles + params with __roles/__params for compat) ──
+// ── evaluateAsset (returns roles + params, plus __roles/__params alias keys) ──
+// Paritas v1: roles HANYA berisi field kanonik (normalizeTarget mengkanoniskan
+// alias sebelum clamp), jadi `roles` dan `__roles` selalu identik isinya.
 export function evaluateAsset(
   asset: MotionAsset,
   t: number,
@@ -100,8 +91,6 @@ export function evaluateAsset(
   const roles: Record<string, number> = {};
   const params: Record<string, number> = {};
   const inten = isFiniteNum(intensity) ? clamp(intensity as number, 0, 1) : (asset.intensity ? (asset.intensity as any).default : 0.8);
-  // mirror map for test compat: ax <-> angleX, ex <-> eyeBallX etc.
-  const MIRROR: Record<string,string> = { ax:"angleX", angleX:"ax", ay:"angleY", angleY:"ay", ex:"eyeBallX", eyeBallX:"ex", ey:"eyeBallY", eyeBallY:"ey", bodyX:"bodyAngleX", bodyAngleX:"bodyX", bodyY:"bodyAngleY", bodyAngleY:"bodyY", bodyZ:"bodyAngleZ", bodyAngleZ:"bodyZ" };
   for (const track of (asset.tracks || []) as any[]) {
     const tt = Math.max(0, t);
     if (track.kind === "param") {
@@ -111,21 +100,15 @@ export function evaluateAsset(
       params[id] = evalTrack(track, tt);
       continue;
     }
-    const rawTarget = (track as any).target;
-    const target = normalizeTarget(rawTarget);
+    const target = normalizeTarget((track as any).target);
     if (!target) continue;
     if (supports && supports.size && !supports.has(fieldCapability(target))) continue;
     const scale = isFiniteNum((track as any).intensityScale) ? clamp((track as any).intensityScale, 0, 2) : 1;
-    const v = clamp(evalTrack(track, tt) * (inten as number) * scale, -FIELD_BOUNDS[target], FIELD_BOUNDS[target]);
-    roles[target] = v;
-    // mirror for compat so both ax and angleX are readable
-    const m = MIRROR[target]; if(m && !(m in roles)) roles[m]=v;
-    const m2 = MIRROR[rawTarget]; if(m2 && !(m2 in roles)) roles[m2]=v;
-    // also ensure original rawTarget accessible if different
-    if(rawTarget && rawTarget!==target && !(rawTarget in roles)) roles[rawTarget]=v;
+    roles[target] = clamp(evalTrack(track, tt) * (inten as number) * scale, -FIELD_BOUNDS[target], FIELD_BOUNDS[target]);
   }
   const out: any = { roles, params, __roles: roles, __params: params };
-  // also spread for original js compat where roles are top-level keys
+  // Bentuk lama (objek delta polos) tetap dikembalikan lewat spread supaya
+  // pemanggil lama — dan test yang membaca `.ax` langsung — tidak patah.
   Object.assign(out, roles, params);
   return out;
 }

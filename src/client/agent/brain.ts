@@ -689,16 +689,6 @@ Contoh pendek:
     this.reactEvent("mood:" + m);
   }
 
-  getMood(): string {
-    return this.userMood;
-  }
-  getPresence(): boolean | null {
-    return this.presenceState;
-  }
-  isBusy(): boolean {
-    return this.busy;
-  }
-
   invalidateCapabilityProfile(): void {
     if (this.capProfile) console.log("[agent] capability profile invalidated (model changed)");
     this.capProfile = null;

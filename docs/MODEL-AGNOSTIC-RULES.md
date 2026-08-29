@@ -95,33 +95,27 @@ pernah memasukkan nama model, id `Param…`, atau range spesifik ke
 
 ## Cara membuktikan tidak melanggar
 
-Guard penuh (32 tes role-mapping, 52 tes param-scaling, 47 tes taxonomy,
-52 tes adopsi `.exp3`, 18 tes api-origin) masih ada di repo v1
-(`../live2d-agent/test/`) dan masih relevan karena kode yang diuji
-(`app.js`, `motion-taxonomy.js`) identik dengan yang dipakai v2.
+Guard model-agnostic sudah di-port ke repo v2 (`test/legacy/`, 428 assertion di
+6 suite: role-mapping, param-scaling, taxonomy, exp3-adoption, api-origin,
+sheet-schema) dan dijalankan lewat runner sendiri:
 
 ```bash
-# di repo v1 — guard model-agnostic untuk kode yang sama-sama jalan di v2
-node test/test-role-mapping.js
-node test/test-param-scaling.js
-node test/test-motion-taxonomy.js
-node test/test-exp3-adoption.js
-
-# di repo v2 — guard bagian yang sudah TS
-bun test
+bun run test:guards   # hanya guard legacy
+bun run test:unit     # unit test TS (parser, DSL/registry, dispatcher server)
+bun run test          # keduanya
 ```
 
 `test-role-mapping.js` melakukan **uji invariansi penggantian nama**: rig yang
 sama dideskripsikan dalam kosakata Inggris / Jepang / Mandarin harus me-resolve
 ke *role* yang sama. Ada juga kasus **model opaque** (`m_001`..`m_020`) yang
 harus resolve ke **nol role** — membuktikan tidak ada positif palsu — dan dua
-**guard yang membaca `js/app.js` langsung**, sehingga id bernomor tidak bisa
-menyusup balik tanpa memerahkan test.
+**guard yang membaca `static/js/app.js` langsung**, sehingga id bernomor tidak
+bisa menyusup balik tanpa memerahkan test.
 
 Kalau menambah logika yang menyimpulkan makna: jalankan ulang dengan semua nama
 diganti `m_001` / `モーション1` / hash, lalu bandingkan. Kalau distribusi
 hasilnya kolaps, logika itu masih bergantung nama. Saat `app.js` nanti di-port
-ke TS, guard-guard v1 ini yang harus ikut dipindah — bukan dibuang.
+ke TS, guard-guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 
 ## Catatan sheet
 

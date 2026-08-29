@@ -100,23 +100,25 @@ Copy `live2d-agent/config.json` → `data/config.json` (contoh: `config.example.
 
 ## ⚠️ Divergensi yang diketahui vs v1
 
-Port ini bukan byte-identik; hal-hal berikut berbeda secara sengaja atau diketahui:
+Port ini bukan byte-identik; hal-hal berikut berbeda secara **sengaja**:
 
-1. **Keamanan lebih ketat** (sengaja): blokir `config.json`, tutup traversal, body cap, bind loopback — v1 menyajikan seluruh repo root.
+1. **Keamanan lebih ketat**: blokir `config.json`, tutup traversal, body cap, bind loopback — v1 menyajikan seluruh repo root (apiKey kebaca via HTTP!).
 2. **Bug v1 diperbaiki**: `llmWithFallback` v1 me-reset `activeId` ke koneksi pertama di setiap panggilan LLM; v2 mempertahankannya. Reply kosong/error kini juga tampil sebagai bubble chat.
-3. **`/api/test` invalid apiKey → HTTP 200** (`{valid:false}`), v1: 400. Client toleran, tapi status code-nya deviasi.
-4. **SPA fallback**: path statis tak dikenal → `index.html` 200 (v1: 404). Salah ketik asset JS/CSS jadi error MIME samar, bukan 404 jelas.
-5. **`motion-dsl.ts` menerima nama target alias** (`angleX`, `bodyAngleX`, `mouthOpen`, dst.) selain kanonik `ax/ay/ex/ey` — v1 mengkanoniskannya. Playback aman (evaluator menulis mirror `ax↔angleX`), tapi file motion buatan v2 bisa berisi target yang runtime v1 tidak kenal (interop v2→v1 tidak dijamin). Perlu diputuskan: ikuti kanonik v1, atau dokumentasikan sebagai format baru.
-6. **`GET /api/motions` men-create direktori** kosong sebagai side effect (v1 read-only).
+3. **SPA fallback dipersempit**: path statis tanpa ekstensi → `index.html` 200 (rute UI), tetapi asset `.js`/`.css`/model yang missing → 404 yang jelas, bukan HTML ber-extension js (v1: fallback tanpa syarat).
+4. **`motion-dsl.ts` kanonik persis v1**: nama gaya SPEC (`angleX`, `eyeX`, …) diterima lalu **dikanoniskan** ke `ax/ay/ex/ey` saat sanitize — format file selalu satu kosakata dan file motion v2 tetap terbaca runtime v1. (`normalizeTarget` mengunci ini.)
+
+Catatan QA: `bun test` memanggil dispatcher langsung — endpoint yang menyentuh LLM di-stub ke provider `mock`, jadi suite tidak pernah melakukan panggilan jaringan dan tidak pernah menulis `data/config.json`.
 
 ## 🧪 Test
 
 ```bash
-bun test          # 93 test — directive parser, motion DSL/registry, parity server, keamanan static
-bun run src/build.ts && bunx tsc --noEmit   # build + type-check (keduanya bersih)
+bun run test         # SEMUA: 95 unit test (bun test) + 428 guard legacy (6 suite)
+bun run test:unit    # hanya unit test TS (parser, DSL/registry, dispatcher server)
+bun run test:guards  # hanya guard legacy
+bun run build && bunx tsc --noEmit   # build + type-check (keduanya bersih)
 ```
 
-Jujur soal coverage: v1 punya 1.234 test di 26 suite (schema sheet, param-scaling, role-mapping, fase0–5, dll). v2 baru mengunci bagian yang di-rewrite TS. Suite penuh v1 di `../live2d-agent/test/` **tetap jadi guard** untuk kode legacy yang identik dipakai v2 (`app.js`, taxonomy) — jalankan dengan `node` dari repo v1. Saat `app.js` di-port ke TS (tahap 2), suite itu yang harus ikut dipindah, bukan dibuang.
+Guard legacy (`test/legacy/`) adalah port dari suite v1 paling bernilai: role-mapping & param-scaling (model-agnostic), sheet schema v4 (220 assertion, mengekstrak `migrateSheet()` dari `app.js` asli via `vm`), exp3-adoption (endpoint diuji in-process via `handleAPI` dengan model sintetis yang dihapus otomatis), api-origin, motion-taxonomy. Tidak ada guard yang memanggil jaringan. Suite yang belum dipindah: motion-dsl/registry/runtime v1 — file `js/motion-*.js` sudah tidak ada di v2 (DSL/registry terkunci test TS; runtime guard menyusul saat tahap 2). Saat `app.js` di-port ke TS (tahap 2), guard-guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 
 ## 📚 Dokumentasi (lokal, mengikat)
 

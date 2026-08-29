@@ -159,14 +159,15 @@ State runtime bisa dibaca lewat `window.__agent._reactiveState()`.
 ## Test
 
 ```bash
-bun test        # v2: 93 test — parser directive, motion DSL/registry, parity server, keamanan static
+bun run test          # unit test TS + guard legacy (termasuk sheet schema v4: 220 assertion)
+bun run test:guards   # hanya guard legacy
 ```
 
-Suite penuh yang mengunci perilaku sheet (schema v4, badge, hardening, api-origin,
-param-scaling, exp3-adoption — 1.234 test) masih ada di repo v1
-(`../live2d-agent/test/`, jalankan dengan `node`) dan tetap jadi guard karena
-`app.js` yang diuji identik dengan yang dipakai v2. Saat mem-port `app.js` ke
-TS, suite-suite itu yang harus ikut dipindah — bukan dibuang.
+Guard schema v4 (`test/legacy/test-fase1-sheet-schema.js`, port dari v1)
+mengekstrak `migrateSheet()` dll. langsung dari `static/js/app.js` via `vm` —
+menguji fungsi **asli** yang jalan di v2, bukan salinan, jadi perubahan
+`migrateSheet` yang melanggar kontrak langsung memerah. Saat mem-port `app.js`
+ke TS, guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 
 ## Utang teknis / catatan
 

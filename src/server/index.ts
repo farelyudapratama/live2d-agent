@@ -158,10 +158,13 @@ function sanitizeKey(name:string){ return (name||"default").replace(/[^A-Za-z0-9
 function sheetPathFor(name:string){ return join(SHEETS_DIR, sanitizeKey(name)+".json"); }
 
 // ── MOTION helpers ──────────────────────────────────────────────
-function motionsDirFor(modelKey:string){
+// `ensure` hanya di jalur tulis: GET motions TIDAK boleh men-create direktori
+// kosong sebagai side effect (v1 semantics — read path read-only).
+function motionsDirFor(modelKey:string, ensure=false){
   const dir=join(MOTIONS_DIR, sanitizeKey(modelKey));
   if(!dir.startsWith(MOTIONS_DIR)) throw new Error("model key tidak valid");
-  mkdirSync(dir,{recursive:true}); return dir;
+  if(ensure) mkdirSync(dir,{recursive:true});
+  return dir;
 }
 function motionFileFor(modelKey:string,id:string){
   if(!/^[A-Za-z0-9_\-]{1,60}$/.test(id||"")) throw new Error("motion id tidak valid");
@@ -252,7 +255,7 @@ async function handleChat(req:Request):Promise<Response>{
 async function handleTestConnection(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
   const conn=body.connection||{}; const stored=config.connections.find(x=>x.id===conn.id); if(stored?.apiKey) conn.apiKey=stored.apiKey;
-  if((conn.provider||"openai-compatible").toLowerCase()!=="mock" && (!conn.apiKey|| conn.apiKey.startsWith("MASUKKAN"))) return json({valid:false, error:"apiKey belum diisi"});
+  if((conn.provider||"openai-compatible").toLowerCase()!=="mock" && (!conn.apiKey|| conn.apiKey.startsWith("MASUKKAN"))) return json({valid:false, error:"apiKey belum diisi"},400);
   try{ const reply=await callLLM(conn,[{role:"user",content:"Reply with just: OK"}]); return json({valid:true, reply:reply.slice(0,80)});}catch(e:any){ return json({valid:false, error:e.message}); }
 }
 
@@ -653,7 +656,7 @@ async function handleMotionsPost(req:Request):Promise<Response>{
     const modelKey=body.model||"default"; const raw=body.motion||body;
     const sanitized=sanitizeMotionAsset(raw,{requireTracks:true, source:"user", sourceModelId: raw.sourceModelId||modelKey});
     if(!sanitized.ok) throw new Error("motion invalid: "+(sanitized as any).errors.join("; "));
-    const asset=(sanitized as any).asset; const file=motionFileFor(modelKey,asset.id);
+    const asset=(sanitized as any).asset; motionsDirFor(modelKey,true); const file=motionFileFor(modelKey,asset.id);
     if(existsSync(file)) return json({error:`motion "${asset.id}" sudah ada. Pakai nama lain atau Simpan (timpa).`},409);
     await queueJsonWrite(file,asset); console.log("[motions] saved ->", relative(DATA,file).split(sep).join("/"));
     return json({ok:true, motion:asset});
@@ -666,7 +669,7 @@ async function handleMotionsPut(req:Request):Promise<Response>{
     const modelKey=body.model||"default"; const raw=body.motion||body;
     const sanitized=sanitizeMotionAsset(Object.assign({},raw,{id}),{requireTracks:true, source:"user", sourceModelId: raw.sourceModelId||modelKey});
     if(!sanitized.ok) throw new Error("motion invalid: "+(sanitized as any).errors.join("; "));
-    const asset=(sanitized as any).asset; const file=motionFileFor(modelKey,id);
+    const asset=(sanitized as any).asset; motionsDirFor(modelKey,true); const file=motionFileFor(modelKey,id);
     await queueJsonWrite(file,asset); console.log("[motions] updated ->", relative(DATA,file).split(sep).join("/"));
     return json({ok:true, motion:asset});
   }catch(e:any){ return json({error:e.message},400); }
@@ -713,9 +716,14 @@ server = Bun.serve({
     if(pathname==="/") pathname="/index.html";
     const staticResp=serveStatic(pathname);
     if(staticResp) return staticResp;
-    // SPA fallback: try index.html
-    const fallback=serveStatic("/index.html");
-    if(fallback) return fallback;
+    // SPA fallback HANYA untuk path tanpa ekstensi (rute UI). Asset JS/CSS/
+    // model yang salah ketik/missing harus 404 yang jelas — bukan index.html
+    // 200 yang membuat browser mengunduh HTML dengan tipe .js (error MIME samar).
+    const lastSeg=pathname.split("/").pop()||"";
+    if(lastSeg && !lastSeg.includes(".")){
+      const fallback=serveStatic("/index.html");
+      if(fallback) return fallback;
+    }
     return new Response("Not Found",{status:404});
   }
 });

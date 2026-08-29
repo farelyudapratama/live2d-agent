@@ -88,6 +88,7 @@
         <div class="tabs">
           <button class="tab active" data-tab="model">📁 Model</button>
           <button class="tab" data-tab="sheet">📋 Sheet</button>
+          <button class="tab" data-tab="motion">🎬 Motion</button>
           <button class="tab" data-tab="ai">⚙️ AI</button>
         </div>
       <div class="tab-body">
@@ -237,6 +238,28 @@
               <span id="adoption-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
           </div>
+        </div>
+
+        <!-- ===== Motion: pintu masuk Motion Studio ===== -->
+        <!-- Pane ini SENGAJA tipis: editornya sendiri hidup di popup mengambang
+             (#motion-studio-popup) memakai pola .pn-popup yang sudah ada, supaya
+             tidak menutupi model di stage kiri — sama seperti 📝 Jelaskan
+             Parameter & ✏️ Editor Preset. -->
+        <div class="tab-pane" data-pane="motion">
+          <div class="section-title">🎬 Motion Studio</div>
+          <p class="hint">Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b>
+            — kepala, tangan, rambut, alis, apa pun yang rig-nya punya. Simpan dengan
+            deskripsi &amp; tag, lalu AI bisa memakainya saat ngobrol. Gerakan bawaan
+            dan motion milik model tetap jalan seperti biasa.</p>
+          <div class="note-row">
+            <button id="btn-open-motion-studio" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">🎬 Buka Motion Studio</button>
+            <span id="motion-open-status" class="note-status" role="status" aria-live="polite"></span>
+          </div>
+
+          <div class="section-title" style="margin-top:14px">📚 Daftar Gerakan</div>
+          <div id="motion-registry-list" class="preset-list"></div>
+          <p class="hint">Sumber: <b>bawaan</b> = 9 gerakan aplikasi, <b>model</b> = motion dari
+            file model, <b>milikmu</b> = hasil Motion Studio. Hanya milikmu yang bisa diedit/hapus.</p>
         </div>
 
         <!-- AI Connections (9router-style) -->
@@ -430,6 +453,159 @@
     </div>
   </div>
 
+  <!-- § Popup Motion Studio (mengambang, pola sama dengan popup lain).
+       Editor animasi: library kiri-atas, timeline keyframe, panel metadata.
+       Preview memakai model yang SUDAH termuat di stage — tidak ada canvas
+       kedua, jadi apa yang kamu lihat saat edit persis yang dilihat AI. -->
+  <div id="motion-studio-popup" class="pn-popup ms-popup hidden" aria-hidden="true">
+    <div class="pn-popup-head">
+      <span class="pn-popup-title">🎬 Motion Studio</span>
+      <button id="motion-studio-close" class="pn-popup-x" title="Tutup">✕</button>
+    </div>
+    <div class="pn-popup-sub">
+      Susun gerakan lewat keyframe. Tekan ▶ untuk melihatnya langsung di model.
+      Saat mengedit, gerak idle dibekukan supaya pose terlihat apa adanya.
+    </div>
+
+    <div class="ms-body">
+      <!-- Library + aksi berkas -->
+      <div class="ms-lib-row">
+        <select id="ms-lib" aria-label="Daftar gerakan milikmu"></select>
+        <button id="ms-new" class="mini-btn ms-icon" title="Gerakan baru">＋</button>
+        <button id="ms-dup" class="mini-btn ms-icon" title="Duplikat">⧉</button>
+        <button id="ms-del" class="mini-btn ms-icon" title="Hapus">🗑</button>
+      </div>
+
+      <!-- Transport -->
+      <div class="ms-transport">
+        <button id="ms-play" class="mini-btn ms-icon" title="Putar">▶</button>
+        <button id="ms-stop" class="mini-btn ms-icon" title="Stop">■</button>
+        <label class="ms-loop"><input type="checkbox" id="ms-loop" /> loop</label>
+        <button id="ms-undo" class="mini-btn ms-icon" title="Undo">↶</button>
+        <button id="ms-redo" class="mini-btn ms-icon" title="Redo">↷</button>
+        <span id="ms-time" class="ms-time">0.00s</span>
+      </div>
+
+      <!-- Panel parameter model: sumber track. Semua parameter rig, dengan
+           pencarian + kelompok, seperti daftar parameter Cubism Editor. -->
+      <details class="ms-params" id="ms-params" open>
+        <summary>➕ Tambah Track Parameter</summary>
+        <div class="ms-param-search-row">
+          <input type="search" id="ms-param-search" placeholder="cari parameter… (mis. hair, arm, brow)" aria-label="Cari parameter" />
+          <select id="ms-param-group" aria-label="Filter kategori"><option value="">semua kategori</option></select>
+        </div>
+        <div id="ms-param-list" class="ms-param-list"></div>
+        <p class="hint" id="ms-param-count"></p>
+      </details>
+
+      <!-- Timeline: satu baris per parameter yang ditambahkan -->
+      <div class="ms-timeline-wrap">
+        <div class="ms-ruler" id="ms-ruler"></div>
+        <div id="ms-tracks" class="ms-tracks"></div>
+        <p class="hint" id="ms-tracks-empty">Belum ada track. Buka <b>➕ Tambah Track Parameter</b> di atas dan pilih parameter model.</p>
+        <div class="ms-scrub-row">
+          <input type="range" id="ms-scrub" min="0" max="1000" value="0" aria-label="Geser waktu" />
+        </div>
+      </div>
+
+      <!-- Editor keyframe terpilih -->
+      <div class="cfg-box" id="ms-key-box">
+        <div class="note-row">
+          <span class="cfg-label" id="ms-key-label">Belum ada keyframe dipilih</span>
+        </div>
+        <label class="cfg-row" for="ms-key-t">
+          <span class="cfg-label">Waktu (s)</span>
+          <input type="number" id="ms-key-t" step="0.05" min="0" />
+        </label>
+        <label class="cfg-row" for="ms-key-v">
+          <span class="cfg-label">Nilai</span>
+          <input type="range" id="ms-key-v" step="0.01" />
+          <output id="ms-key-v-out" class="cfg-out"></output>
+        </label>
+        <label class="cfg-row" for="ms-key-v-num">
+          <span class="cfg-label">Angka pas</span>
+          <input type="number" id="ms-key-v-num" step="0.01" />
+          <span id="ms-key-range" class="ms-range-hint"></span>
+        </label>
+        <label class="cfg-row" for="ms-key-easing">
+          <span class="cfg-label">Easing ke key berikut</span>
+          <select id="ms-key-easing">
+            <option value="linear">linear</option>
+            <option value="ease-in">ease-in</option>
+            <option value="ease-out">ease-out</option>
+            <option value="ease-in-out">ease-in-out</option>
+            <option value="stepped">stepped (patah)</option>
+          </select>
+        </label>
+        <div class="note-row">
+          <button id="ms-key-add" class="mini-btn ms-small">＋ Keyframe di sini</button>
+          <button id="ms-key-dupe" class="mini-btn ms-small">⧉ Duplikat</button>
+          <button id="ms-key-copy" class="mini-btn ms-small">📋 Copy</button>
+          <button id="ms-key-paste" class="mini-btn ms-small">📥 Paste</button>
+          <button id="ms-key-del" class="mini-btn ms-small">✖ Hapus</button>
+        </div>
+        <p class="hint">Klik titik di timeline untuk memilih keyframe. Nilai &amp; batasnya mengikuti definisi asli parameter di model.</p>
+      </div>
+
+      <!-- Metadata (Fase 4) -->
+      <details class="ms-meta" id="ms-meta" open>
+        <summary>🏷️ Info &amp; Kecocokan Emosi</summary>
+        <div class="cfg-box">
+          <label class="cfg-row" for="ms-name">
+            <span class="cfg-label">Nama</span>
+            <input id="ms-name" type="text" maxlength="60" placeholder="mis. Malu Menunduk" />
+          </label>
+          <label class="cfg-row" for="ms-id">
+            <span class="cfg-label">ID</span>
+            <input id="ms-id" type="text" maxlength="60" placeholder="shy_look_away" />
+          </label>
+          <label class="cfg-row ms-col" for="ms-desc">
+            <span class="cfg-label">Deskripsi (dibaca AI)</span>
+            <textarea id="ms-desc" rows="2" placeholder="Menundukkan kepala lalu mengalihkan pandangan."></textarea>
+          </label>
+          <label class="cfg-row" for="ms-tags">
+            <span class="cfg-label">Tag</span>
+            <input id="ms-tags" type="text" placeholder="malu, lucu, canggung" />
+          </label>
+          <label class="cfg-row" for="ms-duration">
+            <span class="cfg-label">Durasi (s)</span>
+            <input id="ms-duration" type="number" min="0.1" max="20" step="0.1" />
+          </label>
+
+          <div class="note-row"><span class="cfg-label">Cocok untuk emosi</span></div>
+          <div id="ms-emo-list" class="ms-emo-list"></div>
+
+          <label class="cfg-row" for="ms-intensity-def">
+            <span class="cfg-label">Intensitas default</span>
+            <input type="range" id="ms-intensity-def" min="0" max="1" step="0.05" />
+            <output id="ms-intensity-def-out" class="cfg-out"></output>
+          </label>
+          <label class="cfg-row" for="ms-cooldown">
+            <span class="cfg-label">Cooldown (ms)</span>
+            <input id="ms-cooldown" type="number" min="0" max="600000" step="500" />
+          </label>
+          <label class="cfg-row" for="ms-priority">
+            <span class="cfg-label">Prioritas</span>
+            <input id="ms-priority" type="number" min="0" max="100" step="5" />
+          </label>
+          <label class="cfg-check"><input type="checkbox" id="ms-ai-enabled" /> <span>Boleh dipakai AI saat ngobrol</span></label>
+          <label class="cfg-check"><input type="checkbox" id="ms-loop-meta" /> <span>Berulang (loop)</span></label>
+        </div>
+      </details>
+
+      <!-- Mode lanjutan dihapus: seluruh editor SEKARANG bekerja langsung di
+           parameter mentah model, jadi tabel "peran → parameter" tidak lagi
+           menjelaskan apa pun yang belum terlihat di timeline. -->
+    </div>
+
+    <div class="ms-footer">
+      <button id="ms-analyze" class="mini-btn ms-small">✨ Analisa AI</button>
+      <button id="ms-generate" class="mini-btn ms-small">🪄 Buat dari Teks</button>
+      <button id="ms-save" class="mini-btn ms-small">💾 Simpan</button>
+      <span id="ms-status" class="note-status" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>
   <script src="js/pixi-live2d-0.4.0.js"></script>
@@ -438,7 +614,17 @@
        decide which of the model's own clips are safe to play for a given
        emotion. Without it app.js silently falls back to synthetic gestures. -->
   <script src="js/motion-taxonomy.js"></script>
+  <!-- Motion Studio (SPEC): DSL → Registry → Runtime. Harus dimuat sebelum
+       app.js — app.js membangun registry saat startup dan mem-bridge runtime
+       ke state.aiPose. Tanpa ketiganya app.js tetap jalan (gesture fallback
+       jalur lama), tapi Motion Studio mati. -->
+  <script src="js/motion-dsl.js"></script>
+  <script src="js/motion-registry.js"></script>
+  <script src="js/motion-runtime.js"></script>
   <script src="js/app.js"></script>
+  <!-- Motion Studio UI: TERISOLASI (CONSTRAINTS §9). Dimuat SETELAH app.js
+       karena memakai window.__live2dAgent (registry, runtime, sheet). -->
+  <script src="js/motion-editor.js"></script>
   <script src="agent.js"></script>
   <script type="module" src="js/camera-presence.js"></script>
 </body>

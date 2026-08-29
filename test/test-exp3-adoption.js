@@ -83,7 +83,9 @@ function startServer(modelsParent) {
     const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'l2dsrv-'));
     fs.copyFileSync(path.join(ROOT, 'server.js'), path.join(stage, 'server.js'));
     fs.mkdirSync(path.join(stage, 'js'), { recursive: true });
-    for (const f of ['motion-taxonomy.js']) {
+    // motion-dsl.js ikut di-stage karena server.js me-require-nya di top level
+    // (validator Motion Asset dipakai bersama endpoint /api/motions).
+    for (const f of ['motion-taxonomy.js', 'motion-dsl.js']) {
       const src = path.join(ROOT, 'js', f);
       if (fs.existsSync(src)) fs.copyFileSync(src, path.join(stage, 'js', f));
     }

@@ -70,6 +70,24 @@
     // The model re-evaluates its own motion/physics every frame, so we re-apply
     // these after each model update to keep them "held".
     overrides: {},
+    // ── Raw parameter drive (Motion Studio) ──
+    // { paramId: number } nilai ABSOLUT yang ditulis PALING AKHIR setiap frame
+    // dengan weight 1, jadi ia menang atas idle fidget, emosi, dan overrides.
+    //
+    // Kenapa terpisah dari `overrides`: overrides adalah keadaan sticky jangka
+    // panjang milik user (aksesoris yang dinyalakan, slider yang disetel) dan
+    // ikut disimpan/di-restore. Raw drive itu SEMENTARA — hanya hidup selama
+    // editor terbuka atau motion raw sedang diputar — dan harus bisa dibuang
+    // sekaligus tanpa mengganggu aksesoris yang user nyalakan sebelumnya.
+    // Ditulis setelah applyOverrides() karena Motion Studio harus menampilkan
+    // pose apa adanya, tanpa dicampur nilai sticky lama untuk param yang sama.
+    rawDrive: null,
+    // Nilai parameter SEBELUM raw drive menyentuhnya, per id. Dipakai untuk
+    // memulihkan pose saat drive dilepas. Tanpa ini, parameter yang tidak
+    // dikemudikan sistem lain (mis. pipi, aksesoris, rambut) akan menempel di
+    // nilai terakhir editor selamanya — "pose nyangkut" yang paling kentara
+    // justru pada parameter yang tidak ikut idle.
+    rawDrivePrev: null,
     isDragging: false,
     dragTarget: null,
     dragOffset: { x: 0, y: 0 },
@@ -433,6 +451,12 @@
         state.model = null;
         // drop sticky overrides + timers from the previous model
         state.overrides = {};
+        // Raw drive menunjuk id parameter milik model LAMA. Dibiarkan hidup, ia
+        // akan menulis id yang tak ada di model baru setiap frame (no-op senyap
+        // yang menyulitkan debug) atau — lebih buruk — id yang kebetulan sama
+        // namanya tapi artinya beda di rig baru.
+        state.rawDrive = null;
+        state.rawDrivePrev = null;
         state.accessoryValues = {};
         state.activeEmotion = 'normal';
         state.activeProperty = 'default';
@@ -498,7 +522,11 @@
       // Classify this model's motion clips by semantic verb so gestures can be
       // matched to emotion. Fire-and-forget: the gesture scheduler treats a null
       // taxonomy as "synthetic gestures only", so nothing breaks while it loads.
-      loadMotionTaxonomy().catch(e => console.warn('[taxonomy] load error', e));
+      // Motion registry diisi SETELAH taxonomy selesai supaya meta durasi/verb
+      // klip native ikut; lalu motion user di-fetch dari server.
+      loadMotionTaxonomy()
+        .then(() => initMotionRegistry())
+        .catch(e => { console.warn('[taxonomy] load error', e); initMotionRegistry(); });
 
       // The note is per-model, so the textarea must follow the model swap.
       // Fire-and-forget: it only reads storage, nothing depends on it.
@@ -719,9 +747,10 @@
         }
       }
       applyOverrides();
+      applyRawDrive();
+      state._tickCount = (state._tickCount || 0) + 1;
       state.idleRAF = requestAnimationFrame(tick);
-    };
-    state.idleRAF = requestAnimationFrame(tick);
+    };    state.idleRAF = requestAnimationFrame(tick);
   }
 
   // ─── Idle Motion (auto-play the model's own motions) ──────────
@@ -1836,6 +1865,13 @@
   }
 
   // ─── UI Event Wiring ───────────────────────────────────────────
+  // Pintu freeze untuk editor di FILE LAIN (js/motion-editor.js). Fungsi
+  // freezeModelForEdit/unfreezeModelForEdit hidup di dalam wireUI() bersama
+  // editor preset; Motion Studio harus memakai freeze yang SAMA, bukan
+  // menulis mekanisme kedua yang bisa saling melepas bekuan. Diisi oleh
+  // wireUI(), dibaca lewat window.__live2dAgent.freezeForEdit.
+  let editorFreezeApi = null;
+
   function wireUI() {
     // ── Sidebar controls toggle + tabs + frame controls ──
     $('#btn-toggle-controls').addEventListener('click', () => {
@@ -3076,6 +3112,9 @@
       _freezeStatusEl = null;
     }
 
+    // Publikasikan ke scope luar sekali saja (lihat editorFreezeApi di atas).
+    editorFreezeApi = { freeze: freezeModelForEdit, unfreeze: unfreezeModelForEdit };
+
     function renderParamNotesPopup(sheet) {
       if (!pnList) return;
       pnList.textContent = '';
@@ -3858,6 +3897,171 @@
   // instead of falling back to plain idle).
   const EMOTION_GESTURE = { senang: 'lean_excited', sedih: 'look_away_shy', malu: 'look_away_shy', kaget: 'recoil_surprised', normal: 'nod' };
 
+  // ── Motion Studio: registry + runtime (SPEC §31: satu pipeline) ─────────
+  // Registry membungkus TIGA sumber motion tanpa menyalin datanya: gesture
+  // builtin (tabel di atas), motion native model, dan Motion Asset buatan
+  // user dari motions/<modelKey>/. Runtime mengevaluasi keyframe lalu menulis
+  // delta ke state.aiPose lewat bridge di bawah — jalur yang sama dengan
+  // gesture lama — sehingga ease engine, fidget, override sticky, dan guard
+  // clipUntil tetap memerintah. TIDAK ada penulis parameter kedua.
+  const haveMotionSystem = typeof MotionRegistry !== 'undefined'
+    && typeof MotionRuntime !== 'undefined' && typeof MotionDSL !== 'undefined';
+  const motionRegistry = haveMotionSystem ? MotionRegistry.createRegistry() : null;
+  if (haveMotionSystem) motionRegistry.registerGestureLibrary(GESTURE_LIBRARY, EMOTION_GESTURE);
+
+  // Delta yang SEDANG diterapkan runtime ke state.aiPose, per field. Dipakai
+  // untuk komposisi inkremental: tiap frame kita hanya menambahkan SELISIH dari
+  // frame sebelumnya, sehingga emosi/pose lain yang berubah SAAT motion jalan
+  // tetap hidup di bawah delta (motion menunggangi, bukan menimpa).
+  let motionApplied = {};
+  const POSE_FIELDS = { ax: 1, ay: 1, ex: 1, ey: 1, bodyX: 1, bodyY: 1, bodyZ: 1, mouthForm: 1 };
+  function unwindMotionDelta() {
+    const P = state.aiPose;
+    for (const k in motionApplied) {
+      if (motionApplied[k]) P[k] = (P[k] || 0) - motionApplied[k];
+    }
+    motionApplied = {};
+  }
+  const motionBridge = haveMotionSystem ? {
+    now: () => performance.now(),
+    getPoseBase: () => {
+      const P = state.aiPose;
+      return { ax: P.ax || 0, ay: P.ay || 0, ex: P.ex || 0, ey: P.ey || 0,
+        bodyX: P.bodyX || 0, bodyY: P.bodyY || 0, bodyZ: P.bodyZ || 0, mouthForm: P.mouthForm || 0 };
+    },
+    getSupports: () => {
+      const s = new Set();
+      if (state.caps.hasHead) s.add('head');
+      if (state.caps.hasEyes) s.add('eyes');
+      if (state.caps.hasMouth) s.add('mouth');
+      if (state.caps.hasBody) s.add('body');
+      return s;
+    },
+    // Parameter mentah yang BENAR-BENAR dimiliki model ini. Runtime memakai ini
+    // untuk melewati track milik model lain dengan aman (motion model-scoped
+    // dibuka di rig berbeda) — bukan menulis id yang tidak ada.
+    getOwnedParams: () => (state.caps && state.caps.params) || null,
+    readParam: (id) => readParam(id),
+    // Nilai absolut per parameter dari track raw. Lewat setRawDrive supaya
+    // di-assert ulang tiap frame (internalModel.update() akan menimpanya).
+    applyParamDrive: (vals) => setRawDrive(vals),
+    releaseParamDrive: (ids) => {
+      if (!ids || !ids.length) return;
+      const patch = {};
+      for (const id of ids) patch[id] = null;
+      setRawDrive(patch);
+    },
+    applyPoseDelta: (d) => {
+      unwindMotionDelta();
+      const P = state.aiPose;
+      for (const k in d) {
+        if (!POSE_FIELDS[k] || !d[k]) continue;
+        P[k] = (P[k] || 0) + d[k];
+        motionApplied[k] = d[k];
+      }
+    },
+    clearPoseDelta: unwindMotionDelta,
+    playNative: (g) => {
+      try {
+        state.model.motion(g, -1, 2);
+        // Pasang guard clip yang sama dengan playEmotionClip(): tanpa ini pose
+        // AI yang di-ease melawan klip (dua penulis satu parameter = kejang).
+        // Durasi tak diketahui untuk index acak → pakai default konservatif.
+        state.clipStartedAt = performance.now();
+        state.clipUntil = state.clipStartedAt + 2200 + 250;
+        state.clipName = g;
+        state.impulse = Math.min(1.0, state.impulse + 0.3);
+      } catch (e) { console.warn('[motion] native play failed:', g, e.message); }
+    },
+  } : null;
+  const motionRuntime = haveMotionSystem ? MotionRuntime.createRuntime(motionRegistry, motionBridge) : null;
+
+  // Muat isi registry untuk model yang sedang aktif: grup native + motion user
+  // dari server. Dipanggil dari loadModel() SETELAH taxonomy selesai, supaya
+  // durasi/verb klip native ikut terbawa.
+  async function initMotionRegistry() {
+    if (!haveMotionSystem || !state.model) return;
+    const groups = (state.caps && state.caps.motionGroups) || [];
+    const meta = {};
+    const T = state.motionTaxonomy;
+    if (T && T.clipMeta) {
+      for (const c of Object.values(T.clipMeta)) {
+        if (!c || !c.group || meta[c.group]) continue;
+        meta[c.group] = {
+          duration: (c.duration && c.duration > 0) ? c.duration : 2,
+          tags: c.verb ? [c.verb] : [],
+        };
+      }
+    }
+    motionRegistry.registerNativeGroups(groups, meta);
+    // Motion user (file motions/<modelKey>/). Nama yang bentrok dengan
+    // builtin/native DITOLAK registry — konsisten dengan reservedGestureNames().
+    try {
+      const key = characterSheetKey().replace('live2d_sheet_', '');
+      const r = await fetch(API + '/api/motions?model=' + encodeURIComponent(key));
+      if (!r.ok) return;
+      const data = await r.json();
+      const kept = [];
+      for (const a of (data.motions || [])) {
+        if (!motionRegistry.has(a.id)) { kept.push(a); continue; }
+        console.warn('[motion] "' + a.id + '" bentrok dengan entri bawaan — dilewati');
+      }
+      const n = motionRegistry.replaceUserMotions(kept);
+      if (n) console.log('[motion] registry:', n, 'user motion(s) dimuat');
+    } catch (e) { /* server mati / belum ada folder: registry tetap berisi builtin+native */ }
+  }
+
+  // Preset 'gerak' milik user diputar lewat runtime JUGA (satu pipeline): steps
+  // dikonversi jadi asset ephemeral, di-cache berdasarkan isi steps.
+  //
+  // ID diberi prefiks PRESET_MOTION_PREFIX, bukan nama preset itu sendiri.
+  // Dengan nama polos, memutar preset bernama sama dengan gesture bawaan atau
+  // Motion Asset user akan MENIMPA entri itu di registry (source & deskripsi
+  // berubah). Entri registry harus mencerminkan apa yang terdaftar, bukan apa
+  // yang terakhir diputar. aiEnabled:false karena preset gerak sudah diiklankan
+  // ke LLM lewat capProfile.gestures — masuk motionCatalog lagi hanya ganda.
+  const PRESET_MOTION_PREFIX = 'preset_';
+  const presetMotionCache = new Map();   // name -> { sig, asset }
+  function playStepsViaRuntime(name, steps) {
+    if (!haveMotionSystem) return false;
+    const sig = JSON.stringify(steps);
+    let hit = presetMotionCache.get(name);
+    if (!hit || hit.sig !== sig) {
+      const totalMs = steps.reduce((s, st) => s + ((st && st.ms) || 0), 0);
+      const r = MotionDSL.sanitizeMotionAsset({
+        id: PRESET_MOTION_PREFIX + name.replace(/[^A-Za-z0-9_\-]/g, '_').slice(0, 48),
+        name, source: 'builtin', type: 'gesture', aiEnabled: false,
+        description: 'Preset gerak: ' + name,
+        duration: Math.max(0.2, totalMs / 1000),
+        tracks: MotionDSL.stepsToTracks(steps),
+      }, { requireTracks: true, source: 'builtin' });
+      if (!r.ok) { console.warn('[motion] preset', name, 'ditolak:', r.errors.join('; ')); return false; }
+      hit = { sig, asset: r.asset };
+      presetMotionCache.set(name, hit);
+    }
+    motionRegistry.register(hit.asset, { overwrite: true });
+    return motionRuntime.play(hit.asset.id, { priority: 60 });
+  }
+
+  // Jalur lama (rantai setTimeout) — fallback kalau modul Motion gagal dimuat,
+  // supaya gesture TETAP bekerja (persis kode playGesture sebelum Motion Studio).
+  function legacyPlaySteps(steps) {
+    const P = state.aiPose;
+    const base = { ax: P.ax || 0, ay: P.ay || 0, ex: P.ex || 0, ey: P.ey || 0,
+      bodyX: P.bodyX || 0, bodyY: P.bodyY || 0, bodyZ: P.bodyZ || 0, mouthForm: P.mouthForm || 0 };
+    const myToken = ++gestureToken;
+    let t = 0;
+    for (const step of steps) {
+      setTimeout(() => {
+        if (myToken !== gestureToken) return;   // gesture lebih baru menimpa
+        const d = step.d || {};
+        for (const k in base) P[k] = base[k] + (d[k] || 0);
+        state.impulse = Math.min(1.0, state.impulse + 0.22);
+      }, t);
+      t += step.ms;
+    }
+  }
+
   // ── Preset lookup + apply ───────────────────────────────────────
   // Name lookup ALWAYS hits presets.user before presets.ai. That is the same
   // precedence the UI shows: an AI suggestion never shadows a preset the user
@@ -4191,45 +4395,201 @@
   }
 
   let gestureToken = 0;
+  // Native motion group → MotionManager model. Diekstrak jadi fungsi supaya
+  // cabang native di playGesture() tetap pendek: urutan resolusinya adalah
+  // invariant yang diuji, jadi jangan ditumpuk logika di dalam blok itu.
+  function playNativeGroup(g) {
+    if (haveMotionSystem && motionRuntime.play('motion_' + g, { priority: 90 })) return;
+    try {
+      state.model.motion(g, -1, 2);
+      state.impulse = Math.min(1.0, state.impulse + 0.3);
+    } catch (e) { console.warn('[Live2D] Failed to play native motion:', e); }
+  }
+
+  // ── Resolusi gesture (urutan TIDAK berubah — lihat reservedGestureNames): ──
+  //   native motion group → user 'gerak' preset → registry (builtin + Motion
+  //   Studio user motions) → tabel literal. Yang baru hanyalah SEMUA jalur
+  //   keyframe kini lewat Motion Runtime (satu pipeline, SPEC §31); perilaku
+  //   publik playGesture("nama") identik.
   function playGesture(name) {
     if (!state.model || !name) return;
 
-    // Check if it's a native motion group request
+    // 1) Native motion group (nama grup polos ATAU id berprefiks motion_).
     if (typeof name === 'string') {
       const g = name.replace(/^motion_/, '');
       if (state.caps && state.caps.motionGroups && state.caps.motionGroups.includes(g)) {
-        try {
-          state.model.motion(g, -1, 2);
-          state.impulse = Math.min(1.0, state.impulse + 0.3);
-          console.log('[Live2D] Playing native motion gesture:', g);
-          return;
-        } catch (e) { console.warn('[Live2D] Failed to play native motion:', e); }
+        playNativeGroup(g);
+        return;
       }
     }
 
+    // 2) User 'gerak' preset, lalu 3) registry/builtin. sanitizeSteps() tetap
+    //    dijalankan DI SINI saat apply — sheets/*.json bisa di-edit tangan
+    //    setelah disimpan, jadi cek di jalur simpan saja mudah dilewati.
     const preset = findGerakPreset(name);
-    // sanitizeSteps() runs HERE, at apply time, not when the preset was saved:
-    // sheets/*.json is hand-editable after the fact, so a save-path-only check
-    // is trivially bypassed. Same reasoning as clamping param values to the
-    // Cubism range at apply. Applies to user-written presets and (if ever
-    // enabled) AI-proposed ones alike, because both arrive through this door.
     const steps = preset ? sanitizeSteps(preset.steps) : GESTURE_LIBRARY[name];
-    if (!steps || !steps.length) return;
-    const P = state.aiPose;
-    // Snapshot the CURRENT target (whatever EMOTION/HEAD just set) so every
-    // delta composes on top of it, not on top of a previous gesture's leftovers.
-    const base = { ax:P.ax||0, ay:P.ay||0, ex:P.ex||0, ey:P.ey||0, bodyX:P.bodyX||0, bodyY:P.bodyY||0, bodyZ:P.bodyZ||0, mouthForm:P.mouthForm||0 };
-    const myToken = ++gestureToken;
-    let t = 0;
-    for (const step of steps) {
-      setTimeout(() => {
-        if (myToken !== gestureToken) return;   // a newer gesture superseded this one
-        const d = step.d || {};
-        for (const k in base) P[k] = base[k] + (d[k] || 0);
-        state.impulse = Math.min(1.0, state.impulse + 0.22);
-      }, t);
-      t += step.ms;
+    if (steps && steps.length) {
+      // Gesture bawaan sudah terdaftar di registry (dikonversi ke keyframe saat
+      // init), jadi diputar langsung dari sana — tidak perlu asset ephemeral.
+      // Preset user tidak ada di registry, jadi dibungkus dulu.
+      if (!preset && haveMotionSystem && motionRegistry.has(name)) {
+        if (motionRuntime.play(name, { priority: 60 })) return;
+      }
+      if (!(haveMotionSystem && playStepsViaRuntime(name, steps))) legacyPlaySteps(steps);
+      return;
     }
+
+    // 4) Motion Asset buatan user dari Motion Studio (tak punya bentuk steps).
+    if (haveMotionSystem && motionRegistry.has(name)) motionRuntime.play(name, { priority: 60 });
+  }
+
+  // ── Raw parameter drive (Motion Studio) ────────────────────────
+  // Ditulis SETELAH applyOverrides() di setiap frame, jadi ini penulis terakhir
+  // dan menang atas semua jalur lain (idle fidget, emosi, sticky overrides).
+  //
+  // Ini yang membuat preview realtime bekerja. Menulis sekali saat slider
+  // digeser TIDAK cukup: pixi-live2d menjalankan internalModel.update()
+  // (physics/motion/expression/eyeBlink/focus/breath) di dalam render PIXI-nya
+  // sendiri, yang jalan SEBELUM rAF tick kita — jadi tulisan satu kali langsung
+  // ditimpa pada frame berikutnya. Nilai harus di-assert ulang tiap frame.
+  //
+  // DUA penggerak, sengaja: rAF tick untuk mempertahankan nilai, dan pemanggilan
+  // langsung dari setRawDrive() supaya efeknya seketika bahkan ketika rAF
+  // sedang tidak berjalan (tab background / webview tanpa compositing).
+  //
+  // Nilai di-clamp ke range asli parameter dari Cubism (state.paramRange) bila
+  // tersedia. paramRange hanya terisi setelah model di-inspeksi; kalau kosong,
+  // nilai ditulis apa adanya dan Cubism sendiri yang meng-clamp — jauh lebih
+  // baik daripada menolak menulis dan membuat editor terlihat mati.
+  function applyRawDrive() {
+    const d = state.rawDrive;
+    if (!d) return;
+    const cm = coreModel();
+    if (!cm) return;
+    state._rawDriveTicks = (state._rawDriveTicks || 0) + 1;
+    const wrote = {};
+    for (const id in d) {
+      let v = d[id];
+      if (!Number.isFinite(v)) continue;
+      const r = state.paramRange && state.paramRange[id];
+      if (r) v = Math.max(r.min, Math.min(r.max, v));
+      wrote[id] = v;
+      try { cm.setParameterValueById(id, v, 1); } catch (e) {}
+    }
+    state._rawDriveLast = wrote;
+  }
+
+  // Set/hapus nilai raw. `patch` = { paramId: number|null }; null menghapus
+  // param itu dari drive (kembali ke kendali normal), sedangkan clearRawDrive()
+  // melepas SEMUANYA sekaligus saat editor ditutup.
+  //
+  // Nilai ditulis LANGSUNG di sini, tidak menunggu frame berikutnya — pola yang
+  // sama dengan setSticky(). Dua alasan, keduanya nyata:
+  //   1. Menunggu rAF menambah jeda sampai 16ms pada setiap gerakan slider;
+  //      untuk "live edit" itu terasa seperti lag.
+  //   2. rAF BISA mati total (tab background, jendela tersembunyi, webview yang
+  //      tidak meng-compositing). Tanpa penulisan langsung, menggeser slider
+  //      pada kondisi itu tidak menghasilkan apa pun sama sekali dan editor
+  //      terlihat rusak. Loop per-frame tetap diperlukan untuk MEMPERTAHANKAN
+  //      nilai melawan internalModel.update(); penulisan langsung memastikan
+  //      efeknya terjadi seketika.
+  function setRawDrive(patch) {
+    if (!patch || typeof patch !== 'object') return;
+    if (!state.rawDrive) state.rawDrive = {};
+    if (!state.rawDrivePrev) state.rawDrivePrev = {};
+    for (const id in patch) {
+      const v = patch[id];
+      if (v == null) {
+        // Dilepas: pulihkan nilai sebelum drive menyentuhnya. Parameter yang
+        // tidak dikemudikan sistem lain tidak akan pernah kembali sendiri.
+        if (id in state.rawDrivePrev) {
+          try {
+            const cm = coreModel();
+            if (cm) cm.setParameterValueById(id, state.rawDrivePrev[id], 1);
+          } catch (e) {}
+          delete state.rawDrivePrev[id];
+        }
+        delete state.rawDrive[id];
+      } else if (Number.isFinite(Number(v))) {
+        if (!(id in state.rawDrivePrev)) state.rawDrivePrev[id] = readParam(id);
+        state.rawDrive[id] = Number(v);
+      }
+    }
+    if (!Object.keys(state.rawDrive).length) state.rawDrive = null;
+    applyRawDrive();
+  }
+  function clearRawDrive() {
+    // Pulihkan semua parameter yang pernah dikemudikan, lalu buang state-nya.
+    const prev = state.rawDrivePrev;
+    if (prev) {
+      const cm = coreModel();
+      for (const id in prev) {
+        try { if (cm) cm.setParameterValueById(id, prev[id], 1); } catch (e) {}
+      }
+    }
+    state.rawDrive = null;
+    state.rawDrivePrev = null;
+  }
+
+  // Daftar parameter LENGKAP milik model yang sedang dimuat, langsung dari
+  // Cubism Core — bukan 8 peran semantik. Inilah sumber track Motion Studio.
+  //
+  // Sheet dipakai lebih dulu karena di sana ada label + kategori hasil
+  // inspeksi/anotasi user; kalau sheet belum ada, enumerasi langsung dari core
+  // supaya editor tetap bisa dipakai tanpa menunggu Inspeksi Model.
+  function listModelParams() {
+    const sheet = state.lastSheet;
+    if (sheet && Array.isArray(sheet.params) && sheet.params.length) {
+      return sheet.params.map(p => ({
+        id: p.id,
+        label: p.label || p.id,
+        group: resolveParamGroup(sheet, p.id, p.group),
+        min: Number(p.min), max: Number(p.max), def: Number(p.def),
+        userNote: p.userNote || '',
+        estimated: !!p.estimated,
+      })).filter(p => Number.isFinite(p.min) && Number.isFinite(p.max));
+    }
+    const out = [];
+    const cm = coreModel();
+    if (!cm) return out;
+    // Jalur langsung ke Cubism Core. Objek yang dipegang pixi-live2d adalah
+    // CubismModel, yang TIDAK punya getParameterIds() — daftar id hidup di
+    // typed array `parameters` milik model native di bawahnya. Ini jalur yang
+    // sama dengan inspectModel(); memakai nama method yang salah membuat
+    // fungsi ini mengembalikan array kosong secara senyap dan panel parameter
+    // Motion Studio terlihat "tidak punya parameter apa pun".
+    try {
+      const gm = cm.getModel ? cm.getModel() : cm;
+      const P = gm && gm.parameters;
+      if (P && P.ids && P.ids.length) {
+        for (let i = 0; i < P.ids.length; i++) {
+          const id = P.ids[i];
+          if (!id) continue;
+          out.push({
+            id, label: id, group: 'Lainnya',
+            min: Number(P.minimumValues[i]), max: Number(P.maximumValues[i]),
+            def: Number(P.defaultValues[i]),
+            userNote: '', estimated: false,
+          });
+        }
+      } else if (typeof gm.getParameterCount === 'function' && typeof gm.getParameterIds === 'function') {
+        // Wrapper yang memang menyediakan accessor (versi runtime lain).
+        const ids = gm.getParameterIds();
+        const mins = gm.getParameterMinimumValues();
+        const maxs = gm.getParameterMaximumValues();
+        const defs = gm.getParameterDefaultValues();
+        for (let i = 0; i < gm.getParameterCount(); i++) {
+          const id = ids[i];
+          if (!id) continue;
+          out.push({
+            id, label: id, group: 'Lainnya',
+            min: Number(mins[i]), max: Number(maxs[i]), def: Number(defs[i]),
+            userNote: '', estimated: false,
+          });
+        }
+      }
+    } catch (e) { console.warn('[params] enumerasi langsung gagal:', e.message); }
+    return out.filter(p => Number.isFinite(p.min) && Number.isFinite(p.max));
   }
 
   window.__live2dAgent = {
@@ -4356,6 +4716,61 @@
     // ── Play a named gesture ("gesture verb") — see GESTURE_LIBRARY above.
     playGesture,
     gestureNames: () => Object.keys(GESTURE_LIBRARY),
+    // ── Motion Studio runtime surface ──
+    // playMotion menerima ID APAPUN dari registry (builtin / motion_<group> /
+    // Motion Asset user) dan mengembalikan false bila ditolak scheduler
+    // (prioritas lebih rendah / cooldown LLM). Dipakai agent.js (Phase 5) dan
+    // editor (Phase 3) — satu pintu pemutaran, bukan jalur kedua.
+    playMotion: (id, opts) => (haveMotionSystem ? motionRuntime.play(id, opts) : false),
+    stopMotion: (id) => (haveMotionSystem ? motionRuntime.stop(id) : false),
+    stopAllMotions: () => { if (haveMotionSystem) motionRuntime.stopAll(); },
+    getActiveMotion: () => (haveMotionSystem ? motionRuntime.getActive() : null),
+    // Editor (Phase 3) mendaftarkan/menghapus Motion Asset milik user secara
+    // live — registry adalah cache; file tetap disimpan lewat /api/motions.
+    registerUserMotion: (asset) => {
+      if (!haveMotionSystem) return { ok: false, error: 'modul motion tidak termuat' };
+      const r = MotionDSL.sanitizeMotionAsset(asset, { requireTracks: true, source: 'user' });
+      if (!r.ok) return { ok: false, error: r.errors.join('; ') };
+      if (motionRegistry.has(r.asset.id)) {
+        const prev = motionRegistry.get(r.asset.id);
+        if (prev.source !== 'user') return { ok: false, error: 'nama "' + r.asset.id + '" dipakai entri ' + prev.source };
+      }
+      motionRegistry.register(r.asset, { overwrite: true });
+      return { ok: true, asset: r.asset };
+    },
+    removeUserMotion: (id) => (haveMotionSystem ? motionRegistry.remove(id, 'user') : false),
+    listRegistryMotions: () => (haveMotionSystem ? motionRegistry.list() : []),
+    // Kunci model aktif — dipakai Motion Studio sebagai ?model= pada /api/motions,
+    // sehingga penamaan file motion konsisten dengan sheets/.
+    modelKey: currentModelKey,
+    // Freeze yang SAMA dengan editor preset (bukan mekanisme kedua). persistent
+    // = tahan sampai unfreeze eksplisit, tanpa auto-resume 10 detik.
+    freezeForEdit: (statusEl, persistent) => { if (editorFreezeApi) editorFreezeApi.freeze(statusEl, persistent); },
+    unfreezeForEdit: () => { if (editorFreezeApi) editorFreezeApi.unfreeze(); },
+    // Peran semantik → parameter asli model, untuk Mode Lanjutan Motion Studio.
+    roleIdFor: (role) => roleId(role),
+    // ── Raw parameter drive (Motion Studio) ──
+    // setRawDrive({ ParamAngleX: 12 }) menahan nilai itu SETIAP frame sampai
+    // dihapus, jadi preview benar-benar realtime meski internalModel.update()
+    // menimpa parameter di antara frame. null = lepas param itu.
+    setRawDrive,
+    clearRawDrive,
+    // Debug/QA: baca nilai raw drive yang sedang berlaku tanpa memberi akses
+    // tulis ke state internal.
+    _rawDrive: () => ({
+      values: state.rawDrive ? Object.assign({}, state.rawDrive) : null,
+      ticks: state._rawDriveTicks || 0,
+      tickCount: state._tickCount || 0,
+      hasCore: !!coreModel(),
+      lastWrite: state._rawDriveLast || null,
+      rangeCount: state.paramRange ? Object.keys(state.paramRange).length : 0,
+      range: state.rawDrive ? Object.keys(state.rawDrive).map(id => ({ id, r: state.paramRange && state.paramRange[id] })) : [],
+    }),
+    // Daftar parameter LENGKAP model ini (id, label, kategori, min/max/def).
+    listModelParams,
+    // Nilai parameter saat ini — dipakai editor untuk menyeed nilai keyframe
+    // baru dari pose yang sedang terlihat.
+    readParameter: (id) => readParam(id),
     // ── Capability profile: describes what this model can do ──
     getCapabilityProfile,
 
@@ -5687,12 +6102,30 @@
       // character context; empty string when unset.
       userNote: typeof sheet.userNote === 'string' ? sheet.userNote : '',
       // Named gesture verbs — model-agnostic + native motion groups from model
-      // + user 'gerak' presets. The LLM only ever PICKS a name from this list;
-      // it never authors timed keyframes (same reason min/max stay locked to
-      // Cubism: a timed sequence is far harder to validate than one number).
-      gestures: Object.keys(GESTURE_LIBRARY).concat(
-        Array.isArray(sheet.motionGroups) ? sheet.motionGroups.map(g => 'motion_' + g) : []
-      ).concat(presetNames('gerak')),
+      // + user 'gerak' presets + Motion Studio user motions (aiEnabled saja).
+      // The LLM only ever PICKS a name from this list; it never authors timed
+      // keyframes (same reason min/max stay locked to Cubism: a timed sequence
+      // is far harder to validate than one number).
+      gestures: (() => {
+        const list = Object.keys(GESTURE_LIBRARY).concat(
+          Array.isArray(sheet.motionGroups) ? sheet.motionGroups.map(g => 'motion_' + g) : []
+        ).concat(presetNames('gerak'));
+        if (haveMotionSystem) {
+          for (const a of motionRegistry.list()) {
+            if (a.source === 'user' && a.aiEnabled !== false && !list.includes(a.id)) list.push(a.id);
+          }
+        }
+        return list;
+      })(),
+      // Katalog Motion Studio untuk LLM (SPEC §19): id + description + tags +
+      // compatibleEmotions, TANPA keyframe. Phase 5 menyuntikkan ini ke prompt;
+      // dipisah dari `gestures` supaya directive [GESTURE:] lama tetap bekerja
+      // tanpa diubah.
+      motionCatalog: haveMotionSystem
+        ? motionRegistry.list()
+            .filter(a => a.source === 'user' && a.aiEnabled !== false && (a.description || a.tags.length))
+            .map(a => MotionDSL.summaryForLLM(a))
+        : [],
       hasHeadControl: sheet.controls.head,
       hasEyeControl: sheet.controls.eyes,
       hasMouthControl: sheet.controls.mouth,

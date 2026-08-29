@@ -152,8 +152,8 @@ describe("assetDurationMs", () => {
     expect(assetDurationMs(asset)).toBe(1500);
   });
 
-  it("has minimum of 100ms", () => {
+  it("has minimum of 200ms", () => {
     const asset = { duration: 0 } as MotionAsset;
-    expect(assetDurationMs(asset)).toBe(100);
+    expect(assetDurationMs(asset)).toBe(200);
   });
 });

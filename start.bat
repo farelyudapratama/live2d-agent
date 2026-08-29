@@ -27,29 +27,28 @@ if %ERRORLEVEL% EQU 0 (
 :: 2) Node fallback (v1 server.js ada di ../live2d-agent)
 where node >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo   [!] Bun tidak ketemu, fallback ke Node (live2d-agent/server.js)...
-    if exist "..\live2d-agent\server.js" (
-        node "..\live2d-agent\server.js"
-        goto :end
-    )
+    echo   [!] Bun tidak ketemu. v2 butuh Bun (server pakai Bun.serve + import TS).
+    echo   Install Bun: powershell -c "irm bun.sh/install.ps1 | iex"
+    echo   (Tidak fallback ke v1 — v2 self-contained, tidak bergantung repo v1.)
+    pause
+    goto :end
 )
 
-:: 3) Python fallback
+:: 3) Python fallback — ditolak (v2 self-contained, butuh Bun)
 where python >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo   Fallback Python...
-    python "..\live2d-agent\server.py"
+    echo   [!] v2 butuh Bun untuk menjalankan server TS. Python fallback v1 tidak dipakai.
+    pause
     goto :end
 )
 where py >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    py "..\live2d-agent\server.py"
+    echo   [!] v2 butuh Bun untuk menjalankan server TS. Python fallback v1 tidak dipakai.
+    pause
     goto :end
 )
 
-echo   [!] Bun / Node / Python tidak ditemukan.
-echo   Install Bun: powershell -c "irm bun.sh/install.ps1 | iex"
-echo   atau Node: https://nodejs.org
+echo   [!] Bun tidak ditemukan. Install: powershell -c "irm bun.sh/install.ps1 | iex"
 pause
 exit /b 1
 

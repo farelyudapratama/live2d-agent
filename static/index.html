@@ -614,18 +614,16 @@
        decide which of the model's own clips are safe to play for a given
        emotion. Without it app.js silently falls back to synthetic gestures. -->
   <script src="js/motion-taxonomy.js"></script>
-  <!-- Motion Studio (SPEC): DSL → Registry → Runtime. Harus dimuat sebelum
-       app.js — app.js membangun registry saat startup dan mem-bridge runtime
-       ke state.aiPose. Tanpa ketiganya app.js tetap jalan (gesture fallback
-       jalur lama), tapi Motion Studio mati. -->
-  <script src="js/motion-dsl.js"></script>
-  <script src="js/motion-registry.js"></script>
-  <script src="js/motion-runtime.js"></script>
+  <!-- TS client core (source-of-truth): DSL → Registry → Runtime installed as
+       window.MotionDSL / MotionRegistry / MotionRuntime, and the agent brain as
+       window.__agent. Built from src/client/* by `bun run build`. Classic script
+       (iife) so it runs in document order BEFORE app.js, exactly like the old
+       motion-*.js. app.js keeps owning the model loader, render loop and UI. -->
+  <script src="js/bundle.js"></script>
   <script src="js/app.js"></script>
   <!-- Motion Studio UI: TERISOLASI (CONSTRAINTS §9). Dimuat SETELAH app.js
        karena memakai window.__live2dAgent (registry, runtime, sheet). -->
   <script src="js/motion-editor.js"></script>
-  <script src="agent.js"></script>
   <script type="module" src="js/camera-presence.js"></script>
 </body>
 </html>

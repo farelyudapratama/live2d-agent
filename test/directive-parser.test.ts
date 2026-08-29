@@ -112,6 +112,22 @@ describe("guessEmotion", () => {
   it("defaults to normal", () => {
     expect(guessEmotion("Hello world")).toBe("normal");
   });
+
+  // Regression: cakupan keyword v1 (agent.js:489-499) harus utuh.
+  it("keeps v1 keyword coverage (tersenyum branch + restored keywords)", () => {
+    expect(guessEmotion("makasih ya!")).toBe("senang");
+    expect(guessEmotion("halo, hai!")).toBe("tersenyum");
+    expect(guessEmotion("ayok dekat sama aku")).toBe("malu");
+    expect(guessEmotion("loo kok bisa?!")).toBe("kaget");
+    expect(guessEmotion("aku gamau!")).toBe("kesal");
+    expect(guessEmotion("entahlah")).toBe("bingung");
+  });
+
+  it("is null-safe like v1 stripDirectives", () => {
+    expect(guessEmotion("")).toBe("normal");
+    expect(stripDirectives(undefined as any)).toBe("");
+    expect(hasDirectives(undefined as any)).toBe(false);
+  });
 });
 
 describe("segmentTextFallback", () => {
@@ -123,5 +139,17 @@ describe("segmentTextFallback", () => {
   it("returns at least one segment", () => {
     const segs = segmentTextFallback("single sentence");
     expect(segs).toHaveLength(1);
+  });
+
+  // Regression: fallback v1 selalu memberi gesture (EMOTION_GESTURE_FALLBACK),
+  // supaya segmen tanpa directive tetap menggerakkan karakter.
+  it("assigns a gesture to every segment (v1 parity)", () => {
+    const segs = segmentTextFallback("Aku senang! Lalu aku sedih.");
+    for (const s of segs) expect(s.actions.gesture).toBeTruthy();
+  });
+
+  it("BODY parse coerces NaN to 0 like v1", () => {
+    const segs = parseSegments("[BODY:a,b] tes");
+    expect(segs[0].actions.body).toEqual({ x: 0, y: 0, z: 0 });
   });
 });

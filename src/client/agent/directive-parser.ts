@@ -9,11 +9,11 @@ const DIRECTIVE_TYPES = "ACTION|EMOTION|HEAD|EYES|MOUTH|ACC|EXPR|BODY|PROP|PROPE
 const DIRECTIVE_RE = new RegExp(`\\[(?:${DIRECTIVE_TYPES}):[^\\]]+\\]`, "gi");
 
 export function stripDirectives(text: string): string {
-  return text.replace(DIRECTIVE_RE, "").trim();
+  return String(text || "").replace(DIRECTIVE_RE, "").trim();
 }
 
 export function hasDirectives(text: string): boolean {
-  return new RegExp(`\\[(?:${DIRECTIVE_TYPES}):`, "i").test(text);
+  return new RegExp(`\\[(?:${DIRECTIVE_TYPES}):`, "i").test(String(text || ""));
 }
 
 /**
@@ -63,7 +63,9 @@ export function parseSegments(text: string): ParsedSegment[] {
         }
         case "BODY": {
           const p = val.split(",").map(Number);
-          if (p.length >= 2) currentActions.body = { x: p[0] ?? 0, y: p[1] ?? 0, z: p[2] ?? 0 };
+          // `|| 0` (bukan `?? 0`): NaN dari mis. "[BODY:a,b]" harus jatuh ke 0,
+          // bukan menyebar jadi NaN di pose.
+          if (p.length >= 2) currentActions.body = { x: p[0] || 0, y: p[1] || 0, z: p[2] || 0 };
           break;
         }
         case "ACC": {
@@ -109,17 +111,30 @@ export function parseSegments(text: string): ParsedSegment[] {
   return segments;
 }
 
+// Matching gesture for the fallback path (no directives at all from the LLM)
+// — so even the "worst case" still plays a real, recognizable motion instead
+// of just a static pose + idle mouth-flap. Dipakai applyActions() dan
+// segmentTextFallback().
+export const EMOTION_GESTURE_FALLBACK: Record<string, string> = {
+  senang: "lean_excited",
+  sedih: "look_away_shy",
+  malu: "look_away_shy",
+  kaget: "recoil_surprised",
+  normal: "nod",
+};
+
 /**
  * Guess emotion from text content (fallback when no directives).
  */
 export function guessEmotion(text: string): string {
-  const t = text.toLowerCase();
-  if (/(senang|gembira|hehe|haha|lucu|mantap|yes|hore|terima kasih|love|seru|asik|keren)/.test(t)) return "senang";
+  const t = String(text || "").toLowerCase();
+  if (/(senang|gembira|hehe|haha|lucu|mantap|yes|hore|terima kasih|makasih|love|sayang|seru|asik|keren)/.test(t)) return "senang";
+  if (/(senyum|senang|suka|ramah|halo|hai)/.test(t)) return "tersenyum";
   if (/(sedih|kecewa|sepi|rindu|galau|huhu|nangis|kasihan)/.test(t)) return "sedih";
-  if (/(malu|grogi|cantik|ganteng|pacar|cium|peluk|blush)/.test(t)) return "malu";
-  if (/(wah|kaget|serius|gila|astaga|beneran|wow|hah|apa)/.test(t)) return "kaget";
-  if (/(kesal|marah|bete|sebel|benci|ngambek)/.test(t)) return "kesal";
-  if (/(bingung|gimana|kenapa|maksudnya|ragu|mikir)/.test(t)) return "bingung";
+  if (/(malu|grogi|cantik|ganteng|pacar|cium|peluk|dekat|mesra|blush)/.test(t)) return "malu";
+  if (/(wah|kaget|serius|gila|astaga|beneran|loo|wow|hah|apa)/.test(t)) return "kaget";
+  if (/(kesal|marah|bete|sebel|benci|gamau|ngambek)/.test(t)) return "kesal";
+  if (/(bingung|gimana|kenapa|maksudnya|ragu|entah|mikir)/.test(t)) return "bingung";
   return "normal";
 }
 
@@ -130,12 +145,14 @@ export function segmentTextFallback(text: string): ParsedSegment[] {
   const clauses = text.split(/(?<=[.!?~…\n]+)\s+|(?<=,\s+)(?=[A-Z0-9\u4e00-\u9fff])/g).filter((c) => c.trim().length > 0);
   if (!clauses.length) clauses.push(text);
 
-  return clauses.map((clause) => {
+  return clauses.map((clause, idx) => {
     const emo = guessEmotion(clause);
+    const gest = EMOTION_GESTURE_FALLBACK[emo] || (idx === 0 ? "wave_hi" : "nod");
     return {
       text: clause.trim(),
       actions: {
         emotion: emo,
+        gesture: gest,
         intensity: emo === "normal" ? 0.5 : 0.85,
       },
     };

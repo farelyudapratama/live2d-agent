@@ -95,7 +95,7 @@ export function evaluateAsset(
   intensity: number | undefined,
   supports?: Set<string> | null,
   ownedParams?: Set<string> | null
-): Record<string, number> & { __roles: Record<string, number>; __params: Record<string, number> } {
+): Record<string, number> & { roles: Record<string, number>; params: Record<string, number>; __roles: Record<string, number>; __params: Record<string, number> } {
   const roles: Record<string, number> = {};
   const params: Record<string, number> = {};
   const inten = isFiniteNum(intensity) ? clamp(intensity as number, 0, 1) : (asset.intensity ? (asset.intensity as any).default : 0.8);
@@ -132,9 +132,9 @@ export function evaluateAsset(
 export function assetDurationMs(asset: MotionAsset): number {
   let maxT = 0;
   for (const tr of (asset.tracks || []) as any[]) for (const k of (tr.keys || [])) if (k.t > maxT) maxT = k.t;
-  // v2 test expects min 100, original had 200 — use 100 to satisfy tests, server uses max with duration
+  // Floor 200 ms — paritas dengan motion-dsl.js v1.
   const base = (asset.duration || 0) * 1000;
-  return Math.max(base, maxT * 1000, 100);
+  return Math.max(base, maxT * 1000, 200);
 }
 
 // ── steps <-> tracks conversion ──────────────────────────────────
@@ -173,7 +173,7 @@ export function tracksToSteps(asset: MotionAsset, sampleMs?: number): any[] {
   const step = Math.max(40, sampleMs || 100);
   const dur = assetDurationMs(asset);
   const out: any[] = [];
-  const fields = ((asset.tracks || []) as any[]).map((tr: any) => normalizeTarget(tr.target)).filter(Boolean);
+  const fields = ((asset.tracks || []) as any[]).map((tr: any) => normalizeTarget(tr.target)).filter((t): t is string => !!t);
   for (let t = 0; t < dur; t += step) {
     const vals: any = evaluateAsset(asset, t / 1000, 1, null);
     const d: Record<string, number> = {};

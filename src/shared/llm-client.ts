@@ -71,7 +71,9 @@ async function postJson(urlStr: string, body: string, headers: Record<string, st
       signal: controller.signal,
     });
     const text = await resp.text();
-    if (text.length > MAX_RESPONSE_BYTES) throw new Error("respon LLM terlalu besar");
+    // Cap 2 MB dihitung dalam BYTE (bukan karakter) — balasan CJK bisa 3x lebih
+    // besar dalam byte daripada panjang stringnya.
+    if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("respon LLM terlalu besar");
     let json: any;
     try { json = JSON.parse(text); } catch { throw new Error("respon bukan JSON: " + text.slice(0, 200)); }
     if (!resp.ok) {
@@ -107,7 +109,7 @@ export async function callLLM(conn: Connection, messages: ChatMessage[], clientS
   if (provider === "mock") {
     const last = messages.filter((m) => m.role === "user").pop()?.content ?? "";
     await new Promise((r) => setTimeout(r, 300));
-    return `Halo! Kamu bilang: "${last}". (Mode mock)`;
+    return `Halo! Kamu bilang: "${last}". (Mode mock — isi apiKey di config.json untuk LLM sungguhan.)`;
   }
   if (provider === "gemini") {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -147,7 +149,7 @@ export function llmWithFallback(
       const conn = order[idx++];
       if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) return tryNext();
       callLLM(conn, messages, clientSystem).then((reply) => {
-        conn.testStatus = "success"; (conn as any).lastError = ""; conn.rateLimitedUntil = undefined as any;
+        conn.testStatus = "success"; (conn as any).lastError = ""; conn.rateLimitedUntil = null as any;
         persist(conns);
         resolve({ reply, used: conn.id });
       }).catch((err) => {

@@ -139,6 +139,12 @@ expression file(s) for <model>`.
 
 - **Kamera opt-in, default MATI.** Inferensi 100% lokal di browser
   (transformers.js); frame webcam tidak pernah di-upload ke server mana pun.
+- **STT (🎤) push-to-talk, filosofi yang sama.** Inferensi 100% lokal
+  (Whisper via transformers.js); audio tidak pernah di-upload. Tidak ada
+  perekam latar, dan memulai rekam **ditolak saat karakter bicara TTS**
+  (anti-echo — kalau tidak, karakter mentranskripsi suaranya sendiri).
+  Integrasi nol perubahan `app.js`: `#btn-mic`, guard `state.talking` via
+  `window.__l2dDebug`, kirim lewat klik `#btn-bubble`.
 - **Ekspresi wajah user = INPUT mood**, bukan untuk dicermin balik tiap frame.
   Mood adalah gabungan kamera + teks ketikan.
 - **Presence punya satu hub.** Dua produsen (modul webcam `static/js/camera-presence.js`,

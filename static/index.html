@@ -67,7 +67,7 @@
 
     <!-- Input -->
     <div class="chat-input">
-      <button id="btn-mic" title="Voice (segera hadir)" disabled>🎤</button>
+      <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">🎤</button>
       <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
       <button id="btn-bubble">➤</button>
     </div>
@@ -621,5 +621,9 @@
        karena memakai window.__live2dAgent (registry, runtime, sheet). -->
   <script src="js/motion-editor.js"></script>
   <script type="module" src="js/camera-presence.js"></script>
+  <!-- STT dua arah (push-to-talk): Whisper lokal via transformers.js — audio
+       tidak pernah di-upload. Self-wire ke #btn-mic; konfigurasi dari
+       /api/config section `stt`. -->
+  <script type="module" src="js/voice-input.js"></script>
 </body>
 </html>

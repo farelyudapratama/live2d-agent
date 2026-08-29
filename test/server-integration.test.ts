@@ -42,7 +42,10 @@ describe("server API parity (dispatcher-level)", () => {
     ["GET", "/api/model/motion-taxonomy"],
     ["POST", "/api/model/import-zip"],
     ["POST", "/api/model/upload"],
-    ["DELETE", "/api/model/lumine"],
+    // PENTING: JANGAN pakai nama model sungguhan di sini — handleModelDelete
+    // benar-benar mengeksekusi rmSync. Pakai nama yang pasti tidak ada supaya
+    // route tetap teruji tanpa menghapus data user.
+    ["DELETE", "/api/model/__no_such_model_test__"],
     ["GET", "/api/motions"],
     ["POST", "/api/motions"],
     ["PUT", "/api/motions/some-id"],

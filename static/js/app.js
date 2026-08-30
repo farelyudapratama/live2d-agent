@@ -1921,6 +1921,23 @@
       $('#controls-panel').classList.toggle('hidden');
     });
 
+    // Drawer kontrol kini overlay (inset:0) — tanpa tombol ini dia menutupi
+    // tombol ⚙️-nya sendiri dan sekali kebuka tak bisa ditutup.
+    $('#btn-close-controls').addEventListener('click', () => {
+      $('#controls-panel').classList.add('hidden');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const panel = $('#controls-panel');
+      if (!panel || panel.classList.contains('hidden')) return;
+      // Motion Studio punya penanganan Escape-nya sendiri (listener-nya
+      // terdaftar lebih belakang) — biarkan dia yang menutup dulu.
+      const ms = document.getElementById('motion-studio-popup');
+      if (ms && !ms.classList.contains('hidden')) return;
+      if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      panel.classList.add('hidden');
+    });
+
     // Tabs inside controls panel
     $$('.tab').forEach(tab => {
       tab.addEventListener('click', () => {

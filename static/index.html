@@ -111,11 +111,14 @@
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
            Semua ID & struktur pane dipertahankan persis — wiring app.js bergantung padanya. -->
       <div id="controls-panel" class="hidden">
-        <div class="tabs">
-          <button class="tab active" data-tab="model">📁 Model</button>
-          <button class="tab" data-tab="sheet">📋 Sheet</button>
-          <button class="tab" data-tab="motion">🎬 Motion</button>
-          <button class="tab" data-tab="ai">⚙️ AI</button>
+        <div class="drawer-head">
+          <div class="tabs">
+            <button class="tab active" data-tab="model">📁 Model</button>
+            <button class="tab" data-tab="sheet">📋 Sheet</button>
+            <button class="tab" data-tab="motion">🎬 Motion</button>
+            <button class="tab" data-tab="ai">⚙️ AI</button>
+          </div>
+          <button id="btn-close-controls" class="drawer-close" title="Tutup panel (Esc)">✕</button>
         </div>
       <div class="tab-body">
 

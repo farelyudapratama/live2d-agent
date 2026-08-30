@@ -132,6 +132,11 @@
     // user-authored fields (userNote) can be carried across a re-inspection
     // even when localStorage is unavailable. Reset on model load.
     lastSheet: null,
+    // Mirror sheet FILE (data/sheets/) yang terakhir berhasil dibaca. existingUserFields()
+    // memakainya sebagai sumber ketiga: cache localStorage bisa kosong (browser baru /
+    // dibersihkan) padahal file berisi preset & catatan user — tanpa mirror ini,
+    // re-inspeksi di browser begitu akan MENGHAPUS tulisan user saat menimpa file.
+    lastFileSheet: null,
     // Micro-gesture scheduler state (neuro-sama-ish "always alive" feel).
     gesture: { timer: null, nextAt: 0, seed: Math.random() * 1000 },
     // ── Motion-clip taxonomy (semantic verbs) ──
@@ -442,6 +447,7 @@
         if (!modelPath) throw new Error('Belum ada model terpasang. Upload model lewat tab 📁 Model.');
       }
       state.modelPath = modelPath;
+      hideNoModelState();
       // Reset per-model derived state so a previous model's clips can't leak.
       state.motionTaxonomy = null;
       state.clipUntil = 0; state.clipName = null; state.clipStartedAt = 0;
@@ -480,6 +486,8 @@
         // Belongs to the model being replaced; carrying it over would leak the
         // previous character's userNote into the new model's sheet.
         state.lastSheet = null;
+        state.lastFileSheet = null;   // mirror file model lama — jangan sampai
+                                      // field-nya terbawa ke re-inspeksi model baru
       }
       // The agent memoizes the capability profile; that cache belongs to the
       // model being replaced, so drop it here regardless of whether a model was
@@ -512,6 +520,10 @@
       applyModelConfig(loadModelConfigLocal());
 
       console.log('[Live2D] Model loaded:', state.model);
+      rememberModel(modelPath);
+      // Preload sheet file ke mirror: existingUserFields() butuh sumber field
+      // user sedini mungkin — cache localStorage saja tidak cukup (bisa kosong).
+      fetchSheetFile().catch(() => {});
 
       startBlink();
       startIdle();
@@ -544,7 +556,38 @@
       console.error('[Live2D] Failed to load model:', err);
       const p = $('#loader p');
       if (p) p.textContent = '❌ Gagal memuat model: ' + err.message;
+      // Tanpa satu pun model: undangan impor di stage, bukan loader mati
+      // yang menutupi seluruh UI (clone baru datang tanpa model).
+      if (String((err && err.message) || '').includes('Belum ada model')) showNoModelState();
     }
+  }
+
+  // ─── Empty state + ingat model terakhir ──────────────────────
+  // data/model/ di-gitignore (aset berlisensi), jadi clone baru datang kosong.
+  // showNoModelState() menyembunyikan loader dan menampilkan undangan impor
+  // di atas stage; hideNoModelState() dipanggil loadModel saat model berhasil
+  // dilemparkan ke jalur pemuatan.
+  function showNoModelState() {
+    const loader = $('#loader');
+    if (loader) loader.classList.add('done', 'fade-out', 'hidden');
+    const empty = $('#stage-empty');
+    if (empty) empty.classList.remove('hidden');
+    const st = $('#sb-state');
+    if (st) st.textContent = 'Tanpa model';
+    console.warn('[model] belum ada model terpasang — empty state ditampilkan');
+  }
+  function hideNoModelState() {
+    const empty = $('#stage-empty');
+    if (empty) empty.classList.add('hidden');
+  }
+  // Ingat model terakhir yang berhasil dibuka (segmen folder pertama dari
+  // path, mis. 'model/lumine/lumine.model3.json' → 'lumine') — boot berikutnya
+  // memuat yang itu. localStorage bisa terlarang: bukan fatal.
+  function rememberModel(modelPath) {
+    try {
+      const seg = String(modelPath).split('/');
+      if (seg[0] === 'model' && seg[1]) localStorage.setItem('live2d_last_model', seg[1]);
+    } catch (e) { /* abaikan */ }
   }
 
   // ─── Blink System (uses real parameter ids) ──────────────────
@@ -2176,10 +2219,25 @@
             </span>`;
           item.querySelector('.load').addEventListener('click', () => loadUserModel(name));
           item.querySelector('.del').addEventListener('click', async () => {
-            if (!confirm('Hapus model "' + name + '"?')) return;
+            // Sheet/preset/motion TIDAK ikut dihapus: semuanya hidup di data/
+            // dan berkunci dari nama folder model — impor ulang nama yang sama
+            // dan semua datanya tersambung kembali otomatis (fungsinya backup).
+            if (!confirm('Hapus model "' + name + '"?\n\nFolder model dihapus. Sheet, preset, dan gerakan buatanmu tetap disimpan — impor ulang model dengan nama yang sama dan datanya tersambung kembali otomatis.')) return;
             await fetch(API + '/api/model/' + encodeURIComponent(name), { method: 'DELETE' });
-            deleteCharacterSheet(name);  // clean up saved character sheet
+            deleteCharacterSheet(name);  // hanya cache sheet di localStorage; sumbernya (file data/) tetap ada
             refreshModels();
+            // Yang dihapus model yang sedang tampil? Muat penggantinya; kalau
+            // folder jadi kosong sama sekali, tampilkan empty-state pasang model.
+            const curName = state.modelPath ? String(state.modelPath).split('/')[1] : null;
+            if (curName === name) {
+              const auto = await resolveAnyModelPath();
+              if (auto) await loadModel(auto);
+              else {
+                try { app.stage.removeChild(state.model); state.model.destroy(); } catch (e) {}
+                state.model = null;
+                showNoModelState();
+              }
+            }
           });
           modelList.appendChild(item);
         }
@@ -2271,6 +2329,12 @@
     }
 
     if (pickBtn) pickBtn.addEventListener('click', () => folderInput && folderInput.click());
+    // Empty-state stage: tombol undangan impor meneruskan ke input yang SAMA
+    // dengan tab 📁 Model — satu jalur upload untuk semuanya, tanpa duplikasi.
+    const emptyFolderBtn = $('#btn-empty-folder');
+    if (emptyFolderBtn) emptyFolderBtn.addEventListener('click', () => folderInput && folderInput.click());
+    const emptyZipBtn = $('#btn-empty-zip');
+    if (emptyZipBtn) emptyZipBtn.addEventListener('click', () => { const z = $('#input-model-zip'); if (z) z.click(); });
     if (folderInput) folderInput.addEventListener('change', async () => {
       if (!folderInput.files || !folderInput.files.length) return;
       try { const n = await uploadFolder(folderInput.files, nameInput.value); await refreshModels(); loadUserModel(n); }
@@ -3848,10 +3912,24 @@
     // Auto-detect: load the first model the server actually has. Delegated to
     // resolveAnyModelPath() so this path and loadModel()'s own no-arg fallback
     // cannot drift apart.
-    const auto = await resolveAnyModelPath();
-    if (auto) { await loadModel(auto); return; }
-    // Nothing installed: loadModel() surfaces a proper "upload a model" error
-    // instead of failing on a path that was never going to exist.
+    let names = [];
+    try {
+      const r = await fetch(API + '/api/models');
+      const d = await r.json();
+      names = Array.isArray(d.models) ? d.models : [];
+    } catch (e) { console.warn('[boot] model list failed', e); }
+    if (!names.length) { showNoModelState(); return; }
+    // Model terakhir yang dibuka diingat di localStorage (per browser) dan
+    // divalidasi ke daftar server — kalau sudah dihapus, jatuh ke model pertama.
+    let pick = names[0];
+    try {
+      const last = localStorage.getItem('live2d_last_model');
+      if (last && names.includes(last)) pick = last;
+    } catch (e) { /* localStorage bisa terlarang — pakai model pertama */ }
+    try {
+      const r = await fetch(API + '/api/model/path?name=' + encodeURIComponent(pick));
+      if (r.ok) { const d = await r.json(); if (d.path) { await loadModel(d.path); return; } }
+    } catch (e) { console.warn('[boot] last/default load failed', e); }
     loadModel();
   })();
 
@@ -5134,6 +5212,7 @@
       const raw = localStorage.getItem(characterSheetKey());
       if (raw) prev = JSON.parse(raw);
     } catch (e) {}
+    if (!prev && state.lastFileSheet) prev = state.lastFileSheet;   // file = sumber user paling awal
     if (!prev && state.lastSheet) prev = state.lastSheet;
     if (!prev) return carried;
     for (const f of USER_AUTHORED_FIELDS) {
@@ -5994,7 +6073,12 @@
       const data = await res.json().catch(() => null);
       // Migrate on the way in: this is the boundary where a legacy on-disk sheet
       // (written before schemaVersion existed) enters the running app.
-      return data && data.params ? migrateSheet(data) : null;
+      const migrated = data && data.params ? migrateSheet(data) : null;
+      // Simpan mirror agar existingUserFields() tetap punya sumber field user
+      // walau cache localStorage kosong. Kegagalan baca TIDAK menghapus mirror
+      // lama — data yang pernah terbaca lebih baik daripada tidak sama sekali.
+      if (migrated) state.lastFileSheet = migrated;
+      return migrated;
     } catch (e) { return null; }
   }
 

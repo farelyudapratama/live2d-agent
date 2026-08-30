@@ -1139,6 +1139,24 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 
+/* ── Peran connection (multi-LLM role routing) ── */
+.conn-roles { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 8px; }
+.conn-roles label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text); cursor: pointer;
+}
+.conn-roles label:hover { color: var(--lamp-soft); }
+.conn-roles input { accent-color: var(--lamp); }
+.form-hint { display: block; font-size: 10.5px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.conn-role-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.conn-role-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px; padding: 1px 8px; border-radius: 999px;
+  background: rgba(245, 184, 92, .1); border: 1px solid rgba(245, 184, 92, .3);
+  color: var(--lamp-soft); white-space: nowrap;
+}
+.conn-role-tag.wild { background: rgba(255, 255, 255, .05); border-color: var(--line-soft); color: var(--muted); }
+
 /* ── Modal connection ─────────────────────────────────────────── */
 
 .modal {

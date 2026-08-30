@@ -131,22 +131,102 @@ export async function callLLM(conn: Connection, messages: ChatMessage[], clientS
 
 export interface LLMResult { reply: string; used: string; }
 
-export function llmWithFallback(
+// ── Multi-LLM role routing ─────────────────────────────────────
+// Satu LLM "serba bisa" menerima seluruh konteks (termasuk dulu: tabel
+// parameter) di prompt-nya, dan itu menurunkan mutu balasan teks. Dengan tag
+// role, prompt berat pindah ke connection yang memang bertugas memetakan
+// gerak, dan user bisa memakai "yang murah untuk gerak, yang pintar untuk
+// teks". Role kanonik SENGAJA kecil — tambah role baru berarti menambah
+// entri di sini + satu checkbox di UI, bukan sistem baru.
+export const LLM_ROLES = ["chat", "motion", "sheet"];
+
+/** Bersihkan field `roles`: buang non-string, trim/lowercase, dedupe,
+ *  drop role tak dikenal (dengan warning — jangan gagalkan boot). */
+export function normalizeRoles(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const r of raw) {
+    if (typeof r !== "string") continue;
+    const k = r.trim().toLowerCase();
+    if (!k) continue;
+    if (!LLM_ROLES.includes(k)) {
+      console.warn("[roles] role tidak dikenal diabaikan:", k);
+      continue;
+    }
+    if (!out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+/** true kalau connection ini boleh dipakai untuk `role`.
+ *  Absen/invalid/kosong = wildcard (semua role) — kompatibel mundur mutlak. */
+export function connHasRole(conn: Connection | null | undefined, role: string): boolean {
+  const roles = normalizeRoles(conn && conn.roles);
+  if (!roles.length) return true;
+  return roles.includes(role);
+}
+
+/**
+ * Urutan kandidat untuk sebuah role: connection yang MENANDAI role ini
+ * secara eksplisit diutamakan di atas wildcard, supaya menandai satu
+ * connection sebagai 'motion' benar-benar mengarahkan trafik motion ke sana.
+ * Kosong berarti "pakai urutan default llmWithFallback" (aktif dulu).
+ */
+export function orderForRole(role: string, conns: Connection[]): Connection[] {
+  const matching = conns.filter((c) => connHasRole(c, role));
+  if (!matching.length) {
+    console.warn("[roles] tidak ada connection untuk role \"" + role + "\" — pakai semua connection");
+    return [];
+  }
+  const explicit = conns.filter((c) => normalizeRoles(c.roles).includes(role));
+  return explicit.concat(matching.filter((c) => !explicit.includes(c)));
+}
+
+/**
+ * Panggil LLM untuk sebuah PERAN. Bukan pengganti llmWithFallback(): kebijakan
+ * retry/cooldown/persist tetap di sana (satu tempat). Yang ditambahkan di sini
+ * hanya penyaringan kandidat + preferensi urutan, lalu pekerjaan diserahkan.
+ * Aturan keras: kalau tidak ada connection yang menandai role ini, JANGAN
+ * gagal — jatuh ke urutan default (semua connection). Endpoint tidak boleh
+ * mati hanya karena user belum menandai role apa pun.
+ */
+export function llmForRole(
+  role: string,
   getConnections: () => Connection[],
   getActive: () => Connection | null,
   persist: (conns: Connection[]) => void,
   messages: ChatMessage[],
   clientSystem: string = ""
 ): Promise<LLMResult> {
+  const order = orderForRole(role, getConnections());
+  if (order.length) {
+    console.log("[roles] role=" + role + " -> " + order.map((c) => c.name || c.id).join(" > "));
+  }
+  return llmWithFallback(getConnections, getActive, persist, messages, clientSystem, order);
+}
+
+export function llmWithFallback(
+  getConnections: () => Connection[],
+  getActive: () => Connection | null,
+  persist: (conns: Connection[]) => void,
+  messages: ChatMessage[],
+  clientSystem: string = "",
+  order?: Connection[]
+): Promise<LLMResult> {
   return new Promise((resolve, reject) => {
     const conns = getConnections();
     if (!conns.length) { const e: any = new Error("Belum ada connection. Buka panel ⚙️ AI Connections."); e.httpStatus = 400; e.kind = "no-connections"; return reject(e); }
     const active = getActive();
-    const order = [active, ...conns.filter((c) => c !== active)].filter(Boolean) as Connection[];
+    // `order` opsional: daftar connection yang SUDAH diurutkan (dipakai
+    // llmForRole). Bila tidak diberikan, perilaku lama dipertahankan persis:
+    // active dulu, lalu sisanya urut config.
+    const order2 = (Array.isArray(order) && order.length)
+      ? order.filter(Boolean)
+      : [active, ...conns.filter((c) => c !== active)].filter(Boolean) as Connection[];
     let idx = 0;
     (function tryNext() {
-      if (idx >= order.length) { const e: any = new Error("Semua connection gagal (cek panel ⚙️ AI Connections)."); e.httpStatus = 502; e.kind = "all-failed"; return reject(e); }
-      const conn = order[idx++];
+      if (idx >= order2.length) { const e: any = new Error("Semua connection gagal (cek panel ⚙️ AI Connections)."); e.httpStatus = 502; e.kind = "all-failed"; return reject(e); }
+      const conn = order2[idx++];
       if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) return tryNext();
       callLLM(conn, messages, clientSystem).then((reply) => {
         conn.testStatus = "success"; (conn as any).lastError = ""; conn.rateLimitedUntil = null as any;
@@ -158,7 +238,7 @@ export function llmWithFallback(
         conn.testStatus = "error"; (conn as any).lastError = err.message;
         if (cls.shouldFallback) conn.rateLimitedUntil = new Date(Date.now() + (cls.cooldownMs || 30000)).toISOString() as any;
         persist(conns);
-        if (cls.shouldFallback && idx < order.length) tryNext();
+        if (cls.shouldFallback && idx < order2.length) tryNext();
         else { const e: any = new Error("LLM error [" + (conn.name || conn.id) + "]: " + err.message); e.httpStatus = 502; e.kind = "llm-error"; e.conn = conn; reject(e); }
       });
     })();

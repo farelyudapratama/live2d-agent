@@ -140,33 +140,17 @@ export class AgentBrain {
     const cap = this.capProfile as any;
     const sheet = cap.sheet;
 
-    // Detailed param reference from the character sheet
-    let paramRef = "";
-    if (sheet?.params?.length) {
-      const byGroup: Record<string, any[]> = {};
-      for (const p of sheet.params) {
-        (byGroup[p.group] = byGroup[p.group] || []).push(p);
-      }
-      paramRef = "\nDAFTAR PARAMETER LENGKAP (min..max, default):\n";
-      // When Cubism enumeration failed, every range below is a name-based guess.
-      // Say so explicitly: silently presenting a guess as a measured limit makes
-      // the model treat e.g. 30 as maximal when the rig actually allows 45.
-      if (sheet.rangesEstimated) {
-        paramRef +=
-          "⚠️ PERHATIAN: range di bawah TIDAK terukur dari model — ini estimasi\n" +
-          "dari nama parameter dan bisa salah. Pakai nilai konservatif (dekat default)\n" +
-          "dan jangan asumsikan min/max ini akurat.\n";
-      }
-      for (const g in byGroup) {
-        paramRef += g + ":\n";
-        for (const p of byGroup[g]) {
-          paramRef += `  ${p.id} (${p.label}): ${p.min}..${p.max}, default=${p.def}${p.estimated ? " [estimasi]" : ""}\n`;
-          // User-authored per-parameter description: AUTHORITATIVE context.
-          const pn = (p.userNote || "").trim();
-          if (pn) paramRef += `    📝 penjelasan user: ${pn.slice(0, 300)}\n`;
-        }
-      }
-    }
+    // CATATAN ARSITEKTUR — daftar parameter SENGAJA TIDAK dikirim ke pass ini
+    // (multi-LLM role routing). Dulu seluruh tabel parameter (id, min..max,
+    // default) plus setiap 📝 penjelasan user disuntikkan ke prompt pembicara:
+    // dengan model ber-223 parameter itu ±13.500 karakter (±3.400 token) yang
+    // dibayar ulang di SETIAP pesan, dan justru MENURUNKAN mutu balasan teks —
+    // pembicara tidak perlu tahu range untuk memilih kata. Angka + penjelasan
+    // per-parameter sekarang dikirim ke role 'motion' (Animation Director,
+    // /api/animate-text — lihat animateTextViaDirector). Yang tetap di sini
+    // hanya KOSAKATA: emosi, expression, properti, AKSESORIS (id-nya memang
+    // dibutuhkan untuk [ACC:]), dan gesture. Jangan kembalikan tabel parameter
+    // ke sini — dikunci test/llm-roles.test.ts (prompt-split + ACC safeguard).
 
     // User-authored character note. Delimited and labelled as description-only
     // so the model treats it as character background, not as new instructions.
@@ -205,8 +189,9 @@ ${cap.properties?.length ? "Properti (preset user, bisa kamu aktifkan otomatis):
 ${cap.accessories?.length ? cap.accessories.join(", ") : "tidak ada"}
 Format: [ACC:ParamXX:1] nyalakan, [ACC:ParamXX:0] matikan
 
-=== DAFTAR PARAMETER (dengan range aktual dari model) ===
-${paramRef || "Tidak ada data parameter."}
+=== GERAK ===
+Untuk gerakan, PILIH dari daftar gesture di bawah. Angka parameter mentah
+diurus sistem — kamu tidak perlu (dan tidak boleh) mengarang angka.
 
 === DAFTAR GESTURE (gerakan siap-pakai, PALING DIUTAMAKAN untuk gerak) ===
 ${cap.gestures?.length ? cap.gestures.join(", ") : DEFAULT_GESTURES.join(", ")}
@@ -246,7 +231,7 @@ Contoh pendek:
 1. SELALU sertakan [EMOTION:...] di setiap segment; TAMBAHKAN [GESTURE:...] di
    setiap momen yang ekspresif (jangan tiap segment kalau memang datar/netral)
 2. UTAMAKAN [GESTURE] daripada [HEAD]/[BODY] manual — hasilnya lebih jelas terbaca
-3. GUNAKAN range parameter yang benar dari daftar di atas kalau tetap pakai HEAD/EYES/BODY manual
+3. Nilai HEAD/EYES/BODY pakai range wajar (±30 untuk sudut, -1..1 untuk mata/mulut) — sistem yang memetakan ke parameter model
 4. Nyalakan aksesoris saat cocok (pipi merah saat malu, dll)
 5. Jangan pakai directive yang tidak ada di daftar
 6. Balasan tetap natural — directive tersembunyi dari user
@@ -294,6 +279,21 @@ Contoh pendek:
     profile: CapabilityProfile | null
   ): Promise<ParsedSegment[]> {
     try {
+      // Deskripsi per-parameter milik user, DIBATASI jumlahnya (24 entri ×
+      // 200 char — batas yang sama di server). Konteks otoritatif untuk
+      // director: kalau user menulis "ParamX = buka rahang", director tidak
+      // boleh menebak lain. Ini gantinya tabel parameter yang dicabut dari
+      // prompt pembicara (multi-LLM role routing).
+      const sheetParams = (profile && profile.sheet && profile.sheet.params) || [];
+      const paramNotes: Record<string, string> = {};
+      let noteCount = 0;
+      for (const p of sheetParams) {
+        if (noteCount >= 24) break;
+        if (p && p.id && typeof p.userNote === "string" && p.userNote.trim()) {
+          paramNotes[p.id] = p.userNote.trim().slice(0, 200);
+          noteCount++;
+        }
+      }
       const res = await fetch(API + "/api/animate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -306,6 +306,7 @@ Contoh pendek:
             gestures: profile?.gestures || DEFAULT_GESTURES,
             motions: (profile as any)?.motionCatalog || [],
           },
+          paramNotes,
         }),
       });
       if (!res.ok) throw new Error("Director HTTP " + res.status);

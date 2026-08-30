@@ -374,10 +374,15 @@ ok('dead PARAM_META labels were removed',
   !/label: 'Kepala Kiri\/Kanan'/.test(appSrc));
 // v2: otak agent kini TS — guard prompt yang sama mengarah ke brain.ts.
 const agentSrc = fs.readFileSync(path.join(ROOT, 'src', 'client', 'agent', 'brain.ts'), 'utf8');
-ok('the LLM prompt warns when ranges are estimated',
-  /sheet\.rangesEstimated/.test(agentSrc));
-ok('individual estimated params are flagged in the prompt',
-  /p\.estimated \? ["'] \[estimasi\]["']/.test(agentSrc));
+// v2 multi-LLM role routing: tabel parameter SENGAJA dicabut dari prompt
+// pembicara (±13.500 karakter / ±3.400 token per pesan pada model 223-param)
+// — peringatan "range estimasi" ikut tidak relevan karena range tidak dikirim
+// sama sekali. Invariant penggantinya: prompt pembicara bebas tabel range
+// TOTAL, dan penjelasan per-param pindah ke director (role 'motion').
+ok('the chat prompt carries NO param table (an estimate can never masquerade as a measurement)',
+  !/DAFTAR PARAMETER LENGKAP/.test(agentSrc) && !/p\.min\}\.\.\$\{p\.max/.test(agentSrc));
+ok('per-param userNote goes to the director (paramNotes), not the speaker',
+  /paramNotes/.test(agentSrc) && !/penjelasan user: \$\{/.test(agentSrc));
 
 section('8. sanitizeSteps() — timed keyframes are not trusted');
 const sanitizeSteps = sandbox.sanitizeSteps;

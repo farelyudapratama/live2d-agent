@@ -3,7 +3,7 @@
  * No external deps except Bun.
  */
 import { ConfigManager, queueJsonWrite, mergeEventsIntoConfig } from "../shared/config";
-import { llmWithFallback, callLLM } from "../shared/llm-client";
+import { llmWithFallback, callLLM, llmForRole, normalizeRoles } from "../shared/llm-client";
 import type { ChatMessage } from "../shared/types";
 import { sanitizeMotionAsset } from "../client/animation/motion-dsl";
 import { readdirSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from "fs";
@@ -182,7 +182,8 @@ async function handleAPI(req: Request): Promise<Response|null> {
 
   // config
   if(method==="GET" && path==="/api/config"){
-    const cfg=config.load(); const conns=cfg.connections.map(c=>{ const o={...c} as any; if(o.apiKey && !o.apiKey.startsWith("MASUKKAN")) o.apiKey=config.maskKey(o.apiKey); return o; });
+    const cfg=config.load(); const conns=cfg.connections.map(c=>{ const o={...c} as any; if(o.apiKey && !o.apiKey.startsWith("MASUKKAN")) o.apiKey=config.maskKey(o.apiKey); o.roles=normalizeRoles(o.roles);   // selalu array — UI tak perlu cek undefined
+    return o; });
     return json({ activeId:cfg.activeId, connections:conns, tts:cfg.tts||{}, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{} });
   }
   if(method==="POST" && path==="/api/config") return handleConfigPost(req);
@@ -230,8 +231,10 @@ async function handleConfigPost(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
   const action=body.action||"save"; const cfg=config.load(); let conns=[...(cfg.connections||[])];
   try{
-    if(action==="add"){ const id="conn_"+Date.now().toString(36); const conn=Object.assign({id,testStatus:"idle",provider:"openai-compatible"} as any, body.connection||{}); conn.id=id; conns.push(conn); if(!cfg.activeId) cfg.activeId=id; }
-    else if(action==="update"){ const i=conns.findIndex(c=>c.id===body.id); if(i<0) return json({error:"connection tidak ada"},404); const upd=body.connection||{}; if(!upd.apiKey||!String(upd.apiKey).trim()) upd.apiKey=conns[i].apiKey; conns[i]=Object.assign({},conns[i],upd); conns[i].id=body.id; }
+    if(action==="add"){ const id="conn_"+Date.now().toString(36); const conn=Object.assign({id,testStatus:"idle",provider:"openai-compatible"} as any, body.connection||{}); conn.id=id; // roles wajib dinormalisasi di server: UI bisa dilewati (curl, config.json diedit tangan), dan role palsu tidak boleh tersimpan.
+    conn.roles=normalizeRoles(conn.roles); conns.push(conn); if(!cfg.activeId) cfg.activeId=id; }
+    else if(action==="update"){ const i=conns.findIndex(c=>c.id===body.id); if(i<0) return json({error:"connection tidak ada"},404); const upd=body.connection||{}; if(!upd.apiKey||!String(upd.apiKey).trim()) upd.apiKey=conns[i].apiKey; // Bedakan "tidak mengirim roles" (pertahankan yang lama) dari "mengirim array kosong" (user sengaja mengosongkan = wildcard).
+    if(Object.prototype.hasOwnProperty.call(upd,"roles")) upd.roles=normalizeRoles(upd.roles); conns[i]=Object.assign({},conns[i],upd); conns[i].id=body.id; }
     else if(action==="delete"){ conns=conns.filter(c=>c.id!==body.id); if(cfg.activeId===body.id) cfg.activeId=conns[0]?.id||null; }
     else if(action==="setActive"){ if(!conns.find(c=>c.id===body.id)) return json({error:"connection tidak ada"},404); cfg.activeId=body.id; }
     else if(action==="saveEvents"){ config.saveEvents(body.events||{}); return json({ok:true, events: config.load().events}); }
@@ -247,7 +250,7 @@ async function handleChat(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
   const messages:ChatMessage[]=body.messages||[]; const clientSystem=body.system||"";
   try{
-    const {reply,used}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(conns)=>config.saveConnections(conns, config.load().activeId), messages, clientSystem);
+    const {reply,used}=await llmForRole("chat",()=>config.connections,()=>config.activeConnection,(conns)=>config.saveConnections(conns, config.load().activeId), messages, clientSystem);
     return json({reply,used});
   }catch(e:any){ return json({error:e.message}, e.httpStatus||502); }
 }
@@ -306,7 +309,7 @@ Format:
   { "id": "ParamX", "role": "angleX", "group": "Sudut (Angle)", "label": "Kepala X", "isAccessory": false }
 ]`;
   try{
-    const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
+    const {reply}=await llmForRole("sheet", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
     const requestedIds=new Set(unclassified.map((u:any)=>String(u.id))); const allowedRoles=new Set(KNOWN_ROLES);
     const str=(v:any,cap:number)=> (typeof v==="string"? v.replace(/[\u0000-\u001F\u007F]/g,"").trim().slice(0,cap): "");
@@ -369,7 +372,7 @@ Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti den
   { "name": "Kacamata", "category": "aksesoris", "values": {}, "parts": { "PartGlasses": 1 } }
 ]`;
   try{
-    const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
+    const {reply}=await llmForRole("sheet", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
     const ranges=new Map(params.map((p:any)=>[p.id,{lo:Number(p.min),hi:Number(p.max)}])); const partIds=new Set(parts); const existingSet=new Set(existing);
     const str=(v:any,cap:number)=> (typeof v==="string"? v.replace(/[\u0000-\u001F\u007F]/g,"").trim().slice(0,cap): "");
@@ -391,12 +394,31 @@ Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti den
   }catch(e:any){ console.warn("[analyze-sheet]",e.message); return json({presets:[], warning:e.message}); }
 }
 
+// Susun blok "PENJELASAN PARAMETER DARI USER" untuk director prompt dari
+// object paramNotes mentah (id -> teks user). Batas keras 24 entri × 200
+// karakter — memindahkan blok tak terbatas dari prompt teks ke prompt motion
+// hanya memindahkan masalahnya, bukan menyelesaikannya. "" bila tak ada yang layak.
+export function formatParamNotes(raw: unknown): string {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "";
+  const entries = Object.entries(raw as Record<string, unknown>).slice(0, 24);
+  const lines: string[] = [];
+  for (const [id, val] of entries) {
+    if (typeof id !== "string" || !id || typeof val !== "string") continue;
+    const clean = val.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, 200);
+    if (clean) lines.push("- \"" + id.slice(0, 60) + "\": " + clean);
+  }
+  return lines.join("\n");
+}
+
 async function handleAnimateText(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
   const text=(body.text||"").trim(); const caps=body.capabilities||{};
   const emotions=(caps.emotions&&caps.emotions.length)?caps.emotions:["senang","sedih","malu","kaget","normal"];
   const gestures=(caps.gestures&&caps.gestures.length)?caps.gestures:["nod","shake","tilt_curious","lean_excited","recoil_surprised","look_away_shy","laugh_bounce","think","wave_hi"];
   const motions=Array.isArray(caps.motions)? caps.motions.filter((m:any)=>m&&m.id):[];
+  // Penjelasan parameter tulisan USER (dari character sheet, dikirim brain).
+  // Otoritatif: director harus menghormati makna ini, bukan menebak dari nama id.
+  const noteLines=formatParamNotes(body.paramNotes);
   if(!text) return json({segments:[]});
   if(!config.activeConnection) return json({segments:[{text,emotion:"normal",gesture:"nod",intensity:0.7}]});
   const directorPrompt=`Kamu adalah animation director untuk karakter Live2D Anime yang hidup dan ekspresif.
@@ -406,6 +428,7 @@ Karakter baru saja berbicara teks berikut:
 Daftar Emosi yang didukung model: [${emotions.join(", ")}]
 Daftar Gesture yang tersedia: [${gestures.join(", ")}]
 ${motions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+motions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}
+${noteLines ? "\nPENJELASAN PARAMETER DARI USER (otoritatif — hormati makna ini):\n"+noteLines+"\n" : ""}
 TUGAS:
 1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup (jangan diam selama bicara!).
 2. Untuk setiap segment, tentukan:
@@ -421,7 +444,7 @@ Contoh format:
   { "text": "Aku senang banget ketemu kalian lagi.", "emotion": "senang", "gesture": "lean_excited", "intensity": 0.8 }
 ]`;
   try{
-    const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:directorPrompt}]);
+    const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:directorPrompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
     const okEmotion=new Set(emotions); const okGesture=new Set(gestures); const okMotion=new Set(motions.map((m:any)=>m.id));
     const segments=(Array.isArray(parsed)?parsed:[]).reduce((acc:any[],s:any)=>{
@@ -462,7 +485,7 @@ TUGAS: tebak gerakan ini sedang menyampaikan apa, lalu balas JSON:
 Emosi yang boleh dipakai HANYA: [${emotions.join(", ")}]
 KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
   try{
-    const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
+    const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=null; try{parsed=JSON.parse(clean);}catch{ const mm=clean.match(/\{[\s\S]*\}/); if(mm) try{parsed=JSON.parse(mm[0]);}catch{}}
     if(!parsed||typeof parsed!=="object") return json({warning:"AI tidak mengembalikan JSON valid"});
     const okEmo=new Set(emotions); const emo:Record<string,number>={};
@@ -516,7 +539,7 @@ Balas JSON persis format ini:
 Emosi yang boleh dipakai HANYA: [${emotions.join(", ")}]
 KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
   try{
-    const {reply}=await llmWithFallback(()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
+    const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=null; try{parsed=JSON.parse(clean);}catch{ const mm=clean.match(/\{[\s\S]*\}/); if(mm) try{parsed=JSON.parse(mm[0]);}catch{}}
     if(!parsed||typeof parsed!=="object") return json({error:"AI tidak mengembalikan JSON valid"});
     if(parsed.emotionCompatibility&&typeof parsed.emotionCompatibility==="object"){ const okEmo=new Set(emotions); for(const k of Object.keys(parsed.emotionCompatibility)) if(!okEmo.has(k)) delete (parsed.emotionCompatibility as any)[k]; }

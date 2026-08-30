@@ -2148,12 +2148,18 @@
         card.className = 'conn-card' + (c.id === activeId ? ' active' : '');
         const status = c.testStatus || 'untested';
         const badgeText = status === 'success' ? '✓ connected' : status === 'error' ? '✕ error' : '○ untested';
+        // Tag peran: kosong = wildcard ("semua peran") — user tidak wajib paham konsep role.
+        const roleList = Array.isArray(c.roles) ? c.roles : [];
+        const roleTags = roleList.length
+          ? roleList.map(r => `<span class="conn-role-tag">${esc(r)}</span>`).join('')
+          : '<span class="conn-role-tag wild">semua peran</span>';
         card.innerHTML = `
           <div class="conn-head">
             <span class="conn-name">${esc(c.name || c.id)}</span>
             <span class="conn-badge ${badgeClass(status)}">${badgeText}</span>
           </div>
           <div class="conn-meta">${esc((c.provider||''))} · ${esc((c.model||''))}</div>
+          <div class="conn-role-tags">${roleTags}</div>
           ${c.lastError ? `<div class="conn-err">${esc(c.lastError)}</div>` : ''}
           <div class="conn-actions">
             <button data-act="active" class="${c.id === activeId ? 'act-active' : ''}">${c.id === activeId ? '● Active' : 'Set Active'}</button>
@@ -2169,6 +2175,21 @@
       }
     }
 
+    // Peran connection: baca/tulis checkbox #m-roles. Semua centang KOSONG =
+    // wildcard (server memperlakukannya "boleh semua peran"), jadi user tidak
+    // wajib paham konsep role.
+    function rolesFromForm() {
+      const box = $('#m-roles');
+      if (!box) return [];
+      return Array.from(box.querySelectorAll('input[type="checkbox"]')).filter(cb => cb.checked).map(cb => cb.value);
+    }
+    function rolesToForm(roles) {
+      const box = $('#m-roles');
+      if (!box) return;
+      const want = new Set(Array.isArray(roles) ? roles : []);
+      for (const cb of box.querySelectorAll('input[type="checkbox"]')) cb.checked = want.has(cb.value);
+    }
+
     function openModal(c) {
       editingId = c ? c.id : null;
       $('#m-name').value = c ? (c.name || '') : '';
@@ -2177,6 +2198,7 @@
       $('#m-apikey').value = c ? (c.apiKey && !c.apiKey.startsWith('•') ? '' : '') : '';  // keep existing key hidden
       $('#m-model').value = c ? (c.model || '') : '';
       $('#m-system').value = c ? (c.systemPrompt || '') : '';
+      rolesToForm(c ? c.roles : []);
       modal.classList.remove('hidden');
     }
     function closeModal() { modal.classList.add('hidden'); editingId = null; }
@@ -2192,6 +2214,7 @@
         apiKey: k,
         model: $('#m-model').value.trim(),
         systemPrompt: $('#m-system').value,
+        roles: rolesFromForm(),
       };
       const body = { action: editingId ? 'update' : 'add' };
       // Kalau edit dan field key kosong, jangan kirim key (server pertahankan yang lama).

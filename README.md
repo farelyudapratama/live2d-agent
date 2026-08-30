@@ -19,7 +19,7 @@ HOST=0.0.0.0 bun run src/server/index.ts  # ekspos ke LAN (default loopback!)
 
 `bun run dev` = alias `bun run src/server/index.ts` · `bun run build` = `bun run src/build.ts` → `static/js/bundle.js`. **Lewati `bun run build` dan aplikasi jalan tapi tanpa otak**: chat mati diam-diam karena `window.__agent` tidak ada (engine degrade gracefully, bukan crash). `bun install` hanya perlu untuk `bun test` / `tsc` (devDep `bun-types`) — server dan build tidak butuh node_modules. `PORT` dihormati, `location.origin` dipakai frontend jadi LAN/https jalan tanpa ubah kode.
 
-**Clone baru (tanpa model)?** `data/model/` kosong karena aset berlisensi tidak di-commit — aplikasi tetap terbuka dengan **layar impor**: klik 📂 pilih folder model atau 🗜️ impor `.zip` (bisa juga copy manual ke `data/model/`). Model terakhir yang dibuka **diingat otomatis** dan dimuat lagi saat berikutnya; menghapus model dari UI **tidak** menghapus sheet/preset/motion buatanmu — impor ulang model dengan nama sama dan semuanya tersambung kembali.
+**Clone baru (tanpa model)?** `data/model/` kosong karena aset berlisensi tidak di-commit — aplikasi tetap terbuka dengan **layar impor**: klik 📂 pilih folder model atau 🗜️ impor `.zip` (bisa juga copy manual ke `data/model/`). Model terakhir yang dibuka **diingat otomatis** dan dimuat lagi saat berikutnya; menghapus model dari UI **tidak** menghapus sheet/preset/motion buatanmu — impor ulang model dengan nama sama dan semuanya tersambung kembali. Sheet karakter juga **tidak ikut repo** (privasi): dibuat ulang lewat 🔍 Inspeksi Model, tapi preset & catatan yang kamu tulis hanya hidup di mesin tempat kamu mengetiknya — backup manual `data/sheets/` sebelum pindah mesin.
 
 ## 🧩 Arsitektur
 

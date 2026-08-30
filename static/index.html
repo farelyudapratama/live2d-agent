@@ -3,88 +3,114 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
   <title>Live2D Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/app.css" />
   <!-- Cubism Core HARUS dimuat duluan sebelum pixi-live2d -->
   <script src="js/live2dcubismcore.min.js"></script>
 </head>
 <body>
 
-  <!-- ===================== KIRI: STAGE KARAKTER ===================== -->
-  <div id="stage">
-    <div id="stage-glow"></div>
-    <canvas id="live2d-canvas"></canvas>
-    <div id="stage-shadow"></div>
+  <div class="app">
 
-    <!-- Bubble chat muncul di atas karakter -->
-    <div id="bubble" class="bubble hidden">
-      <span id="bubble-text"></span>
-      <div id="bubble-tail"></div>
-    </div>
+    <!-- ===================== PANGGUNG (kiri) ===================== -->
+    <!-- Proscenium berbingkai: karakter hidup di dalamnya, sorot + kolam cahaya
+         lantai (overlay screen-blend) membuat dia benar-benar berdiri di bawah lampu. -->
+    <div id="stage">
+      <canvas id="live2d-canvas"></canvas>
 
-    <!-- Full Body button: only shows after the user manually zooms/drags -->
-    <button id="btn-fullbody" class="hidden" title="Tampilkan full body">⤢ Full Body</button>
+      <!-- Overlay cahaya: DI ATAS canvas (canvas opaque) dengan mix-blend-mode
+           screen + pointer-events none — menerangi adegan, tidak mengganggu input -->
+      <div id="stage-glow"></div>
+      <div id="stage-shadow"></div>
 
-    <div id="hint">💡 Drag · Scroll = zoom · Double-click = reset</div>
-  </div>
-
-  <!-- ===================== KANAN: SIDEBAR CHAT ===================== -->
-  <div id="sidebar">
-
-    <!-- Header -->
-    <!-- Avatar/nama/greeting diisi applyCharacterIdentity() saat model dimuat.
-         Placeholder di sini netral (bukan nama karakter tertentu) supaya app
-         tidak pernah menampilkan identitas model lain. -->
-    <div class="sb-header">
-      <div class="sb-avatar">?</div>
-      <div class="sb-id">
-        <div class="sb-name">Live2D Agent</div>
-        <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
+      <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
+           berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
+           folder/.zip lewat UI, atau copy manual ke data/model/. -->
+      <div id="stage-empty" class="stage-empty hidden">
+        <div class="se-box">
+          <div class="se-title">Belum ada model Live2D</div>
+          <p>Repo ini tidak menyertakan model (aset berlisensi). Impor model Cubism 4 milikmu lewat sini, atau copy folder model ke <code>data/model/</code> lalu muat ulang.</p>
+          <div class="se-actions">
+            <button id="btn-empty-folder" class="mini-btn">📂 Pilih Folder Model</button>
+            <button id="btn-empty-zip" class="mini-btn">🗜️ Impor .zip</button>
+          </div>
+          <p class="hint">Model juga bisa ditambah kapan saja lewat ⚙️ → 📁 Model. Model terakhir yang dibuka diingat otomatis.</p>
+        </div>
       </div>
-      <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
-    </div>
 
-    <!-- Chat history -->
-    <div id="chat-log">
-      <div class="msg agent">
-        <div class="msg-avatar">?</div>
-        <div class="msg-bubble" id="greeting-bubble">Halo! Ada yang bisa kubantu? 😊</div>
+      <!-- Bubble chat muncul di atas karakter -->
+      <div id="bubble" class="bubble hidden">
+        <span id="bubble-text"></span>
+        <div id="bubble-tail"></div>
       </div>
+
+      <!-- Full Body button: only shows after the user manually zooms/drags -->
+      <button id="btn-fullbody" class="hidden" title="Tampilkan full body">⤢ Full Body</button>
+
+      <div id="hint">💡 Drag · Scroll = zoom · Double-click = reset</div>
     </div>
 
-    <!-- Thinking indicator -->
-    <div id="thinking" class="thinking hidden">🧠 lagi mikir...</div>
+    <!-- ===================== RAIL OBROLAN (kanan) ===================== -->
+    <div id="sidebar">
 
-    <!-- Indikator keadaan hidup — Langkah 2b.
-         Mencerminkan window.__agent._reactiveState(): presence, mood + sumbernya,
-         dan masa tenang. Sebelumnya satu-satunya cara tahu kenapa karakter diam
-         adalah membaca console ([agent] masa tenang, skip event). -->
-    <div id="live-state" class="live-state" aria-live="polite">
-      <span class="ls-item" id="ls-presence">👤 presence: —</span>
-      <span class="ls-item" id="ls-mood">😶 mood: —</span>
-      <span class="ls-item" id="ls-quiet">⏳ masa tenang: —</span>
-    </div>
+      <!-- Header identitas — avatar/nama/greeting diisi applyCharacterIdentity() saat model dimuat.
+           Placeholder di sini netral (bukan nama karakter tertentu) supaya app
+           tidak pernah menampilkan identitas model lain. -->
+      <div class="sb-header">
+        <div class="sb-avatar">?</div>
+        <div class="sb-id">
+          <div class="sb-name">Live2D Agent</div>
+          <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
+        </div>
+        <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
+      </div>
 
-    <!-- Input -->
-    <div class="chat-input">
-      <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">🎤</button>
-      <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
-      <button id="btn-bubble">➤</button>
-    </div>
-    <div class="quick-phrases">
-      <button class="phrase-btn" data-phrase="Halo~">Halo~</button>
-      <button class="phrase-btn" data-phrase="Apa kabar?">Apa kabar?</button>
-      <button class="phrase-btn" data-phrase="Yay~!">Yay~!</button>
-      <button class="phrase-btn" data-phrase="Hmmm...">Hmmm...</button>
-      <button class="phrase-btn" data-phrase="Maaf ya...">Maaf ya...</button>
-    </div>
-    <label class="brain-toggle">
-      <input type="checkbox" id="toggle-brain" checked />
-      🧠 Mode Otak (LLM mikir & balas sendiri)
-    </label>
+      <!-- Indikator keadaan hidup.
+           Mencerminkan window.__agent._reactiveState(): presence, mood + sumbernya,
+           dan masa tenang. Sebelumnya satu-satunya cara tahu kenapa karakter diam
+           adalah membaca console ([agent] masa tenang, skip event). -->
+      <div id="live-state" aria-live="polite">
+        <span class="ls-item" id="ls-presence">👤 presence: —</span>
+        <span class="ls-item" id="ls-mood">😶 mood: —</span>
+        <span class="ls-item" id="ls-quiet">⏳ masa tenang: —</span>
+      </div>
 
-    <!-- Collapsible control panel -->
-    <div id="controls-panel" class="hidden">
+      <!-- Chat history -->
+      <div id="chat-log">
+        <div class="msg agent">
+          <div class="msg-avatar">?</div>
+          <div class="msg-bubble" id="greeting-bubble">Halo! Ada yang bisa kubantu? 😊</div>
+        </div>
+      </div>
+
+      <!-- Thinking indicator -->
+      <div id="thinking" class="thinking hidden">🧠 lagi mikir...</div>
+
+      <!-- Input -->
+      <div class="chat-input">
+        <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">🎤</button>
+        <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
+        <button id="btn-bubble">➤</button>
+      </div>
+      <div class="quick-phrases">
+        <button class="phrase-btn" data-phrase="Halo~">Halo~</button>
+        <button class="phrase-btn" data-phrase="Apa kabar?">Apa kabar?</button>
+        <button class="phrase-btn" data-phrase="Yay~!">Yay~!</button>
+        <button class="phrase-btn" data-phrase="Hmmm...">Hmmm...</button>
+        <button class="phrase-btn" data-phrase="Maaf ya...">Maaf ya...</button>
+      </div>
+      <label class="brain-toggle">
+        <input type="checkbox" id="toggle-brain" checked />
+        🧠 Mode Otak (LLM mikir & balas sendiri)
+      </label>
+
+      <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
+           Semua ID & struktur pane dipertahankan persis — wiring app.js bergantung padanya. -->
+      <div id="controls-panel" class="hidden">
         <div class="tabs">
           <button class="tab active" data-tab="model">📁 Model</button>
           <button class="tab" data-tab="sheet">📋 Sheet</button>
@@ -94,7 +120,7 @@
       <div class="tab-body">
 
         <!-- Model (import / switch user models) -->
-        <div class="tab-pane" data-pane="model">
+        <div class="tab-pane active" data-pane="model">
           <div class="section-title">📁 Model Live2D</div>
           <div id="model-drop" class="model-drop">
             <p>Drag &amp; drop folder model ke sini,<br />atau</p>
@@ -226,7 +252,7 @@
           </div>
           <p class="hint">Tekan <b>✏️ Editor Preset</b> untuk menyusun pose lewat slider (popup mengambang, serupa dengan 📝 Jelaskan Parameter).</p>
 
-          <!-- Ekspresi teradopsi (opt-out) — Langkah 2d.
+          <!-- Ekspresi teradopsi (opt-out).
                Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox
                untuk mematikan adopsi per-file. Data dari GET /api/model/expressions-adoption. -->
           <div class="section-title" style="margin-top:14px">🧬 Ekspresi Teradopsi</div>
@@ -287,9 +313,8 @@
           </div>
         </div>
 
-        <!-- Kelakuan (Behaviour) — Langkah 2a.
-             Menyelesaikan Temuan A: karakter diam 30 menit karena config, bukan
-             bug. User bisa atur masa tenang / idle lewat profil atau slider mentah,
+        <!-- Kelakuan (Behaviour).
+             User bisa atur masa tenang / idle lewat profil atau slider mentah,
              tanpa menyentuh config.json manual. Aksi mengupdate EVENTS live + persist. -->
         <div class="section-title" style="margin-top:14px">🎚️ Kelakuan (Proaktivitas)</div>
         <div class="cfg-box" id="behaviour-box">
@@ -339,6 +364,7 @@
       </div>
     </div><!-- /controls-panel -->
   </div><!-- /sidebar -->
+  </div><!-- /.app -->
 
   <!-- § Connection editor modal -->
   <div id="conn-modal" class="modal hidden">
@@ -478,78 +504,78 @@
 
       <!-- Transport -->
       <div class="ms-transport">
-        <button id="ms-play" class="mini-btn ms-icon" title="Putar">▶</button>
-        <button id="ms-stop" class="mini-btn ms-icon" title="Stop">■</button>
+        <button id="ms-play" class="mini-btn ms-icon" title="Putar (Space)">▶</button>
+        <button id="ms-stop" class="mini-btn ms-icon" title="Stop (Space)">■</button>
         <label class="ms-loop"><input type="checkbox" id="ms-loop" /> loop</label>
-        <button id="ms-undo" class="mini-btn ms-icon" title="Undo">↶</button>
-        <button id="ms-redo" class="mini-btn ms-icon" title="Redo">↷</button>
+        <button id="ms-undo" class="mini-btn ms-icon" title="Undo (Ctrl+Z)">↶</button>
+        <button id="ms-redo" class="mini-btn ms-icon" title="Redo (Ctrl+Y)">↷</button>
         <span id="ms-time" class="ms-time">0.00s</span>
       </div>
 
-      <!-- Panel parameter model: sumber track. Semua parameter rig, dengan
-           pencarian + kelompok, seperti daftar parameter Cubism Editor. -->
-      <details class="ms-params" id="ms-params" open>
-        <summary>➕ Tambah Track Parameter</summary>
-        <div class="ms-param-search-row">
-          <input type="search" id="ms-param-search" placeholder="cari parameter… (mis. hair, arm, brow)" aria-label="Cari parameter" />
-          <select id="ms-param-group" aria-label="Filter kategori"><option value="">semua kategori</option></select>
-        </div>
-        <div id="ms-param-list" class="ms-param-list"></div>
-        <p class="hint" id="ms-param-count"></p>
-      </details>
+      <!-- Workspace: kiri = pustaka parameter (selalu terlihat),
+           kanan = timeline sebagai pusat kerja. -->
+      <div class="ms-workspace">
+        <aside class="ms-params-panel" aria-label="Tambah track parameter">
+          <div class="ms-panel-title">➕ Track Parameter</div>
+          <div class="ms-param-search-row">
+            <input type="search" id="ms-param-search" placeholder="cari parameter… (mis. hair, arm, brow)" aria-label="Cari parameter" />
+            <select id="ms-param-group" aria-label="Filter kategori"><option value="">semua kategori</option></select>
+          </div>
+          <div id="ms-param-list" class="ms-param-list"></div>
+          <p class="hint" id="ms-param-count"></p>
+        </aside>
 
-      <!-- Timeline: satu baris per parameter yang ditambahkan -->
-      <div class="ms-timeline-wrap">
-        <div class="ms-ruler" id="ms-ruler"></div>
-        <div id="ms-tracks" class="ms-tracks"></div>
-        <p class="hint" id="ms-tracks-empty">Belum ada track. Buka <b>➕ Tambah Track Parameter</b> di atas dan pilih parameter model.</p>
-        <div class="ms-scrub-row">
-          <input type="range" id="ms-scrub" min="0" max="1000" value="0" aria-label="Geser waktu" />
-        </div>
-      </div>
+        <div class="ms-stage">
+          <!-- Timeline: satu baris per parameter yang ditambahkan -->
+          <div class="ms-timeline-wrap">
+            <div class="ms-ruler" id="ms-ruler" title="Klik/seret untuk menggeser waktu"></div>
+            <div id="ms-tracks" class="ms-tracks"></div>
+            <p class="hint" id="ms-tracks-empty">Belum ada track. Pilih parameter di panel <b>➕ Track Parameter</b> di kiri.</p>
+            <div class="ms-scrub-row">
+              <input type="range" id="ms-scrub" min="0" max="1000" value="0" aria-label="Geser waktu" />
+            </div>
+          </div>
 
-      <!-- Editor keyframe terpilih -->
-      <div class="cfg-box" id="ms-key-box">
-        <div class="note-row">
-          <span class="cfg-label" id="ms-key-label">Belum ada keyframe dipilih</span>
-        </div>
-        <label class="cfg-row" for="ms-key-t">
-          <span class="cfg-label">Waktu (s)</span>
-          <input type="number" id="ms-key-t" step="0.05" min="0" />
-        </label>
-        <label class="cfg-row" for="ms-key-v">
-          <span class="cfg-label">Nilai</span>
-          <input type="range" id="ms-key-v" step="0.01" />
-          <output id="ms-key-v-out" class="cfg-out"></output>
-        </label>
-        <label class="cfg-row" for="ms-key-v-num">
-          <span class="cfg-label">Angka pas</span>
-          <input type="number" id="ms-key-v-num" step="0.01" />
-          <span id="ms-key-range" class="ms-range-hint"></span>
-        </label>
-        <label class="cfg-row" for="ms-key-easing">
-          <span class="cfg-label">Easing ke key berikut</span>
-          <select id="ms-key-easing">
-            <option value="linear">linear</option>
-            <option value="ease-in">ease-in</option>
-            <option value="ease-out">ease-out</option>
-            <option value="ease-in-out">ease-in-out</option>
-            <option value="stepped">stepped (patah)</option>
-          </select>
-        </label>
-        <div class="note-row">
-          <button id="ms-key-add" class="mini-btn ms-small">＋ Keyframe di sini</button>
-          <button id="ms-key-dupe" class="mini-btn ms-small">⧉ Duplikat</button>
-          <button id="ms-key-copy" class="mini-btn ms-small">📋 Copy</button>
-          <button id="ms-key-paste" class="mini-btn ms-small">📥 Paste</button>
-          <button id="ms-key-del" class="mini-btn ms-small">✖ Hapus</button>
-        </div>
-        <p class="hint">Klik titik di timeline untuk memilih keyframe. Nilai &amp; batasnya mengikuti definisi asli parameter di model.</p>
-      </div>
+          <!-- Editor keyframe terpilih — strip kompak, selalu di bawah timeline -->
+          <div class="cfg-box ms-keybox" id="ms-key-box">
+            <div class="ms-key-row">
+              <span class="cfg-label" id="ms-key-label">Belum ada keyframe dipilih</span>
+              <span id="ms-key-range" class="ms-range-hint"></span>
+            </div>
+            <div class="ms-key-row">
+              <label class="ms-kfield">Waktu
+                <input type="number" id="ms-key-t" step="0.05" min="0" />
+              </label>
+              <label class="ms-kfield ms-kfield-wide">Nilai
+                <input type="range" id="ms-key-v" step="0.01" />
+                <output id="ms-key-v-out" class="cfg-out"></output>
+              </label>
+              <label class="ms-kfield">Angka
+                <input type="number" id="ms-key-v-num" step="0.01" />
+              </label>
+              <label class="ms-kfield">Easing
+                <select id="ms-key-easing">
+                  <option value="linear">linear</option>
+                  <option value="ease-in">ease-in</option>
+                  <option value="ease-out">ease-out</option>
+                  <option value="ease-in-out">ease-in-out</option>
+                  <option value="stepped">stepped (patah)</option>
+                </select>
+              </label>
+              <div class="ms-key-btns">
+                <button id="ms-key-add" class="mini-btn ms-small">＋ Key di sini</button>
+                <button id="ms-key-dupe" class="mini-btn ms-small">⧉ Duplikat</button>
+                <button id="ms-key-copy" class="mini-btn ms-small">📋 Copy</button>
+                <button id="ms-key-paste" class="mini-btn ms-small">📥 Paste</button>
+                <button id="ms-key-del" class="mini-btn ms-small">✖ Hapus</button>
+              </div>
+            </div>
+            <p class="hint">Klik lane = geser playhead · <b>klik dua kali lane = tambah keyframe</b> · seret key = pindah waktu, naik/turun = ubah nilai (Shift = tanpa snap) · Space = putar · Delete = hapus key terpilih.</p>
+          </div>
 
-      <!-- Metadata (Fase 4) -->
-      <details class="ms-meta" id="ms-meta" open>
-        <summary>🏷️ Info &amp; Kecocokan Emosi</summary>
+          <!-- Metadata (Fase 4) — ditutup default: menyusun gerak dulu, Label belakangan -->
+          <details class="ms-meta" id="ms-meta">
+            <summary>🏷️ Info &amp; Kecocokan Emosi</summary>
         <div class="cfg-box">
           <label class="cfg-row" for="ms-name">
             <span class="cfg-label">Nama</span>
@@ -592,10 +618,6 @@
           <label class="cfg-check"><input type="checkbox" id="ms-loop-meta" /> <span>Berulang (loop)</span></label>
         </div>
       </details>
-
-      <!-- Mode lanjutan dihapus: seluruh editor SEKARANG bekerja langsung di
-           parameter mentah model, jadi tabel "peran → parameter" tidak lagi
-           menjelaskan apa pun yang belum terlihat di timeline. -->
     </div>
 
     <div class="ms-footer">
@@ -609,15 +631,12 @@
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>
   <script src="js/pixi-live2d-0.4.0.js"></script>
-  <!-- TS client core (source-of-truth): Taxonomy → DSL → Registry → Runtime installed as
-       window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime, and the agent
-       brain as window.__agent. Built from src/client/* by `bun run build`. Classic script
-       (iife) so it runs in document order BEFORE app.js, exactly like the old
-       motion-*.js (motion-taxonomy.js dihapus dari daftar ini — sudah ada di bundle).
-       app.js keeps owning the model loader, render loop and UI. -->
+  <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain, terpasang sebagai
+       window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent.
+       Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js. -->
   <script src="js/bundle.js"></script>
   <script src="js/app.js"></script>
-  <!-- Motion Studio UI: TERISOLASI (CONSTRAINTS §9). Dimuat SETELAH app.js
+  <!-- Motion Studio UI: terisolasi. Dimuat SETELAH app.js
        karena memakai window.__live2dAgent (registry, runtime, sheet). -->
   <script src="js/motion-editor.js"></script>
   <script type="module" src="js/camera-presence.js"></script>

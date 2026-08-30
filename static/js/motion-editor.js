@@ -78,6 +78,7 @@
     if (state.undoStack.length > 60) state.undoStack.shift();
     state.redoStack.length = 0;
     state.dirty = true;
+    renderUndoButtons();
   }
   function undo() {
     if (!state.undoStack.length) { setStatus('tidak ada yang bisa dibatalkan'); return; }
@@ -195,6 +196,41 @@
     l2d.setRawDrive(patch);
   }
 
+  // ── Tooltip seret keyframe (satu elemen dipakai bergantian) ──────
+  let dragTipEl = null;
+  function showDragTip(ev, t, v) {
+    if (!dragTipEl) {
+      dragTipEl = document.createElement('div');
+      dragTipEl.className = 'ms-dragtip';
+      document.body.appendChild(dragTipEl);
+    }
+    dragTipEl.textContent = t.toFixed(2) + 's · ' + (+Number(v).toFixed(2));
+    dragTipEl.style.left = (ev.clientX + 14) + 'px';
+    dragTipEl.style.top = (ev.clientY - 30) + 'px';
+    dragTipEl.classList.add('show');
+  }
+  function hideDragTip() { if (dragTipEl) dragTipEl.classList.remove('show'); }
+
+  // Kurva nilai track sebagai polyline SVG — cukup untuk MEMBACA BENTUK gerak
+  // (interpolasi linear antar key; easing halus tetap dirender runtime saat Play).
+  function curveSvgFor(tr, dur) {
+    const r = rangeOf(tr.param);
+    const span = Math.abs(r.max - r.min) || 1;
+    const pts = [[0, tr.keys[0].v]];
+    for (const k of tr.keys) pts.push([k.t, k.v]);
+    pts.push([dur, tr.keys[tr.keys.length - 1].v]);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'ms-curve');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    poly.setAttribute('points', pts.map(([t, v]) =>
+      ((t / dur) * 100).toFixed(2) + ',' + (100 - ((v - r.min) / span) * 100).toFixed(2)
+    ).join(' '));
+    svg.appendChild(poly);
+    return svg;
+  }
+
   // ── Render: panel daftar parameter model ─────────────────────────
   function renderParamPanel() {
     const host = $('#ms-param-list');
@@ -307,12 +343,30 @@
       const lane = document.createElement('div');
       lane.className = 'ms-track-lane' + (avail ? '' : ' off');
       lane.dataset.param = tr.param;
-      // Klik lane = tambah keyframe pada waktu itu, dengan nilai hasil
-      // interpolasi saat ini, jadi menambah titik tidak mengubah bentuk kurva.
+
+      // Klik lane = geser playhead SAJA. Dulu sekali klik langsung membuat
+      // keyframe — salah klik berarti key liar + undo stack terkotori.
+      // Saat preview diputar, scrub dikunci: playhead sedang milik playback.
       lane.addEventListener('click', (ev) => {
-        if (ev.target !== lane) return;
+        if (ev.target !== lane || state.playing) return;
         const rect = lane.getBoundingClientRect();
         const t = Math.max(0, Math.min(dur, ((ev.clientX - rect.left) / rect.width) * dur));
+        state.scrubT = t;
+        renderPlayheads(); applyScrubPose();
+      });
+      // Klik dua kali = tambah keyframe pada waktu itu (snap 50 ms), dengan nilai
+      // hasil interpolasi saat ini, jadi menambah titik tidak mengubah bentuk kurva.
+      lane.addEventListener('dblclick', (ev) => {
+        if (ev.target !== lane) return;
+        // Klik pertama double-click adalah scrub; kalau jalur itu membangun ulang
+        // lane, event dblclick tiba di elemen yang sudah lepas dari DOM — rect-nya
+        // kosong dan t terhitung = durasi (key "di ujung"). Scrub kini bebas
+        // rebuild, dan sebagai pengaman kedua rect diambil dari lane yang HIDUP.
+        const live = document.querySelector('.ms-track-lane[data-param="' + (lane.dataset.param || '').replace(/"/g, '') + '"]') || lane;
+        const rect = live.getBoundingClientRect();
+        if (!rect.width) return;
+        let t = ((ev.clientX - rect.left) / rect.width) * dur;
+        t = Math.round(Math.max(0, Math.min(dur, t)) / 0.05) * 0.05;
         pushUndo();
         const cur = sampleParam(tr.param, t);
         const r = rangeOf(tr.param);
@@ -322,11 +376,19 @@
         renderAll(); applyScrubPose();
       });
 
+      const r = rangeOf(tr.param);
+      const span = Math.abs(r.max - r.min) || 1;
+
+      lane.appendChild(curveSvgFor(tr, dur));
+
       tr.keys.forEach((k, i) => {
         const dot = document.createElement('div');
         const sel = state.selected && state.selected.param === tr.param && state.selected.index === i;
         dot.className = 'ms-key' + (sel ? ' sel' : '') + (k.easing === 'stepped' ? ' stepped' : '');
         dot.style.left = ((k.t / dur) * 100).toFixed(2) + '%';
+        // Dot menempel pada kurva: posisi vertikal = nilai key, bukan tengah lane —
+        // seretan vertikal (ubah nilai) jadi terlihat sebagai gerakan dot itu sendiri.
+        dot.style.top = (100 - ((k.v - r.min) / span) * 100).toFixed(2) + '%';
         dot.title = k.t.toFixed(2) + 's = ' + k.v + (k.easing ? '  (' + k.easing + ')' : '');
         dot.addEventListener('click', (ev) => {
           ev.stopPropagation();
@@ -334,28 +396,51 @@
           state.scrubT = k.t;
           renderAll(); applyScrubPose();
         });
-        // Drag key sepanjang timeline; preview mengikuti selama digeser.
+        // Seret key: sumbu DIKUNCI pada gerakan pertama — horizontal = waktu
+        // (snap 50 ms), vertikal = nilai. Shift = bebas tanpa snap. Tooltip
+        // mengikuti kursor supaya waktu/nilai terbaca sambil menyeret.
         dot.addEventListener('pointerdown', (ev) => {
+          if (state.playing) return;   // playback jalan — jangan rebut kendali
           ev.stopPropagation();
           ev.preventDefault();
           const rect = lane.getBoundingClientRect();
-          const v = k.v, easing = k.easing;
-          let moved = false;
+          const r = rangeOf(tr.param);
+          const span = Math.abs(r.max - r.min) || 1;
+          const vStep = span <= 2 ? 0.01 : (span <= 60 ? 0.1 : 1);
+          const startT = k.t, startV = k.v;
+          const startX = ev.clientX, startY = ev.clientY;
+          let axis = null, moved = false, prevT = startT, curT = startT, curV = startV;
           pushUndo();
+          showDragTip(ev, curT, curV);
           const onMove = (mv) => {
+            const dx = mv.clientX - startX, dy = mv.clientY - startY;
+            if (!axis && (Math.abs(dx) > 3 || Math.abs(dy) > 3))
+              axis = Math.abs(dx) >= Math.abs(dy) ? 't' : 'v';
+            if (!axis) return;
             moved = true;
-            const t = Math.max(0, Math.min(dur, ((mv.clientX - rect.left) / rect.width) * dur));
+            if (axis === 't') {
+              let t = startT + (dx / rect.width) * dur;
+              if (!mv.shiftKey) t = Math.round(t / 0.05) * 0.05;
+              curT = Math.max(0, Math.min(dur, t));
+            } else {
+              let v = startV - (dy / rect.height) * span;
+              if (!mv.shiftKey) v = Math.round(v / vStep) * vStep;
+              curV = Math.max(r.min, Math.min(r.max, v));
+            }
             const cur = trackFor(tr.param, false);
-            const at = cur.keys.findIndex(x => Math.abs(x.t - state.scrubT) < 0.0005);
+            const at = cur.keys.findIndex(x => Math.abs(x.t - prevT) < 0.0005);
             if (at >= 0) cur.keys.splice(at, 1);
-            const idx = addKey(tr.param, t, v, easing);
+            const idx = addKey(tr.param, curT, curV, k.easing);
+            prevT = curT;
             state.selected = { param: tr.param, index: idx };
-            state.scrubT = t;
+            state.scrubT = curT;
             renderTracks(); renderTime(); renderKeyBox(); applyScrubPose();
+            showDragTip(mv, curT, curV);
           };
           const onUp = () => {
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
+            hideDragTip();
             if (!moved) state.undoStack.pop();   // klik biasa: jangan kotori undo
           };
           state.scrubT = k.t;
@@ -528,10 +613,68 @@
     if (scrub && state.draft) scrub.value = String(Math.round((state.scrubT / state.draft.duration) * 1000));
   }
 
+  // Geser playhead TANPA membangun ulang lane. renderTracks() di tengah interaksi
+  // klik adalah penyebab dblclick menghitung posisi dari elemen yang sudah lepas
+  // dari DOM (rect kosong → key selalu mendarat di ujung timeline) — sekaligus
+  // pemborosan: yang perlu berubah saat scrub cuma garis playhead.
+  function renderPlayheads() {
+    const dur = state.draft ? (state.draft.duration || 1) : 1;
+    document.querySelectorAll('.ms-playhead').forEach(head => {
+      head.style.left = ((state.scrubT / dur) * 100).toFixed(2) + '%';
+    });
+    renderTime();
+  }
+
+  // ── Sweep playhead selama preview diputar ────────────────────────
+  // Runtime yang mengemudikan model; editor hanya menggambar waktu yang lewat.
+  // TIDAK menulis pose (applyScrubPose) — tulisan editor dan runtime akan
+  // bertumpuk di frame yang sama dan hasilnya acak.
+  let sweepRaf = 0, sweepWd = 0, sweepLast = 0;
+  function stopPlayheadSweep() {
+    if (sweepRaf) { cancelAnimationFrame(sweepRaf); sweepRaf = 0; }
+    if (sweepWd) { clearInterval(sweepWd); sweepWd = 0; }
+  }
+  function startPlayheadSweep() {
+    stopPlayheadSweep();
+    if (!state.draft) return;
+    const dur = state.draft.duration || 1;
+    const loop = !!state.draft.loop;
+    const t0 = performance.now();
+    sweepLast = 0;
+    const step = (fromWatchdog) => {
+      if (!state.playing) { stopPlayheadSweep(); return; }
+      let t = (performance.now() - t0) / 1000;
+      if (t >= dur) {
+        if (loop) t = t % dur;
+        else { state.scrubT = dur; renderPlayheads(); stopPlayheadSweep(); return; }
+      }
+      state.scrubT = t;
+      renderPlayheads();
+      sweepLast = performance.now();
+      if (!fromWatchdog) sweepRaf = requestAnimationFrame(() => step(false));
+    };
+    sweepRaf = requestAnimationFrame(() => step(false));
+    // Watchdog 250 ms — pola yang sama dengan MotionRuntime: rAF berhenti di tab
+    // latar, tapi playback tetap selesai (runtime memakai watchdog sendiri),
+    // jadi playhead tidak boleh ikut membeku. Waktu dihitung dari jam, bukan
+    // penambahan per-frame, jadi dobel-tick dari dua jalur tetap akurat.
+    sweepWd = setInterval(() => {
+      if (!state.playing) { stopPlayheadSweep(); return; }
+      if (!sweepLast || performance.now() - sweepLast >= 250) step(true);
+    }, 250);
+  }
+
+  function renderUndoButtons() {
+    const u = $('#ms-undo'), r = $('#ms-redo');
+    if (u) u.disabled = !state.undoStack.length;
+    if (r) r.disabled = !state.redoStack.length;
+  }
+
   function renderAll() {
     if (!state.draft) return;
     renderParamPanel(); renderRuler(); renderTracks();
     renderKeyBox(); renderMeta(); renderLibrary(); renderTime();
+    renderUndoButtons();
   }
 
   // ── Preview via runtime (Play) ───────────────────────────────────
@@ -549,23 +692,29 @@
     const probe = Object.assign({}, state.draft, { id: PREVIEW_ID, aiEnabled: false });
     const r = l2d.registerUserMotion(probe);
     if (!r.ok) { setStatus('gagal: ' + r.error, 'err'); return; }
+    const startT = state.scrubT;
     const okPlay = l2d.playMotion(PREVIEW_ID, {
       intensity: state.draft.intensity ? state.draft.intensity.default : 0.8,
       priority: 100, blendIn: 120, blendOut: 250,
       onDone: () => {
         state.playing = false;
+        stopPlayheadSweep();
         if (l2d.removeUserMotion) l2d.removeUserMotion(PREVIEW_ID);
-        // Kembalikan tampilan ke posisi playhead supaya user melihat pose yang
-        // sedang mereka edit, bukan pose netral setelah motion selesai.
+        // Playhead sweep meninggalkan scrubT di akhir durasi — kembalikan ke
+        // titik mulai supaya konteks edit tidak "nyangkut" di ujung.
+        state.scrubT = startT;
         applyScrubPose();
+        renderPlayheads();
         setStatus('selesai diputar');
       },
     });
     state.playing = okPlay;
+    if (okPlay) startPlayheadSweep();
     setStatus(okPlay ? '▶ memutar…' : 'ditolak scheduler', okPlay ? null : 'err');
   }
 
   function stopPreview() {
+    stopPlayheadSweep();
     const l2d = L2D();
     if (l2d && l2d.stopAllMotions) l2d.stopAllMotions();
     if (l2d && l2d.removeUserMotion) l2d.removeUserMotion(PREVIEW_ID);
@@ -964,10 +1113,32 @@
 
     // Scrub playhead → pose model langsung ikut (bukan cuma saat Play).
     on('#ms-scrub', 'input', (e) => {
-      if (!state.draft) return;
+      if (!state.draft || state.playing) return;
       state.scrubT = (Number(e.target.value) / 1000) * state.draft.duration;
-      renderTracks(); renderTime(); applyScrubPose();
+      renderPlayheads(); applyScrubPose();
     });
+
+    // Ruler = permukaan scrub kedua: klik/seret langsung di atas angka waktu.
+    const ruler = $('#ms-ruler');
+    if (ruler) {
+      let scrubbing = false;
+      const scrubFromEvent = (ev) => {
+        if (!state.draft || !state.draft.duration || state.playing) return;
+        const rect = ruler.getBoundingClientRect();
+        const t = Math.max(0, Math.min(state.draft.duration,
+          ((ev.clientX - rect.left) / rect.width) * state.draft.duration));
+        state.scrubT = t;
+        renderPlayheads(); applyScrubPose();
+      };
+      ruler.addEventListener('pointerdown', (ev) => {
+        scrubbing = true;
+        try { ruler.setPointerCapture(ev.pointerId); } catch (err) {}
+        scrubFromEvent(ev);
+      });
+      ruler.addEventListener('pointermove', (ev) => { if (scrubbing) scrubFromEvent(ev); });
+      ruler.addEventListener('pointerup', () => { scrubbing = false; });
+      ruler.addEventListener('pointercancel', () => { scrubbing = false; });
+    }
 
     on('#ms-key-t', 'change', (e) => {
       const sel = state.selected;
@@ -1075,8 +1246,29 @@
     on('#ms-analyze', 'click', analyzeWithAI);
     on('#ms-generate', 'click', generateFromText);
 
+    // Keyboard: Space = putar/berhenti · Delete/Backspace = hapus key terpilih ·
+    // Ctrl+Z / Ctrl+Y (atau Ctrl+Shift+Z) = undo/redo · Escape = tutup.
+    // Diabaikan saat fokus di field input — mengetik angka tidak boleh memicu aksi.
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && state.open) closeStudio();
+      if (!state.open) return;
+      if (e.key === 'Escape') { closeStudio(); return; }
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (state.playing) { stopPreview(); setStatus('dihentikan'); }
+        else { collectMeta(); renderAll(); playPreview(); }
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected) {
+        e.preventDefault();
+        pushUndo();
+        removeKey(state.selected.param, state.selected.index);
+        state.selected = null;
+        renderAll(); applyScrubPose();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault(); undo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+        e.preventDefault(); redo();
+      }
     });
 
     const motionTab = document.querySelector('.tab[data-tab="motion"]');

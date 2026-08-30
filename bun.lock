@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "live2d-agent-v2",
+      "name": "live2d-agent",
       "devDependencies": {
         "bun-types": "^1.4.0",
       },

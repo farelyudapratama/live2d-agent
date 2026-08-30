@@ -590,6 +590,30 @@ body::after {
   animation: slide-in .26s cubic-bezier(.2, .9, .3, 1);
 }
 
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.drawer-head .tabs { flex: 1; }
+.drawer-close {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px solid var(--line-soft);
+  transition: all .15s;
+}
+.drawer-close:hover {
+  color: var(--coral);
+  border-color: rgba(242, 119, 107, .35);
+  background: rgba(242, 119, 107, .08);
+}
+
 .tabs {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

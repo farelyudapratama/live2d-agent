@@ -778,13 +778,22 @@
       if (state.talking && !state.frozen) {
         const mId = roleId('mouthOpenY');
         if (mId) {
-          const base = 0.35 + 0.4 * Math.abs(Math.sin(t * 9));   // syllable rhythm
-          const jitter = Math.random() < 0.25 ? 0.25 : 0;         // occasional wider open
-          // The rhythm above is authored as a 0..1 OPENNESS fraction; map it into
-          // the model's real mouthOpen range instead of writing 0..1 literally.
-          // On a rig using 0..100 a raw 0.75 would be a 0.75% open mouth — i.e.
+          let openness;
+          const lip = state.audioLipSync;
+          if (lip && lip.active) {
+            // Lip-sync presisi: keterbukaan mengikuti amplitudo audio ASLI —
+            // senyap di antara kata benar-benar menutup mulut, bukan terus
+            // bergetar dengan ritme palsu.
+            openness = lip.sample();
+          } else {
+            const base = 0.35 + 0.4 * Math.abs(Math.sin(t * 9));   // syllable rhythm
+            const jitter = Math.random() < 0.25 ? 0.25 : 0;         // occasional wider open
+            openness = Math.min(1, base + jitter);
+          }
+          // Openness is authored as a 0..1 fraction; map it into the model's
+          // real mouthOpen range instead of writing 0..1 literally. On a rig
+          // using 0..100 a raw 0.75 would be a 0.75% open mouth — i.e.
           // visually shut while "talking".
-          const openness = Math.min(1, base + jitter);
           const r = roleRange('mouthOpenY');
           state.overrides[mId] = r ? r.min + openness * (r.max - r.min) : openness;
         }
@@ -1833,11 +1842,26 @@
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      // Satu elemen audio DIPAKAI ULANG antar baris: MediaElementAudioSourceNode
+      // hanya boleh dibuat SEKALI per elemen, dan routing analyser lip-sync
+      // membutuhkan elemen yang selalu sama.
+      const audio = (state.ttsAudio = state.ttsAudio || new Audio());
+      audio.src = url;
+      // Lip-sync presisi: route audio lewat AnalyserNode. Kalau AudioContext
+      // masih ditahan autoplay policy, attach() menolak — audio tetap bunyi
+      // normal lewat speaker dan mulut memakai osilasi fallback; percobaan
+      // routing diulang saat onplaying.
+      let lip = null;
+      if (window.LipSync && window.LipSync.AudioLipSync) {
+        lip = (state.audioLipSync = state.audioLipSync || new window.LipSync.AudioLipSync());
+        lip.reset();
+        if (!lip.attach(audio)) lip = null;
+      }
+      state.activeLip = lip;
       // Baru reveal teks + mulai mulut saat audio BENAR-BENAR siap main (canplay),
       // bukan pas teks diterima — biar nggak kelihatan "baca duluan".
       audio.oncanplay = () => { reveal && reveal(); };
-      audio.onplaying = () => { reveal && reveal(); };
+      audio.onplaying = () => { reveal && reveal(); if (lip && !lip.active) lip.attach(audio); };
       audio.onended = () => { clearTimeout(fallbackTimer); markDone(); };
       audio.onerror = () => { reveal && reveal(); browserTTS(text, markDone, fallbackTimer); };
       audio.play().catch(() => { reveal && reveal(); browserTTS(text, markDone, fallbackTimer); });
@@ -1856,6 +1880,7 @@
       ttsDone = true;
       hideBubble();                 // sembunyikan teks pas audio selesai
       state.talking = false;        // hentikan mulut
+      if (state.activeLip) state.activeLip.reset();   // baris berikut mulai dari mulut tertutup
       // Rest the mouth at the MODEL's own default for this role, not a literal
       // 0 — a rig whose mouthOpen rests at a non-zero value would otherwise be
       // forced shut (or left ajar) after every line.

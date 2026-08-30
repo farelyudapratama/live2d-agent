@@ -19,6 +19,7 @@ import * as MotionDSL from "./animation/motion-dsl";
 import { MotionRegistry } from "./animation/motion-registry";
 import { MotionRuntime } from "./animation/motion-runtime";
 import * as MotionTaxonomy from "./engine/motion-taxonomy";
+import * as LipSync from "./speech/lip-sync";
 import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
 
@@ -27,5 +28,6 @@ if (typeof window !== "undefined") {
   (window as any).MotionRegistry = MotionRegistry;
   (window as any).MotionRuntime = MotionRuntime;
   (window as any).MotionTaxonomy = MotionTaxonomy;
-  console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy + brain)");
+  (window as any).LipSync = LipSync;
+  console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain)");
 }

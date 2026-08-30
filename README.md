@@ -83,7 +83,7 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | ✨ Analisa AI motion | ✅ | `POST /api/motions/analyze` — butuh persetujuan user |
 | 🪄 Buat motion dari teks | ✅ | `POST /api/motions/generate` — draft, di-preview lalu disetujui |
 | 🎤 STT mic (ngobrol 2 arah) | ✅ | push-to-talk — Whisper lokal di browser (transformers.js); audio tidak pernah di-upload |
-| Lip-sync presisi (dari audio) | ⬜ | masih timer-osilasi |
+| Lip-sync presisi (dari audio) | ✅ | amplitudo audio asli via Web Audio AnalyserNode → envelope → mulut (role space, model-agnostic); senyap antar kata benar-benar menutup mulut. speechSynthesis tanpa stream audio tetap osilasi; kalau AudioContext ditahan autoplay, audio tetap bunyi + osilasi fallback |
 
 ### Interaksi
 - **Gerak mouse** → mata + kepala + badan ikut · **Drag** → geser posisi · **Scroll** → zoom · **Double-click** → reset framing

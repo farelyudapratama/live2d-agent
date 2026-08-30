@@ -1,17 +1,15 @@
-# 🎭 Live2D Agent v2
+# 🎭 Live2D Agent
 
-Rewrite **Live2D Cubism 4** dari [`live2d-agent`](../live2d-agent/) — runtime **Bun** (zero-dep), arsitektur modular, TypeScript di bagian yang paling penting.
+Karakter Live2D (Cubism 4) yang dikendalikan AI — ngobrol lewat teks atau suara, karakter menjawab dengan gerak, ekspresi, dan suara (TTS), dan tetap hidup saat kamu diam: bicara sendiri saat idle, menyapa saat kamu pergi/balik, membaca mood dari webcam. Runtime **Bun** (zero-dep), inti logika **TypeScript**.
 
-> **Status rewrite — hybrid, bukan total.** Yang di-rewrite penuh ke TS: **server** (1.945 baris JS → 1.234 baris TS), **otak agent** (840 → 970), dan **motion core** (856 → 734). Layer **engine/UI** (`static/js/app.js` + motion-editor + camera-presence + taxonomy, ±8.200 baris) **sengaja dipertahankan identik dengan v1** — keputusan manajemen risiko: kode itu jalan dan mengubahnya tanpa untung fungsional hanya menambah risiko regresi. Lihat tabel lengkap di [§ Status Rewrite](#-status-rewrite).
+> **Repo ini adalah proyek utama — satu-satunya yang dikembangkan.** `../deprecated-live2d-agent/` adalah arsip versi lama: jangan mengembangkan atau menaruh data di sana; pakai hanya sebagai referensi historis.
 >
 > **Model-agnostic:** jalan dengan model Cubism 4 **apa pun** di `data/model/<nama>/`. Aturan mengikat: [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md).
->
-> **Paritas v1 terverifikasi** — 27 route API + OPTIONS (`server.js` v1), seluruh perilaku otak `agent.js` (prompt, directive, inferensi gerak dari emosi, jitter, arbitrase motion/gesture, lockAI, timing TTS, quietMs live dari config), dan prompt LLM versi lengkap. Bridge `window.*` antara bundle TS dan engine legacy lengkap: `app.js` maupun `motion-editor.js` tidak memanggil satu pun global yang tidak dipasang bundle.
 
 ## 🚀 Cara Menjalankan
 
 ```bash
-cd live2d-agent-v2
+cd live2d-agent
 bun run build                # WAJIB untuk clone baru — static/js/bundle.js di-gitignore
 bun run src/server/index.ts  # default http://127.0.0.1:8310
 PORT=9000 bun run src/server/index.ts   # port lain — frontend ikut location.origin
@@ -19,23 +17,45 @@ HOST=0.0.0.0 bun run src/server/index.ts  # ekspos ke LAN (default loopback!)
 # atau klik start.bat (Windows — otomatis build dulu, lalu start server)
 ```
 
-`bun run dev` = alias `bun run src/server/index.ts` · `bun run build` = `bun run src/build.ts` → `static/js/bundle.js`. **Lewati `bun run build` dan aplikasi jalan tapi tanpa otak**: chat mati diam-diam karena `window.__agent` tidak ada (engine legacy degrade gracefully, bukan crash). `bun install` hanya perlu untuk `bun test` / `tsc` (devDep `bun-types`) — server dan build tidak butuh node_modules. `PORT` dihormati, `location.origin` dipakai frontend jadi LAN/https jalan tanpa ubah kode.
+`bun run dev` = alias `bun run src/server/index.ts` · `bun run build` = `bun run src/build.ts` → `static/js/bundle.js`. **Lewati `bun run build` dan aplikasi jalan tapi tanpa otak**: chat mati diam-diam karena `window.__agent` tidak ada (engine degrade gracefully, bukan crash). `bun install` hanya perlu untuk `bun test` / `tsc` (devDep `bun-types`) — server dan build tidak butuh node_modules. `PORT` dihormati, `location.origin` dipakai frontend jadi LAN/https jalan tanpa ubah kode.
 
-## 📊 Status Rewrite
+**Clone baru (tanpa model)?** `data/model/` kosong karena aset berlisensi tidak di-commit — aplikasi tetap terbuka dengan **layar impor**: klik 📂 pilih folder model atau 🗜️ impor `.zip` (bisa juga copy manual ke `data/model/`). Model terakhir yang dibuka **diingat otomatis** dan dimuat lagi saat berikutnya; menghapus model dari UI **tidak** menghapus sheet/preset/motion buatanmu — impor ulang model dengan nama sama dan semuanya tersambung kembali.
 
-| Lapisan | v1 | v2 | Status |
-|---|---|---|---|
-| Server (API, LLM proxy, static, upload) | `server.js` 1.945 baris | `src/server/index.ts` (729) + `src/shared/{config,llm-client,types}.ts` (505) | ✅ rewrite TS penuh |
-| Otak agent (prompt, directive, proaktif) | `agent.js` 840 baris | `src/client/agent/{brain,directive-parser}.ts` (970) | ✅ rewrite TS penuh |
-| Motion core (DSL, registry, runtime, easing) | `js/motion-{dsl,registry,runtime}.js` 856 baris | `src/client/animation/*.ts` (734) → bundle | ✅ rewrite TS penuh |
-| Motion taxonomy | `js/motion-taxonomy.js` 555 baris | `src/client/engine/motion-taxonomy.ts` (tahap 2 dimulai) | ✅ port TS (dipakai server & bundle) |
-| Engine/UI (render loop, chat, panel, sheet) | `js/app.js` 6.339 baris | `static/js/app.js` **identik isinya** (beda line-ending saja) | ⬜ legacy by design |
-| Motion Studio UI | `js/motion-editor.js` 1.101 baris | `static/js/motion-editor.js` identik | ⬜ legacy by design |
-| Webcam presence | `js/camera-presence.js` 216 baris | `static/js/camera-presence.js` identik | ⬜ legacy by design |
+## 🧩 Arsitektur
 
-Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (server, otak, motion, taxonomy). UI dipertahankan byte-faithful supaya paritas bisa diverifikasi dengan `diff` — dan sistem bridge `window.*` membuat keduanya satu aplikasi, bukan dua sistem.
+Satu aplikasi dengan dua lapisan yang saling menopang: **inti logika di TypeScript** (punya unit test), **engine/UI legacy di `static/js/`** (sudah teruji jalan, dijaga guard). Kode TS client di-bundle `src/build.ts` → `static/js/bundle.js` (IIFE), dimuat **sebelum** `app.js`, dan memasang bridge `window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent` — engine legacy mengonsumsi global itu, `app.js` tetap pemilik render loop, pemuatan model, dan UI.
 
-**Titik berhenti rewrite (keputusan final):** rewrite dinyatakan selesai — bukan karena semua baris sudah TS, tapi karena nilai porting selanjutnya sudah mengendap. Sisa legacy mengikuti aturan **"port saat disentuh"**: bagian yang perlu diubah suatu hari di-port potongannya di commit yang sama dengan perubahannya, bersama guard-nya. Dua area logika yang bernilai port bila kelak disentuh: **sistem sheet** (`migrateSheet`/`resolvePresets` — guard 220 assertion siap di `test/legacy/`) dan **role mapping + inspect model** (`mapRoles`/`pokeRole*` — guard 84 assertion). Chat UI/panel DOM di `app.js`, `motion-editor.js`, dan `camera-presence.js` **sengaja tidak** direncanakan port (lihat `docs/UI-CONSTRAINTS.md`). Pekerjaan berikutnya yang benar-benar menambah nilai adalah fitur — STT 2 arah sudah datang (lihat 🎤 di atas); sisa: **lip-sync presisi dari audio** (⬜).
+| Lapisan | Lokasi | Karakter |
+|---|---|---|
+| Server — 27 route API, LLM proxy, static, upload | `src/server/index.ts` + `src/shared/{config,llm-client,types}.ts` | TS penuh, teruji unit |
+| Otak agent — prompt, directive, proaktif | `src/client/agent/{brain,directive-parser}.ts` | TS penuh, teruji unit |
+| Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
+| Motion taxonomy — klasifikasi klip native | `src/client/engine/motion-taxonomy.ts` | TS — dipakai server & bundle |
+| Engine/UI — render loop, chat, panel, sheet, role mapping | `static/js/app.js` (±6.300 baris) | **legacy** — dijaga guard |
+| Motion Studio UI | `static/js/motion-editor.js` | legacy — terisolasi |
+| Webcam presence | `static/js/camera-presence.js` | legacy — terisolasi |
+| STT push-to-talk | `static/js/voice-input.js` | modul ES mandiri |
+
+**Aturan kontribusi — "port saat disentuh":** bagian legacy yang perlu diubah suatu hari di-port potongannya di commit yang sama dengan perubahannya, bersama guard-nya. Dua area logika yang paling bernilai di-port bila kelak disentuh: **sistem sheet** (`migrateSheet`/`resolvePresets` — guard 220 assertion siap di `test/legacy/`) dan **role mapping + inspect model** (`mapRoles`/`pokeRole*` — guard 84 assertion). Chat UI/panel DOM tidak direncanakan di-port.
+
+```
+src/server/index.ts        # Bun.serve (loopback default) — 27 route API + static
+src/shared/{types,config,llm-client}.ts
+src/client/animation/{easing,motion-dsl,motion-registry,motion-runtime}.ts  # → bundle.js
+src/client/engine/motion-taxonomy.ts   # klasifikasi klip native — server & bundle
+src/client/agent/{directive-parser,brain}.ts   # otak agent → window.__agent
+src/build.ts               # bundle-entry.ts → static/js/bundle.js (IIFE, dimuat SEBELUM app.js)
+static/{index.html,css/app.css,js/app.js}      # engine/UI legacy (punya render loop)
+static/js/{bundle.js,motion-editor.js,camera-presence.js,voice-input.js}
+data/{config.json,sheets/,motions/,model/}     # data user — TIDAK disajikan sembarangan
+docs/                      # panduan mengikat (lihat bawah)
+```
+
+Urutan muat `index.html`: **`bundle.js`** (Taxonomy+DSL+Registry+Runtime+brain) → `app.js` → `motion-editor.js` → `camera-presence.js` → `voice-input.js`.
+
+LLM: `browser → POST /api/chat → llmWithFallback (active dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text) → MotionRuntime`.
+
+Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priority+blend+watchdog rAF) → Live2D`.
 
 ## 🎮 Fitur & Status
 
@@ -63,7 +83,7 @@ Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (
 | ✨ Analisa AI motion | ✅ | `POST /api/motions/analyze` — butuh persetujuan user |
 | 🪄 Buat motion dari teks | ✅ | `POST /api/motions/generate` — draft, di-preview lalu disetujui |
 | 🎤 STT mic (ngobrol 2 arah) | ✅ | push-to-talk — Whisper lokal di browser (transformers.js); audio tidak pernah di-upload |
-| Lip-sync presisi (dari audio) | ⬜ | masih timer-osilasi di kedua versi |
+| Lip-sync presisi (dari audio) | ⬜ | masih timer-osilasi |
 
 ### Interaksi
 - **Gerak mouse** → mata + kepala + badan ikut · **Drag** → geser posisi · **Scroll** → zoom · **Double-click** → reset framing
@@ -71,73 +91,48 @@ Kenapa hybrid: TS port fokus ke logika yang punya test dan berisiko salah port (
 ### 🎤 Ngobrol 2 arah (STT)
 Klik **🎤** di panel chat → bicara → berhenti otomatis saat senyap (atau klik lagi) → teks masuk chat dan terkirim. Push-to-talk murni: **tidak ada perekaman latar**, dan memulai rekam **ditolak saat karakter sedang bicara TTS** (anti-echo — kalau tidak, dia mengobrol dengan dirinya sendiri). Inferensi 100% lokal di browser; audio tidak pernah di-upload. Model Whisper diunduh dari CDN **saat pertama dipakai** (butuh internet sekali, lalu ter-cache browser): default `Xenova/whisper-base` — untuk bahasa Indonesia yang lebih akurat ganti `stt.model` ke `Xenova/whisper-small` di `data/config.json` (lebih besar, ±250 MB). `stt.autoSend: false` bila mau review teks sebelum kirim. Bagian murni (RMS, resampler 16 kHz, auto-stop) diuji di `test/voice-input.test.ts`.
 
-Catatan arsitektur: fitur ini butuh **nol perubahan `app.js`** — semua hook yang dibutuhkan sudah disiapkan v1 (`#btn-mic` yang dulu disabled, `window.__l2dDebug.state.talking`, kirim via klik `#btn-bubble`).
-
-## 🧠 Arsitektur
-
-```
-src/server/index.ts        # Bun.serve (loopback default) — 27 route API + static
-src/shared/{types,config,llm-client}.ts
-src/client/animation/{easing,motion-dsl,motion-registry,motion-runtime}.ts  # → bundle.js
-src/client/engine/motion-taxonomy.ts   # klasifikasi klip native — server & bundle
-src/client/agent/{directive-parser,brain}.ts   # otak agent → window.__agent
-src/build.ts               # bundle-entry.ts → static/js/bundle.js (IIFE, dimuat SEBELUM app.js)
-static/{index.html,css/app.css,js/app.js}      # engine/UI legacy (identik v1, punya render loop)
-static/js/{bundle.js,motion-editor.js,camera-presence.js,voice-input.js}
-data/{config.json,sheets/,motions/,model/}     # data user — TIDAK disajikan sembarangan
-docs/                      # panduan mengikat (lihat bawah)
-```
-
-Urutan muat `index.html`: **`bundle.js`** (Taxonomy+DSL+Registry+Runtime+brain) → `app.js` → `motion-editor.js` → `camera-presence.js`. `bundle-entry.ts` memasang `window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent`; `app.js` mengonsumsinya persis seperti dulu mengonsumsi script v1 yang kini sudah seluruhnya diganti TS.
-
-LLM: `browser → POST /api/chat → llmWithFallback (active dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text) → MotionRuntime`.
-
-Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priority+blend+watchdog rAF) → Live2D`.
+Catatan arsitektur: fitur ini butuh **nol perubahan `app.js`** — semua hook yang dibutuhkan sudah disiapkan (`#btn-mic` yang dulu disabled, `window.__l2dDebug.state.talking`, kirim via klik `#btn-bubble`).
 
 ## 🔒 Keamanan
 
-- `data/config.json` (apiKey plaintext) **tidak pernah disajikan** lewat HTTP statis — 403. Di v1, `config.json` root bisa di-GET siapa pun yang buka server.
+- `data/config.json` (apiKey plaintext) **tidak pernah disajikan** lewat HTTP statis — 403.
 - Path traversal (`../`) → 403; default bind **loopback** (`HOST=0.0.0.0` untuk LAN — sadari semua orang di jaringan bisa membaca server).
 - Body cap per endpoint (413): sheet 5 MB, upload 200 MB, import-zip 500 MB, lainnya 1 MB.
 - `/api/*` tak dikenal → 404 JSON, bukan SPA fallback.
 - `data/` di luar folder model tidak bisa disentuh endpoint model (guard `startsWith` + pemisah direktori).
+- Privasi sensor: inferensi kamera & STT **100% lokal di browser** (transformers.js) — frame/audio tidak pernah di-upload.
 
-## 📦 Migrasi dari v1
+## 🧭 Keputusan desain yang disengaja
 
-Copy `live2d-agent/config.json` → `data/config.json` (contoh: `config.example.json`), `model/*` → `data/model/`, `sheets/*` → `data/sheets/`, `motions/*` → `data/motions/`. Format file identik — tidak ada konversi. Model bawaan `神宫白子` + `lumine` sudah ada di `data/model/`.
+1. **Keamanan di atas kenyamanan** — apiKey tidak pernah keluar via HTTP, bind loopback default, body cap per endpoint, asset sensitif diblokir.
+2. **`llmWithFallback` mempertahankan koneksi aktif** antar panggilan; reply kosong/error tetap tampil sebagai bubble chat — kegagalan terlihat, tidak diam.
+3. **SPA fallback dipersempit** — path tanpa ekstensi → `index.html` 200 (rute UI), tetapi asset `.js`/`.css`/model yang missing → 404 yang jelas, bukan HTML ber-extension js.
+4. **Satu kosakata target motion** — nama gaya SPEC (`angleX`, `eyeX`, …) diterima lalu **dikanoniskan** ke `ax/ay/ex/ey` saat sanitize (`normalizeTarget`), jadi format file motion selalu satu kosakata.
 
-## ⚠️ Divergensi yang diketahui vs v1
+## 📦 Impor data dari versi lama
 
-Port ini bukan byte-identik; hal-hal berikut berbeda secara **sengaja**:
-
-1. **Keamanan lebih ketat**: blokir `config.json`, tutup traversal, body cap, bind loopback — v1 menyajikan seluruh repo root (apiKey kebaca via HTTP!).
-2. **Bug v1 diperbaiki**: `llmWithFallback` v1 me-reset `activeId` ke koneksi pertama di setiap panggilan LLM; v2 mempertahankannya. Reply kosong/error kini juga tampil sebagai bubble chat.
-3. **SPA fallback dipersempit**: path statis tanpa ekstensi → `index.html` 200 (rute UI), tetapi asset `.js`/`.css`/model yang missing → 404 yang jelas, bukan HTML ber-extension js (v1: fallback tanpa syarat).
-4. **`motion-dsl.ts` kanonik persis v1**: nama gaya SPEC (`angleX`, `eyeX`, …) diterima lalu **dikanoniskan** ke `ax/ay/ex/ey` saat sanitize — format file selalu satu kosakata dan file motion v2 tetap terbaca runtime v1. (`normalizeTarget` mengunci ini.)
-
-Catatan QA: `bun test` memanggil dispatcher langsung — endpoint yang menyentuh LLM di-stub ke provider `mock`, jadi suite tidak pernah melakukan panggilan jaringan dan tidak pernah menulis `data/config.json`.
+Copy `deprecated-live2d-agent/config.json` → `data/config.json` (contoh: `config.example.json`), `model/*` → `data/model/`, `sheets/*` → `data/sheets/`, `motions/*` → `data/motions/`. Format file identik — tidak ada konversi. Model bawaan `神宫白子` + `lumine` sudah ada di `data/model/`.
 
 ## 🧪 Test
 
 ```bash
-bun run test         # SEMUA: 140 unit test (bun test) + 381 guard legacy (5 suite)
-bun run test:unit    # hanya unit test TS (parser, DSL/registry/taxonomy, dispatcher server)
+bun run test         # SEMUA: 152 unit test (bun test) + 381 guard legacy (5 suite)
+bun run test:unit    # hanya unit test TS (parser, DSL/registry/taxonomy, dispatcher server, voice-input)
 bun run test:guards  # hanya guard legacy
 bun run build && bunx tsc --noEmit   # build + type-check (keduanya bersih)
 ```
 
-Guard legacy (`test/legacy/`) adalah port dari suite v1 paling bernilai: role-mapping & param-scaling (model-agnostic), sheet schema v4 (220 assertion, mengekstrak `migrateSheet()` dari `app.js` asli via `vm`), exp3-adoption (endpoint diuji in-process via `handleAPI` dengan model sintetis yang dihapus otomatis), api-origin. Tidak ada guard yang memanggil jaringan. Suite taxonomy v1 sudah **lulus** — konversinya kini `test/motion-taxonomy.test.ts` yang mengimpor modul TS langsung. Suite yang belum dipindah: motion-dsl/registry/runtime v1 — file `js/motion-*.js` sudah tidak ada di v2 (DSL/registry terkunci test TS; runtime guard menyusul). Saat `app.js` di-port ke TS, guard-guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
+Guard legacy (`test/legacy/`) menguji **fungsi asli yang jalan di aplikasi**, bukan salinan: role-mapping & param-scaling (uji invariansi penggantian nama — jantung aturan model-agnostic), sheet schema v4 (220 assertion, mengekstrak `migrateSheet()` dari `app.js` asli via `vm`), exp3-adoption (endpoint diuji in-process dengan model sintetis yang dihapus otomatis), api-origin. Tidak ada test yang memanggil jaringan. `bun test` men-stub endpoint yang menyentuh LLM ke provider `mock` — suite tidak pernah melakukan panggilan jaringan dan tidak pernah menulis `data/config.json`.
 
 ## 📚 Dokumentasi (lokal, mengikat)
 
 | File | Isi |
 |---|---|
 | [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md) | Aturan model-agnostic — kenapa & bagaimana tetap tidak meng-hardcode |
-| [`docs/UI-CONSTRAINTS.md`](docs/UI-CONSTRAINTS.md) | Pagar UI: apa yang TIDAK boleh diubah saat menambah fitur |
 | [`docs/SHEET-SYSTEM.md`](docs/SHEET-SYSTEM.md) | Sistem sheet, 4 aturan terkunci, adopsi `.exp3`, keputusan agen reaktif |
 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | Spesifikasi Motion Studio + pipeline gerak (satu pipeline, prioritas, validasi) |
 
-Dokumen historis (rencana kerja yang sudah terektusi): `../live2d-agent/docs/PLAN-BESOK-ALIVE.md`, `PLAN-MOTION-STUDIO.md`.
+Dokumen historis (arsip repo lama): `../deprecated-live2d-agent/docs/PLAN-BESOK-ALIVE.md`, `PLAN-MOTION-STUDIO.md`.
 
 ## 🔧 Troubleshooting
 

@@ -1,12 +1,10 @@
-# SPECIFICATION — Motion Studio & AI Motion System (v2 reference)
+# SPECIFICATION — Motion Studio & AI Motion System
 
-> Diporting dari `docs/SPECIFICATION — Motion Studio & AI Motion System.md`
-> repo v1. Di v1 dokumen ini adalah prompt implementasi; sistemnya kini sudah
-> terbangun (7 fase selesai), jadi dokumen ini dipakai ulang sebagai **spec
-> referensi**: apa arti setiap keputusan, dan pagar yang tidak boleh dilanggar
-> saat mengubah sistem motion. Semua referensi file diperbarui ke layout v2.
+> Spesifikasi mengikat sistem motion di repo ini. Sistemnya sudah terbangun
+> penuh (7 fase selesai) — dokumen ini menjelaskan makna setiap keputusan dan
+> pagar yang tidak boleh dilanggar saat mengubah sistem motion.
 
-## 0. Peta implementasi v2
+## 0. Peta implementasi
 
 ```text
 src/client/animation/motion-dsl.ts        Format Motion Asset + evaluator keyframe + sanitize
@@ -64,7 +62,7 @@ angka / scrub playhead → model langsung berubah. Dua tingkat akses:
   (lean X/Y, rotation), Face (smile, mouth open, eye openness, brow bila ada),
   Energy (bounce, amplitude).
 - **Advanced mode** (opsional, tidak wajib): memperlihatkan parameter rig yang
-  ter-resolve. Implementasi v2 melangkah lebih jauh: timeline bekerja pada
+  ter-resolve. Implementasi melangkah lebih jauh: timeline bekerja pada
   **parameter mentah rig** (satu track per parameter, seperti Cubism Editor),
   dengan mode semantik 8 field tetap bisa dibuka (migrasi via
   `rolesToParamTracks` + peta role model aktif, nilai diproyeksikan ke range
@@ -108,7 +106,7 @@ emotionCompatibility, intensityRange, cooldown, priority, capabilities`.
 
 # 9–10. Native & Gesture Integration
 
-Taxonomy (`static/js/motion-taxonomy.js`) tetap mekanisme otoritatif
+Taxonomy (`src/client/engine/motion-taxonomy.ts`) tetap mekanisme otoritatif
 penemuan/klasifikasi klip native; native clips masuk registry sebagai entri
 `source:"native"`. Gesture builtin tidak diduplikasi — di-expose lewat registry
 sebagai Motion Asset `source:"builtin"`. Kalau preset user punya nama semantik
@@ -135,7 +133,7 @@ tiap frame (8 POSE_FIELDS), plus delegasi `motion_<group>` untuk klip native.
 ```
 
 Scheduler paham ownership: native motion sedang main → AI pose tidak boleh
-melawan. Arbitrase v2: `[MOTION:]` (prio 80 + intensity) vs gesture — gagal
+melawan. Arbitrase: `[MOTION:]` (prio 80 + intensity) vs gesture — gagal
 play → jatuh ke gesture; **tidak pernah keduanya sekaligus**. Cooldown lewat
 registry (`canPlay`/`markPlayed`; dari LLM dihormati, manual bypass). Watchdog
 250 ms di samping rAF mencegah motion yatim mengunci parameter.
@@ -146,7 +144,7 @@ Transisi smooth (`blendIn` default 120 ms, `blendOut` 250 ms + envelope
 amplitude) — jangan pernah `idle → motion → idle` tanpa blend. Parameter-drive
 blending menginterpolasi dari `paramBase`. Intensity menskalakan motion
 semantik (`[INTENSITY:]` clamp 0.1..1), bukan mengalikan semua parameter
- membutoh-butoh; scaling per-track dipakai bila perlu.
+ secara buta; scaling per-track dipakai bila perlu.
 
 # 15. Metadata Editor
 
@@ -224,8 +222,8 @@ data/motions/<model-key>/<motion-id>.motion.json
 ```
 
 Jangan timpan motion user yang ada diam-diam — konflik ID → tanya user atau
-generate ID aman (server: 409 duplicate). Data v1 kompatibel: copy `motions/`
-v1 → `data/motions/`.
+generate ID aman (server: 409 duplicate). Data versi lama kompatibel: copy
+`motions/` dari arsip → `data/motions/`.
 
 # 27. API
 
@@ -237,7 +235,7 @@ POST   /api/motions/analyze            POST   /api/motions/generate
 ```
 
 API key tetap hanya di server — jangan pindah ke browser. (Semua endpoint di
-`src/server/index.ts`, port 1:1 dari v1.)
+`src/server/index.ts`.)
 
 # 28. Security / Validation
 
@@ -250,12 +248,13 @@ Minimal: registry (register/get/remove/search/duplicate), parser (valid,
 invalid, missing fields, keyframe invalid, target asing), runtime
 (play/stop/blend/intensity/cooldown/priority/ownership), LLM (motion valid,
 ID asing, intensity invalid, format lama + baru), capability (full model,
-head-only, tanpa mata, tanpa body). Di v2: `bun run test` — unit TS
-(parser, DSL/registry, server-parity) + guard legacy `test/legacy/`
-(taxonomy 47 assertion; dsl/registry/runtime v1 tidak dipindah karena file
-`js/motion-*.js` sudah tidak ada — runtime guard menyusul saat tahap 2).
+head-only, tanpa mata, tanpa body). Status: `bun run test` — unit TS (directive parser,
+DSL, registry, taxonomy, dispatcher server, voice-input) + guard legacy
+`test/legacy/` (role-mapping, param-scaling, sheet schema, exp3-adoption,
+api-origin). Guard runtime motion belum ada — tulis bersamaan saat modul
+runtime disentuh.
 
-# 30. Implementation Strategy (status v2)
+# 30. Implementation Strategy (status)
 
 Fase 1 (core tanpa UI) — ✅. Fase 2 (sambungkan gesture/taxonomy/native) — ✅.
 Fase 3 (Motion Studio UI) — ✅. Fase 4 (metadata editor) — ✅.

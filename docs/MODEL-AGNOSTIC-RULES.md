@@ -5,10 +5,9 @@
 > kebetulan ada di `data/model/` sekarang (lumine, 神宫白子). Jangan pernah
 > menyetel parameter spesifik hanya untuk model-model itu.
 >
-> Diadaptasi dari `docs/MODEL-AGNOSTIC-RULES.md` repo v1 (`../live2d-agent/`);
-> path dan referensi file sudah diperbarui ke layout v2. Semua pelanggaran
-> tercatat di bawah terjadi di kode v1 — kode yang sama masih hidup di v2
-> (`static/js/app.js` identik), jadi aturan ini sama mengikatnya.
+> Berlaku untuk SEMUA kode di repo ini, legacy maupun TS. Setiap pelanggaran
+> pada tabel di bawah nyata pernah terjadi — kode yang memicunya masih hidup
+> di `static/js/app.js`, jadi aturan ini jauh dari teoretis.
 
 ## Kenapa aturan ini ada
 
@@ -80,11 +79,11 @@ sebagai tengah membuat kepalanya miring permanen.
 - ✅ Kalau melengkapi manifest yang tidak lengkap: **in-memory saja**, jangan tulis
   ke file model, dan jangan pernah menimpa apa yang rigger sudah deklarasikan
 
-## Di mana aturan ini hidup di kode v2
+## Di mana aturan ini hidup di kode
 
-| Logika | Lokasi v2 |
+| Logika | Lokasi |
 |---|---|
-| `mapRoles()`, `pokeRole*`, resolusi role, `inspectModel()` | `static/js/app.js` (port 1:1 dari v1 — **belum** di-port ke TS) |
+| `mapRoles()`, `pokeRole*`, resolusi role, `inspectModel()` | `static/js/app.js` (legacy — di-port saat disentuh) |
 | Pipeline motion (evaluator, sanitize, bounds) | `src/client/animation/motion-dsl.ts` → `static/js/bundle.js` |
 | Klasifikasi klip native (kurva + cdi3 + name-hint) | `src/client/engine/motion-taxonomy.ts` (server & bundle) |
 | Adopsi `.exp3` yatim (`discoverExpressions`) | `src/server/index.ts` |
@@ -95,9 +94,9 @@ pernah memasukkan nama model, id `Param…`, atau range spesifik ke
 
 ## Cara membuktikan tidak melanggar
 
-Guard model-agnostic sudah di-port ke repo v2 (`test/legacy/`, 428 assertion di
-6 suite: role-mapping, param-scaling, taxonomy, exp3-adoption, api-origin,
-sheet-schema) dan dijalankan lewat runner sendiri:
+Guard model-agnostic hidup di `test/legacy/` (381 assertion, 5 suite:
+role-mapping, param-scaling, sheet-schema, exp3-adoption, api-origin) plus
+`test/motion-taxonomy.test.ts` (bun test), dijalankan lewat runner sendiri:
 
 ```bash
 bun run test:guards   # hanya guard legacy

@@ -1,12 +1,11 @@
-# Handoff — Sheet System per Model
+# Sistem Sheet per Model
 
-Dokumen hidup, diporting dari `docs/HANDOFF-SHEET-SYSTEM.md` repo v1 dengan
-path diperbarui ke layout v2. Tujuannya: siapa pun (termasuk sesi berikutnya)
-bisa lanjut kerja tanpa membaca ulang percakapan panjang. Kalau kode dan
-dokumen ini beda, **kode yang benar** — perbaiki dokumennya.
+Dokumen hidup — panduan mengikat sistem sheet. Tujuannya: siapa pun (termasuk
+sesi berikutnya) bisa lanjut kerja tanpa membaca ulang percakapan panjang.
+Kalau kode dan dokumen ini beda, **kode yang benar** — perbaiki dokumennya.
 
-> Sistem sheet diimplementasikan di `static/js/app.js` (identik v1) + endpoint
-> server di `src/server/index.ts`. Belum ada bagian sheet yang di-port ke TS.
+> Sistem sheet diimplementasikan di `static/js/app.js` (legacy — di-port saat
+> disentuh) + endpoint server di `src/server/index.ts`.
 
 ## Kenapa ada sistem sheet
 
@@ -76,8 +75,8 @@ Penyimpanan: `localStorage['live2d_sheet_' + currentModelKey()]` **dan**
 `data/sheets/<key>.json` di server (atomic + serialized write via
 `queueJsonWrite` di `src/server/index.ts`). `currentModelKey()` diturunkan dari
 model PATH, dan sanitizernya identik dengan `sanitizeKey()` di
-`src/server/index.ts` — jangan ubah salah satu tanpa yang lain. Data v1
-(`sheets/*.json`) kompatibel: cukup copy ke `data/sheets/`.
+`src/server/index.ts` — jangan ubah salah satu tanpa yang lain. Data versi
+lama (`sheets/*.json` dari arsip) kompatibel: cukup copy ke `data/sheets/`.
 
 ## API sheet (dipakai UI, diekspos di `window.__live2dAgent.sheet`)
 
@@ -131,8 +130,8 @@ Aturan yang wajib dipertahankan:
   (`GET/POST /api/model/expressions-adoption`).
 
 Efek terukur: model tanpa deklarasi naik dari **0 → 19** emosi di
-`getCapabilityProfile()`. Catatan v1 yang tetap berlaku: adopsi ini belum
-pernah diverifikasi visual — penanda console: `[exp3] adopted N undeclared
+`getCapabilityProfile()`. Catatan yang tetap berlaku: adopsi ini belum pernah
+diverifikasi visual — penanda console: `[exp3] adopted N undeclared
 expression file(s) for <model>`.
 
 ## Keputusan agen reaktif yang terkunci
@@ -169,9 +168,9 @@ bun run test          # unit test TS + guard legacy (termasuk sheet schema v4: 2
 bun run test:guards   # hanya guard legacy
 ```
 
-Guard schema v4 (`test/legacy/test-fase1-sheet-schema.js`, port dari v1)
+Guard schema v4 (`test/legacy/test-fase1-sheet-schema.js`)
 mengekstrak `migrateSheet()` dll. langsung dari `static/js/app.js` via `vm` —
-menguji fungsi **asli** yang jalan di v2, bukan salinan, jadi perubahan
+menguji fungsi **asli** yang jalan di aplikasi, bukan salinan, jadi perubahan
 `migrateSheet` yang melanggar kontrak langsung memerah. Saat mem-port `app.js`
 ke TS, guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 
@@ -180,7 +179,7 @@ ke TS, guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 - **`motionGroups` kosong di kedua model bundled** dan hanya ada 1 file
   `.motion3.json`. `[GESTURE:]` sepenuhnya bergantung pada 9 gesture builtin
   `GESTURE_LIBRARY`. Konsekuensi aset, bukan bug.
-- `config.json` milik user berisi koneksi + apiKey — di v2 file itu di
+- `config.json` milik user berisi koneksi + apiKey — file itu ada di
   `data/config.json`, **di-gitignore** dan **tidak pernah disajikan** lewat HTTP
   statis (403). Ini data milik user, minta izin dulu sebelum menyentuh.
 - `.bak` apapun yang memuat apiKey jangan pernah di-commit.

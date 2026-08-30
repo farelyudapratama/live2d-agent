@@ -399,6 +399,14 @@
         <label>System Prompt
           <textarea id="m-system" rows="3" placeholder="Karakter apa dia?"></textarea>
         </label>
+        <label>Peran (roles)
+          <span class="form-hint">Kosongkan semua = connection ini boleh dipakai untuk semua peran.</span>
+        </label>
+        <div class="conn-roles" id="m-roles">
+          <label><input type="checkbox" value="chat" /> 💬 chat (teks balasan)</label>
+          <label><input type="checkbox" value="motion" /> 🎭 motion (gerak &amp; ekspresi)</label>
+          <label><input type="checkbox" value="sheet" /> 📋 sheet (analisa parameter)</label>
+        </div>
       </div>
       <div class="modal-actions">
         <button id="m-save">💾 Simpan</button>

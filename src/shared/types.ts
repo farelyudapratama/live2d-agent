@@ -14,6 +14,10 @@ export interface Connection {
   systemPrompt: string;
   temperature?: number;
   maxTokens?: number;
+  // Peran FUNGSIONAL koneksi ini (multi-LLM role routing). Array kosong atau
+  // field absen = WILDCARD — boleh dipakai untuk semua peran (config lama
+  // tetap jalan tanpa diedit). Daftar sah: LLM_ROLES di llm-client.ts.
+  roles?: string[];
   testStatus: "idle" | "success" | "error";
   lastError?: string;
   rateLimitedUntil?: string;

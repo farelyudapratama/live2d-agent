@@ -9,7 +9,8 @@
       "baseUrl": "",
       "apiKey": "YOUR_API_KEY_HERE",
       "model": "gemini-2.0-flash",
-      "systemPrompt": "You are a friendly Live2D AI assistant."
+      "systemPrompt": "You are a friendly Live2D AI assistant.",
+      "roles": []
     }
   ],
   "tts": {

@@ -53,7 +53,7 @@ docs/                      # panduan mengikat (lihat bawah)
 
 Urutan muat `index.html`: **`bundle.js`** (Taxonomy+DSL+Registry+Runtime+brain) → `app.js` → `motion-editor.js` → `camera-presence.js` → `voice-input.js`.
 
-LLM: `browser → POST /api/chat → llmWithFallback (active dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text) → MotionRuntime`.
+LLM: `browser → POST /api/chat → llmForRole('chat') → llmWithFallback (eksplisit-role dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text, role 'motion' + paramNotes) → MotionRuntime`. Tabel parameter **tidak** dikirim ke prompt pembicara — pindah ke director (multi-LLM role routing; ±3.400 token/pesan dihemat pada model 223-param).
 
 Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priority+blend+watchdog rAF) → Live2D`.
 
@@ -75,7 +75,7 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | Mood via webcam | ✅ | opt-in, inferensi lokal `transformers.js` — frame tidak di-upload |
 | Mouse-follow | ✅ | mata + kepala + badan |
 | TTS proxy | ✅ | `POST /api/tts` → Gradio |
-| Otak LLM (multi-provider + fallback) | ✅ | `openai-compatible/gemini/groq/openai/anthropic/mock` + 13 `ERROR_RULES` di `src/shared/llm-client.ts` |
+| Otak LLM (multi-provider + fallback) | ✅ | `openai-compatible/gemini/groq/openai/anthropic/mock` + **role routing** (`chat`/`motion`/`sheet` — kosongkan = semua peran; prompt pembicara bebas tabel parameter, deskripsi param pindah ke director) + 13 `ERROR_RULES` di `src/shared/llm-client.ts` |
 | Indikator hidup | ✅ | presence/mood/quiet |
 | Motion Studio (editor keyframe per param) | ✅ | `static/js/motion-editor.js` + `POST /api/motions` (sanitize via `motion-dsl`) — spec: [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) |
 | Motion Registry + Runtime | ✅ | 3 sumber (builtin 9 gesture + native .motion3 + user), priority+cooldown+blending |

@@ -220,6 +220,45 @@
     }
   }
 
+  // ── Render-frame reassertion (beforeModelUpdate guard) ─────────
+  // applyOverrides()/applyRawDrive() jalan di rAF tick kita — SETELAH
+  // internalModel.update() frame yang sama selesai, sehingga tulisannya
+  // ditimpa lagi oleh update() frame BERIKUTNYA: physics.evaluate()
+  // menulis ulang SEMUA parameter output physics, eyeBlink menulis ulang
+  // group EyeBlink, breath menulis ulang ParamBreath — semuanya SEBELUM
+  // o.update() yang merender. Di lumine 178 dari 223 parameter adalah
+  // output physics, jadi slider di atas param itu tampak mati (terukur
+  // 0% frame menahan nilai slider). Library memancarkan
+  // 'beforeModelUpdate' tepat sebelum o.update() — menulis ulang nilai
+  // sticky PADA titik itu membuatnya benar-benar menjadi nilai yang
+  // dirender, tanpa harus membekukan model (freeze tetap berguna untuk
+  // pose diam). Ukur 0% → 100% di browser; guard:
+  // test/legacy/test-override-guard.js.
+  function installOverrideGuard(im) {
+    if (!im || typeof im.on !== 'function' || im.__overrideGuard) return;
+    im.__overrideGuard = true;
+    im.on('beforeModelUpdate', () => {
+      const cm = coreModel();
+      if (!cm) return;
+      for (const id in state.overrides) {
+        const o = state.overrides[id];
+        try {
+          if (typeof o === 'object') cm.setParameterValueById(id, o.value, o.weight);
+          else cm.setParameterValueById(id, o, 1);
+        } catch (e) {}
+      }
+      const d = state.rawDrive;
+      if (!d) return;
+      for (const id in d) {
+        let v = d[id];
+        if (!Number.isFinite(v)) continue;
+        const r = state.paramRange && state.paramRange[id];
+        if (r) v = Math.max(r.min, Math.min(r.max, v));
+        try { cm.setParameterValueById(id, v, 1); } catch (e) {}
+      }
+    });
+  }
+
   // ── Parts (opacity) — distinct from Parameters ──
   // Cubism models expose two separate systems: Parameters (deformation, what
   // we've been driving above) and Parts (per-layer opacity, 0..1). The model's
@@ -527,6 +566,7 @@
 
       startBlink();
       startIdle();
+      installOverrideGuard(state.model.internalModel);
       wireInteractions();
       detectModelCapabilities();   // adapt emotions/params to THIS model
       startIdleMotion();           // auto-play model's own motions so it isn't a static T-pose

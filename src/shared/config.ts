@@ -76,6 +76,30 @@ function queueJsonWrite(file: string, obj: unknown): Promise<void> {
   return done;
 }
 
+/**
+ * Merge daftar koneksi per-id: snapshot runtime (testStatus/lastError dari
+ * llmWithFallback) menang atas file untuk field yang dia punya, TAPI field
+ * yang hanya ada di file — mis. maxTokens/stream/roles yang diedit tangan
+ * saat server berjalan — tidak boleh lenyap. Koneksi baru di salah satu
+ * sumber tetap masuk; urutan mengikuti snapshot runtime.
+ */
+export function mergeConnectionsById(base: unknown, over: unknown): Connection[] {
+  const b = Array.isArray(base) ? (base as Connection[]) : [];
+  const o = Array.isArray(over) ? (over as Connection[]) : [];
+  if (!b.length) return o;
+  if (!o.length) return b;
+  const byId = new Map(b.map((c) => [c.id, c] as const));
+  const out: Connection[] = [];
+  const seen = new Set<string>();
+  for (const c of o) {
+    const f = byId.get(c.id);
+    out.push(f ? { ...f, ...c } : c);
+    seen.add(c.id);
+  }
+  for (const c of b) if (!seen.has(c.id)) out.push(c);
+  return out;
+}
+
 export class ConfigManager {
   private path: string;
   private cache: Config | null = null;
@@ -99,9 +123,20 @@ export class ConfigManager {
       const base = JSON.parse(readFileSync(this.path, "utf8"));
       // Section yang belum ada di file user (mis. `stt` pada config lama) diisi
       // dari default; section yang sudah ada tetap milik user utuh.
-      this.cache = { ...DEFAULT_CONFIG, ...base, ...this.runtimeOverrides };
+      this.cache = {
+        ...DEFAULT_CONFIG,
+        ...base,
+        ...this.runtimeOverrides,
+        // connections JANGAN ditimpa mentah-mentah oleh runtime override —
+        // kalau tidak, edit manual di config.json (maxTokens, stream, roles)
+        // hilang setiap kali proses server menyimpan snapshot lamanya.
+        // Merge per-id: snapshot runtime menang untuk field miliknya
+        // (testStatus/lastError), field yang hanya ada di file tetap hidup.
+        connections: mergeConnectionsById((base as any).connections, (this.runtimeOverrides as any).connections),
+        activeId: this.runtimeOverrides.activeId ?? (base as any).activeId,
+      };
     } catch {
-      this.cache = { ...DEFAULT_CONFIG, ...this.runtimeOverrides } as Config;
+      this.cache = { ...this.runtimeOverrides } as Config;
     }
     return this.cache as Config;
   }

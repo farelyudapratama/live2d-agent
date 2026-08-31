@@ -256,52 +256,66 @@
         || (p.userNote || '').toLowerCase().includes(q);
     });
 
-    host.innerHTML = '';
-    // Batas render 200 baris: rig besar bisa ratusan parameter dan membangun
-    // semuanya sebagai DOM membuat popup tersendat saat mengetik di pencarian.
-    for (const p of filtered.slice(0, 200)) {
-      const row = document.createElement('button');
-      row.className = 'ms-param-item';
-      row.type = 'button';
+    // Escape HTML — daftar parameter isi-nya bisa apa saja (id, label, catatan
+    // user). Tanpa ini, label berisi tag bisa menyuntik HTML.
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+    // InnerHTML TIDAK dibatasi 200 lagi — membangun string jauh lebih cepat
+    // dari pada ratusan DOM node per keystroke pencarian (aturan performa lama
+    // "slice(0,200)" dihapus; rig ratusan param kini tampil penuh). Klik
+    // ditangani terpusat agar ribuan baris tidak butuh listener masing-masing.
+    const rows = filtered.map(p => {
       const active = !!trackFor(p.id, false);
-      if (active) row.classList.add('added');
-      row.title = p.id + '  (' + p.min + ' … ' + p.max + ', default ' + p.def + ')'
-        + (p.userNote ? '\n' + p.userNote : '');
-      const nm = document.createElement('span');
-      nm.className = 'ms-param-name';
-      nm.textContent = p.label && p.label !== p.id ? (p.label + '  (' + p.id + ')') : p.id;
-      const gp = document.createElement('span');
-      gp.className = 'ms-param-group';
-      gp.textContent = p.group || '';
-      row.appendChild(nm); row.appendChild(gp);
-      row.addEventListener('click', () => {
-        if (trackFor(p.id, false)) {
-          // Klik kedua = pilih track itu, bukan bikin duplikat.
-          const tr = trackFor(p.id, false);
-          state.selected = tr.keys.length ? { param: p.id, index: 0 } : null;
-          renderAll();
-          setStatus('track "' + p.id + '" sudah ada');
-          return;
-        }
-        pushUndo();
-        trackFor(p.id, true);
-        // Key pertama diseed dari nilai parameter yang SEDANG terlihat di model,
-        // supaya menambah track tidak mengubah pose sama sekali — user mulai
-        // dari kondisi sekarang, bukan dari nol yang bisa berarti pose ekstrem.
-        const l2d = L2D();
-        const cur = (l2d && l2d.readParameter) ? l2d.readParameter(p.id) : p.def;
-        const idx = addKey(p.id, state.scrubT, Number.isFinite(cur) ? cur : p.def);
-        state.selected = { param: p.id, index: idx };
-        renderAll(); applyScrubPose();
-        setStatus('track "' + p.id + '" ditambahkan');
+      const nm = (p.label && p.label !== p.id) ? esc(p.label + '  (' + p.id + ')') : esc(p.id);
+      return '<button type="button" class="ms-param-item' + (active ? ' added' : '') + '"'
+        + ' data-param="' + esc(p.id) + '"'
+        + ' title="' + esc(p.id + '  (' + p.min + ' … ' + p.max + ', default ' + p.def + ')'
+          + (p.userNote ? '\n' + p.userNote : '')) + '">'
+        + '<span class="ms-param-name">' + nm + '</span>'
+        + '<span class="ms-param-group">' + esc(p.group || '') + '</span>'
+        + '</button>';
+    }).join('');
+    host.innerHTML = rows;
+
+    // Delegated click: satu listener untuk seluruh daftar.
+    if (!host.dataset.listener) {
+      host.dataset.listener = '1';
+      host.addEventListener('click', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('.ms-param-item');
+        if (!btn || !btn.dataset.param) return;
+        openParam(btn.dataset.param);
       });
-      host.appendChild(row);
     }
+
     if (countEl) {
-      countEl.textContent = filtered.length > 200
-        ? ('menampilkan 200 dari ' + filtered.length + ' parameter — persempit pencarian')
-        : (filtered.length + ' dari ' + state.params.length + ' parameter');
+      countEl.textContent = filtered.length + ' dari ' + state.params.length + ' parameter';
     }
+  }
+
+  // Fokus track param dari daftar (dipanggil item + klikan terpusat).
+  function openParam(id) {
+    if (trackFor(id, false)) {
+      // Klik kedua = pilih track itu, bukan bikin duplikat.
+      const tr = trackFor(id, false);
+      state.selected = tr.keys.length ? { param: id, index: 0 } : null;
+      renderAll();
+      setStatus('track "' + id + '" sudah ada');
+      return;
+    }
+    pushUndo();
+    trackFor(id, true);
+    // Key pertama diseed dari nilai parameter yang SEDANG terlihat di model,
+    // supaya menambah track tidak mengubah pose sama sekali — user mulai dari
+    // kondisi sekarang, bukan dari nol yang bisa berarti pose ekstrem.
+    const l2d = L2D();
+    const cur = (l2d && l2d.readParameter) ? l2d.readParameter(id) : undefined;
+    const p = state.params.find(x => x.id === id);
+    const idx = addKey(id, state.scrubT, Number.isFinite(cur) ? cur : (p ? p.def : 0));
+    state.selected = { param: id, index: idx };
+    renderAll(); applyScrubPose();
+    setStatus('track "' + id + '" ditambahkan');
   }
 
   // ── Render: timeline ─────────────────────────────────────────────

@@ -14,6 +14,11 @@ export interface Connection {
   systemPrompt: string;
   temperature?: number;
   maxTokens?: number;
+  // Stream mode (SSE): bytes mengalir kontinu sehingga gateway agresif
+  // (mis. faucet yang memotong generasi lambat lalu menagih token tanpa
+  // hasil) tidak kehilangan jawaban panjang. Parser klien merakit ulang
+  // chunk delta jadi jawaban penuh; non-stream tetap default.
+  stream?: boolean;
   // Peran FUNGSIONAL koneksi ini (multi-LLM role routing). Array kosong atau
   // field absen = WILDCARD — boleh dipakai untuk semua peran (config lama
   // tetap jalan tanpa diedit). Daftar sah: LLM_ROLES di llm-client.ts.

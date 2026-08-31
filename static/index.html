@@ -399,6 +399,16 @@
         <label>System Prompt
           <textarea id="m-system" rows="3" placeholder="Karakter apa dia?"></textarea>
         </label>
+        <label>Max Tokens &amp; Temperature
+          <span class="form-hint">Kosong = default (2048 &amp; 0.8). Model reasoning butuh lebih besar (mis. 8192) supaya jawaban tak terpotong sebelum reasoning-nya selesai.</span>
+          <span class="conn-roles">
+            <input type="number" id="m-maxtokens" min="64" max="200000" step="1" placeholder="2048" style="flex:1" />
+            <input type="number" id="m-temp" min="0" max="2" step="0.1" placeholder="0.8" style="flex:1" />
+          </span>
+        </label>
+        <label class="conn-roles">
+          <input type="checkbox" id="m-stream" /> 🌊 Stream mode — untuk gateway yang memotong generasi lambat
+        </label>
         <label>Peran (roles)
           <span class="form-hint">Kosongkan semua = connection ini boleh dipakai untuk semua peran.</span>
         </label>

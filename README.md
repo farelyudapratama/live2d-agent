@@ -53,7 +53,7 @@ docs/                      # panduan mengikat (lihat bawah)
 
 Urutan muat `index.html`: **`bundle.js`** (Taxonomy+DSL+Registry+Runtime+brain) → `app.js` → `motion-editor.js` → `camera-presence.js` → `voice-input.js`.
 
-LLM: `browser → POST /api/chat → llmForRole('chat') → llmWithFallback (eksplisit-role dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text, role 'motion' + paramNotes) → MotionRuntime`. Tabel parameter **tidak** dikirim ke prompt pembicara — pindah ke director (multi-LLM role routing; ±3.400 token/pesan dihemat pada model 223-param).
+LLM: `browser → POST /api/chat → llmForRole('chat') → llmWithFallback (eksplisit-role dulu, cooldown, fallback) → provider → reply → parseSegments → animateTextViaDirector (POST /api/animate-text, role 'motion' + paramNotes + persona) → MotionRuntime`. Tabel parameter **tidak** dikirim ke prompt pembicara — pindah ke director (multi-LLM role routing; ±3.400 token/pesan dihemat pada model 223-param). Persona per-karakter — nama (`sheet.config.displayName`) + catatan karakter (`sheet.userNote`) — ikut ke prompt pembicara **dan** director, jadi teks dan ekspresi mengikuti kepribadian karakter tanpa perlu dideklarasikan di koneksi LLM.
 
 Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priority+blend+watchdog rAF) → Live2D`.
 
@@ -68,7 +68,7 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | Adopsi `.exp3` tak terdaftar | ✅ | `discoverExpressions` + opt-out per file |
 | Injeksi gerak LLM | ✅ | `[EMOTION:] [GESTURE:] [MOTION:] [INTENSITY:] [ACC:] [PROP:] [HEAD:] [EYES:] [MOUTH:] [BODY:]` |
 | Pose dari emosi tanpa directive | ✅ | `inferMovementFromEmotion` + jitter ±2.5°, scaled ke range param model |
-| Arbitrase motion/gesture | ✅ | `[MOTION:]` prioritas 80; gagal → jatuh ke gesture; tidak pernah keduanya |
+| Arbitrase motion/gesture | ✅ | `[MOTION:]` prioritas 80; gagal → jatuh ke gesture; gesture (60) kini menyusun DI BAWAH motion — field benturan ditekan runtime (multi-layer, ownership per field) |
 | `lockAI()/unlockAI()` | ✅ | fidget & interaksi dibekukan selama playback segmen |
 | Timing segmen ikut TTS | ✅ | segmen berikut mulai saat TTS segmen ini selesai (+180 ms) |
 | Agent proaktif | ✅ | `idle/away/return/mood` + panel **🎚️ Kelakuan** — `quietMs` dibaca LIVE dari config |
@@ -78,8 +78,8 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | Otak LLM (multi-provider + fallback) | ✅ | `openai-compatible/gemini/groq/openai/anthropic/mock` + **role routing** (`chat`/`motion`/`sheet` — kosongkan = semua peran; prompt pembicara bebas tabel parameter, deskripsi param pindah ke director) + 13 `ERROR_RULES` di `src/shared/llm-client.ts` |
 | Indikator hidup | ✅ | presence/mood/quiet |
 | Motion Studio (editor keyframe per param) | ✅ | `static/js/motion-editor.js` + `POST /api/motions` (sanitize via `motion-dsl`) — spec: [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) |
-| Motion Registry + Runtime | ✅ | 3 sumber (builtin 9 gesture + native .motion3 + user), priority+cooldown+blending |
-| Motion dipakai AI | ✅ | `[MOTION:id]` divalidasi runtime & server |
+| Motion Registry + Runtime | ✅ | 3 sumber (builtin 9 gesture + native .motion3 + user), priority+cooldown+blending, multi-layer (N motion paralel, ownership per field) |
+| Motion dipakai AI | ✅ | `[MOTION:id]` divalidasi runtime & server; playback dilar (stretch, maks 2×) mengikuti estimasi durasi TTS segmen |
 | ✨ Analisa AI motion | ✅ | `POST /api/motions/analyze` — butuh persetujuan user |
 | 🪄 Buat motion dari teks | ✅ | `POST /api/motions/generate` — draft, di-preview lalu disetujui |
 | 🎤 STT mic (ngobrol 2 arah) | ✅ | push-to-talk — Whisper lokal di browser (transformers.js); audio tidak pernah di-upload |
@@ -116,7 +116,7 @@ Copy `deprecated-live2d-agent/config.json` → `data/config.json` (contoh: `conf
 ## 🧪 Test
 
 ```bash
-bun run test         # SEMUA: 152 unit test (bun test) + 381 guard legacy (5 suite)
+bun run test         # SEMUA: 200 unit test (bun test) + 381 guard legacy (5 suite)
 bun run test:unit    # hanya unit test TS (parser, DSL/registry/taxonomy, dispatcher server, voice-input)
 bun run test:guards  # hanya guard legacy
 bun run build && bunx tsc --noEmit   # build + type-check (keduanya bersih)

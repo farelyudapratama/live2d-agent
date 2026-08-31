@@ -117,12 +117,16 @@ aturan #3) — tidak pernah timpan diam-diam.
 
 ```js
 MotionRuntime.createRuntime(registry, bridge)   // window.MotionRuntime
-play(id, {intensity, blendIn, blendOut}) · stop(id) · stopAll() · isPlaying(id) · getActive()
+play(id, {intensity, blendIn, blendOut, fitToMs}) · stop(id) · stopAll() · isPlaying(id) · getActive()
 ```
 
-Satu pintu playback. Bagian lain aplikasi tidak boleh memanipulasi state motion
-secara langsung — app.js men-bridge hasil evaluasi runtime ke `state.aiPose`
-tiap frame (8 POSE_FIELDS), plus delegasi `motion_<group>` untuk klip native.
+Satu pintu playback, MULTI-LAYER: N motion boleh berjalan paralel; tiap frame
+runtime menghitung gabungan semua layer dan menerapkannya dalam SATU
+`applyPoseDelta` + `applyParamDrive` (bridge app.js unwind-then-apply, jadi
+tidak ada dua penulis per frame). Bagian lain aplikasi tidak boleh memanipulasi
+state motion secara langsung — app.js men-bridge hasil evaluasi runtime ke
+`state.aiPose` tiap frame (8 POSE_FIELDS), plus delegasi `motion_<group>` untuk
+klip native.
 
 # 12. Scheduler / Prioritas
 
@@ -132,11 +136,18 @@ tiap frame (8 POSE_FIELDS), plus delegasi `motion_<group>` untuk klip native.
  80  explicit LLM motion
 ```
 
-Scheduler paham ownership: native motion sedang main → AI pose tidak boleh
-melawan. Arbitrase: `[MOTION:]` (prio 80 + intensity) vs gesture — gagal
-play → jatuh ke gesture; **tidak pernah keduanya sekaligus**. Cooldown lewat
-registry (`canPlay`/`markPlayed`; dari LLM dihormati, manual bypass). Watchdog
-250 ms di samping rAF mencegah motion yatim mengunci parameter.
+Multi-layer (ownership per field): layer baru MENGGANTIKAN semua layer
+prioritas <= miliknya (same band & di bawah — paritas cut perilaku lama) dan
+BERJALAN BERSAMA layer prioritas lebih tinggi. Field/param hanya ditulis layer
+prioritas tertinggi yang menganimasikannya; klaim ownership tetap berlaku walau
+nilai sedang 0 (track yang melintasi nol tidak melepas kepemilikan). Cap 4
+layer: play yang lebih rendah ditolak saat penuh — band sama tetap bisa
+menggantikan. Konsekuensi yang diinginkan: gesture kini menyusun DI BAWAH
+`[MOTION:id]` (brain memainkan keduanya; field benturan otomatis ditekan,
+sisa field seperti mata/badan tetap bergerak). Native clip tidak menyentuh
+layer DSL — app.js punya guard `clipUntil` sendiri selama klip main. Cooldown
+lewat registry (`canPlay`/`markPlayed`; dari LLM dihormati, manual bypass).
+Watchdog 250 ms di samping rAF mencegah motion yatim mengunci parameter.
 
 # 13–14. Blending & Intensity
 
@@ -145,6 +156,14 @@ amplitude) — jangan pernah `idle → motion → idle` tanpa blend. Parameter-d
 blending menginterpolasi dari `paramBase`. Intensity menskalakan motion
 semantik (`[INTENSITY:]` clamp 0.1..1), bukan mengalikan semua parameter
  secara buta; scaling per-track dipakai bila perlu.
+
+Stretch (`fitToMs`, dihitung `estimateSpeechMs` di brain dari panjang teks
+segmen): playback `[MOTION:id]` dilar agar mengisi seluruh durasi bicara TTS —
+pelambatan dibatasi 2× (`STRETCH_MAX`), sisanya menahan nilai keyframe
+terakhir sampai fade. Motion tidak pernah dipercepat, loop tidak di-stretch
+(sudah mengisi waktu sendiri). Blend-out (fade) boleh disela playback
+prioritas lebih rendah — fade dianggap bukan "masih main"; playback utama
+tetap dilindungi aturan prioritas.
 
 # 15. Metadata Editor
 

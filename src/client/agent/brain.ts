@@ -91,6 +91,16 @@ const DEFAULT_GESTURES = [
 function l2d(): any {
   return (window as any).__live2dAgent;
 }
+
+// Estimasi durasi bicara TTS satu segmen (heuristik: ±16 karakter/detik plus
+// lead-in) — dipakai MotionRuntime untuk melar playback [MOTION:id] supaya
+// mengisi seluruh omongan, bukan selesai di tengah lalu diam. Tidak bisa
+// eksak: durasi TTS sebenarnya baru diketahui saat audio selesai.
+export function estimateSpeechMs(text: string): number {
+  const t = String(text || "").trim();
+  if (!t) return 0;
+  return Math.min(12000, Math.round(500 + t.length * 62));
+}
 function addChat(role: "user" | "agent", text: string): void {
   try {
     (window as any).__addChat?.(role, text);
@@ -169,11 +179,12 @@ ${note}
 `
       : "";
 
+    const nm = this.characterName();
     const capBlock = `
 
 === KARAKTER LIVE2D — KENDALI PENUH ===
 
-Kamu memainkan karakter anime LIVE2D. KAMU bisa menggerakkan karakter ini secara real-time!
+Kamu memainkan karakter anime LIVE2D${nm ? ` bernama ${nm}` : ""}. KAMU bisa menggerakkan karakter ini secara real-time!
 Semua gerakan dikirim sebagai directive tersembunyi dalam balasanmu.
 ${noteBlock}
 === DAFTAR EMOSI ===
@@ -274,6 +285,17 @@ Contoh pendek:
     return movements[emotion] || movements.normal;
   }
 
+  // Nama karakter per-model: sheet.config.displayName (di-set user di tab
+  // konfigurasi model) atau "" bila belum pernah diset. Sengaja TIDAK menebak
+  // dari nama folder — nama folder adalah kunci teknis, bukan identitas.
+  private characterName(): string {
+    const sheet = (this.capProfile as any)?.sheet;
+    const dn = sheet?.config?.displayName;
+    return typeof dn === "string"
+      ? dn.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, 60)
+      : "";
+  }
+
   private async animateTextViaDirector(
     text: string,
     profile: CapabilityProfile | null
@@ -307,6 +329,10 @@ Contoh pendek:
             motions: (profile as any)?.motionCatalog || [],
           },
           paramNotes,
+          // Persona + nama ikut ke director: pemilihan emosi/gesture harus
+          // konsisten dengan kepribadian karakter, bukan logika generik.
+          persona: (profile?.userNote ?? "").trim().slice(0, 800),
+          characterName: this.characterName(),
         }),
       });
       if (!res.ok) throw new Error("Director HTTP " + res.status);
@@ -461,7 +487,7 @@ Contoh pendek:
       i++;
 
       // Apply this segment's actions (with inference fallback)
-      this.applyActions(seg.actions, segIdx);
+      this.applyActions(seg.actions, segIdx, seg.text);
       // Chat log per-segment: teks baru muncul SESUDAH (seiring) TTS segmen ini
       if (seg.text) addChat("agent", seg.text);
       console.log(
@@ -482,7 +508,7 @@ Contoh pendek:
   // ── Apply actions to the model (AI-driven, EASED) — v1 parity ──
   // Pose dikirim sebagai TARGET nested {head,eyes,mouth,body} ke setAIPose();
   // engine yang ease menuju target dan menumpuk ambient fidget di atasnya.
-  private applyActions(actions: ParsedActions, segmentIndex = 0): void {
+  private applyActions(actions: ParsedActions, segmentIndex = 0, segmentText = ""): void {
     const agent = l2d();
     if (!agent || !agent.isReady?.()) return;
 
@@ -577,26 +603,29 @@ Contoh pendek:
     //
     // [MOTION:id] dari Motion Studio didahulukan bila ada: itu gerakan yang
     // user rancang sendiri dan beri deskripsi, jadi lebih spesifik daripada
-    // gesture generik. playMotion mengembalikan false bila id asing / ditolak
-    // scheduler — kalau itu terjadi kita JATUH ke jalur gesture supaya segmen
-    // tetap bergerak. Satu-satunya: motion ATAU gesture, jangan keduanya.
-    let handledByMotion = false;
+    // gesture generik (priority 80, SPEC §12). Gesture/emotion-fallback kini
+    // TETAP dimainkan sebagai LAPISAN 60 di bawahnya (runtime multi-layer):
+    // ownership per field menekan parameter yang sudah dipegang motion, jadi
+    // tidak pernah ada dua penulis satu parameter — gesture mengisi sisa
+    // field (mata, badan) yang tidak disentuh motion user. Bila id motion
+    // asing (playMotion false) gesture tetap jalan sendirian seperti dulu.
     if (actions.motion && agent.playMotion) {
-      handledByMotion = agent.playMotion(actions.motion, {
+      const handledByMotion = agent.playMotion(actions.motion, {
         fromLLM: true,
         intensity: actions.intensity != null ? actions.intensity : undefined,
         priority: 80, // "explicit LLM motion" pada tabel prioritas SPEC §12
+        // Lar playback mengikuti estimasi durasi TTS segmen ini (SPEC §13):
+        // motion 1.5 dtk tidak berhenti di tengah kalimat 4 dtk.
+        fitToMs: estimateSpeechMs(segmentText) || undefined,
       });
       if (!handledByMotion)
         console.warn("[agent] motion tidak dikenal/ditolak:", actions.motion);
     }
-    if (!handledByMotion) {
-      const gestureToPlay =
-        actions.gesture ||
-        (actions.emotion && EMOTION_GESTURE_FALLBACK[actions.emotion]) ||
-        null;
-      if (gestureToPlay && agent.playGesture) agent.playGesture(gestureToPlay);
-    }
+    const gestureToPlay =
+      actions.gesture ||
+      (actions.emotion && EMOTION_GESTURE_FALLBACK[actions.emotion]) ||
+      null;
+    if (gestureToPlay && agent.playGesture) agent.playGesture(gestureToPlay);
   }
 
   setPresence(p: boolean | null): void {

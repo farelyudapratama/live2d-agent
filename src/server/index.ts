@@ -257,9 +257,24 @@ async function handleChat(req:Request):Promise<Response>{
 
 async function handleTestConnection(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
-  const conn=body.connection||{}; const stored=config.connections.find(x=>x.id===conn.id); if(stored?.apiKey) conn.apiKey=stored.apiKey;
+  // PENTING: config.connections mem-parse ulang file SETIAP akses — pegang
+  // SATU referensi array, mutasi elemennya, lalu tulis array yang sama.
+  // Memanggil getter dua kali = dua parse berbeda dan mutasi hilang.
+  const connsNow=config.connections;
+  const conn=body.connection||{}; const stored=connsNow.find(x=>x.id===conn.id); if(stored?.apiKey) conn.apiKey=stored.apiKey;
   if((conn.provider||"openai-compatible").toLowerCase()!=="mock" && (!conn.apiKey|| conn.apiKey.startsWith("MASUKKAN"))) return json({valid:false, error:"apiKey belum diisi"},400);
-  try{ const reply=await callLLM(conn,[{role:"user",content:"Reply with just: OK"}]); return json({valid:true, reply:reply.slice(0,80)});}catch(e:any){ return json({valid:false, error:e.message}); }
+  // Hasil Test WAJIB menulis status ke koneksi tersimpan — kalau tidak, badge
+  // di panel tidak pernah berubah walau test berhasil (status hanya ditulis
+  // oleh trafik sungguhan lewat llmWithFallback). Test gagal TIDAK menyetel
+  // cooldown: itu hak classifier trafik nyata, bukan tombol manual user.
+  try{
+    const reply=await callLLM(conn,[{role:"user",content:"Reply with just: OK"}]);
+    if(stored){ stored.testStatus="success"; stored.lastError=""; config.saveConnections(connsNow, config.load().activeId); }
+    return json({valid:true, reply:reply.slice(0,80)});
+  }catch(e:any){
+    if(stored){ stored.testStatus="error"; stored.lastError=e.message; config.saveConnections(connsNow, config.load().activeId); }
+    return json({valid:false, error:e.message});
+  }
 }
 
 async function handleTTS(req:Request):Promise<Response>{
@@ -410,6 +425,15 @@ export function formatParamNotes(raw: unknown): string {
   return lines.join("\n");
 }
 
+/** Bersihkan teks persona/nama dari body client (jalur /api/animate-text):
+ *  buang control char — newline & tab DIPERTAHANKAN (persona boleh
+ *  multi-baris, paritas sanitizeUserNote di app.js) — trim, batasi panjang.
+ *  "" bila bukan string atau kosong. */
+export function sanitizePersonaText(raw: unknown, cap = 800): string {
+  if (typeof raw !== "string") return "";
+  return raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, cap);
+}
+
 async function handleAnimateText(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
   const text=(body.text||"").trim(); const caps=body.capabilities||{};
@@ -419,29 +443,42 @@ async function handleAnimateText(req:Request):Promise<Response>{
   // Penjelasan parameter tulisan USER (dari character sheet, dikirim brain).
   // Otoritatif: director harus menghormati makna ini, bukan menebak dari nama id.
   const noteLines=formatParamNotes(body.paramNotes);
+  // Identitas karakter (nama + persona) dari brain — opsional, "" bila user
+  // belum menulisnya. Director memakainya agar emosi/gesture konsisten dengan
+  // kepribadian karakter, bukan gaya generik.
+  const personaLines=sanitizePersonaText(body.persona);
+  const charName=sanitizePersonaText(body.characterName,60);
   if(!text) return json({segments:[]});
   if(!config.activeConnection) return json({segments:[{text,emotion:"normal",gesture:"nod",intensity:0.7}]});
   const directorPrompt=`Kamu adalah animation director untuk karakter Live2D Anime yang hidup dan ekspresif.
 Karakter baru saja berbicara teks berikut:
 "${text}"
-
+${charName ? "\nKarakter yang kamu animasikan: " + charName + "\n" : ""}
 Daftar Emosi yang didukung model: [${emotions.join(", ")}]
 Daftar Gesture yang tersedia: [${gestures.join(", ")}]
 ${motions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+motions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}
 ${noteLines ? "\nPENJELASAN PARAMETER DARI USER (otoritatif — hormati makna ini):\n"+noteLines+"\n" : ""}
+${personaLines ? "\nKEPRIBADIAN KARAKTER (ditulis user — pilih emosi, gesture, dan intensity yang konsisten dengan kepribadian ini, jangan generik):\n"+personaLines+"\n" : ""}
 TUGAS:
 1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup (jangan diam selama bicara!).
-2. Untuk setiap segment, tentukan:
+2. Sebelum menentukan emotion/gesture, analisis dulu makna & nada tiap segment secara independen — apa yang sedang dirasakan/disampaikan karakter DI SEGMENT ITU, bukan di segment lain.
+3. Untuk setiap segment, tentukan:
    - "text": teks klausa/kalimat tersebut (harus sama persis dengan teks asli bila digabung kembali)
-   - "emotion": emosi yang SANGAT SESUAI dengan makna klausa tersebut (dari daftar emosi di atas)
+   - "emotion": emosi yang SANGAT SESUAI dengan makna klausa tersebut (dari daftar emosi di atas). Emosi WAJIB berubah mengikuti pergeseran nada teks — jangan pakai emosi yang sama untuk semua segment kecuali teksnya memang konsisten satu nada dari awal sampai akhir.
    - "gesture": nama gesture yang pas (atau null jika netral)${motions.length? '\n   - "motion": id gerakan user bila ada yang sangat pas (atau null)':""}
-   - "intensity": angka 0.3 s/d 1.0 (seberapa kuat ekspresinya, 0.4=halus, 0.8=ekspresif)
+   - "intensity": angka 0.3 s/d 1.0 (seberapa kuat ekspresinya, 0.4=halus, 0.8=ekspresif) — sesuaikan naik-turun sesuai kekuatan emosi tiap segment, jangan pakai angka yang sama terus-menerus.
+
+ATURAN PENTING:
+- Nilai emotion/gesture/motion/intensity HARUS berdasarkan analisis makna teks asli di atas, BUKAN meniru contoh format di bawah. Contoh di bawah HANYA untuk menunjukkan struktur/skema JSON yang benar, isinya tidak relevan dengan teks yang sedang kamu proses sekarang.
+- Jangan mengarang nama emotion/gesture di luar daftar yang diberikan.
+- Jika teks berisi banyak pergeseran emosi (mis. dari senang ke sedih ke marah), pastikan output JSON merefleksikan pergeseran itu per segment.
 
 KEMBALIKAN HANYA JSON array valid tanpa markdown formatting atau kata pengantar.
-Contoh format:
+
+Skema (bukan contoh isi — hanya struktur):
 [
-  { "text": "Halo semuanya!", "emotion": "senang", "gesture": "wave_hi", "intensity": 0.9 },
-  { "text": "Aku senang banget ketemu kalian lagi.", "emotion": "senang", "gesture": "lean_excited", "intensity": 0.8 }
+  { "text": "<klausa 1>", "emotion": "<pilih dari daftar emosi sesuai makna klausa 1>", "gesture": "<pilih dari daftar gesture atau null>", "intensity": <0.3-1.0> },
+  { "text": "<klausa 2>", "emotion": "<pilih dari daftar emosi sesuai makna klausa 2>", "gesture": "<pilih dari daftar gesture atau null>", "intensity": <0.3-1.0> }
 ]`;
   try{
     const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:directorPrompt}]);

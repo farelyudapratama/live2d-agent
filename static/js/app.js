@@ -2124,6 +2124,16 @@
     const connList = $('#conn-list');
     const modal = $('#conn-modal');
     let editingId = null;
+    let lastConnSig = null;
+
+    // Signature ringan status koneksi — dipakai polling realtime supaya
+    // re-render hanya terjadi bila ada yang BENAR-BENAR berubah
+    // (status/error/cooldown/roles), bukan tiap tick.
+    function connSig(conns, activeId) {
+      return JSON.stringify([activeId || null].concat((conns || []).map(c =>
+        [c.id, c.testStatus || 'untested', c.lastError || '', c.rateLimitedUntil || '',
+          Array.isArray(c.roles) ? c.roles.join(',') : ''])));
+    }
 
     async function loadConns() {
       try {
@@ -2138,6 +2148,7 @@
       return 'default';
     }
     function renderConns(conns, activeId) {
+      lastConnSig = connSig(conns, activeId);
       connList.innerHTML = '';
       if (!conns.length) {
         connList.innerHTML = '<div class="conn-hint">Belum ada connection. Klik ＋ untuk tambah.</div>';
@@ -2147,7 +2158,14 @@
         const card = document.createElement('div');
         card.className = 'conn-card' + (c.id === activeId ? ' active' : '');
         const status = c.testStatus || 'untested';
-        const badgeText = status === 'success' ? '✓ connected' : status === 'error' ? '✕ error' : '○ untested';
+        // Cooldown live: koneksi yang gagal baru saja didinginkan classifier
+        // (rate limit / error transien) — badge harus jujur kalau sedang
+        // di-skip, jangan tetap pamer "connected" padahal tak dipakai dulu.
+        const coolMs = c.rateLimitedUntil ? new Date(c.rateLimitedUntil).getTime() - Date.now() : 0;
+        const cooling = coolMs > 0;
+        const badgeText = cooling
+          ? `◌ cooldown ${Math.ceil(coolMs / 1000)}s`
+          : status === 'success' ? '✓ connected' : status === 'error' ? '✕ error' : '○ untested';
         // Tag peran: kosong = wildcard ("semua peran") — user tidak wajib paham konsep role.
         const roleList = Array.isArray(c.roles) ? c.roles : [];
         const roleTags = roleList.length
@@ -2156,7 +2174,7 @@
         card.innerHTML = `
           <div class="conn-head">
             <span class="conn-name">${esc(c.name || c.id)}</span>
-            <span class="conn-badge ${badgeClass(status)}">${badgeText}</span>
+            <span class="conn-badge ${cooling ? 'default' : badgeClass(status)}">${badgeText}</span>
           </div>
           <div class="conn-meta">${esc((c.provider||''))} · ${esc((c.model||''))}</div>
           <div class="conn-role-tags">${roleTags}</div>
@@ -2198,6 +2216,10 @@
       $('#m-apikey').value = c ? (c.apiKey && !c.apiKey.startsWith('•') ? '' : '') : '';  // keep existing key hidden
       $('#m-model').value = c ? (c.model || '') : '';
       $('#m-system').value = c ? (c.systemPrompt || '') : '';
+      // Kosong = pertahankan yang tersimpan (server merge, field tak dikirim)
+      $('#m-maxtokens').value = c && c.maxTokens != null ? c.maxTokens : '';
+      $('#m-temp').value = c && c.temperature != null ? c.temperature : '';
+      $('#m-stream').checked = !!(c && c.stream);
       rolesToForm(c ? c.roles : []);
       modal.classList.remove('hidden');
     }
@@ -2216,6 +2238,12 @@
         systemPrompt: $('#m-system').value,
         roles: rolesFromForm(),
       };
+      // Kosong = jangan kirim (server merge mempertahankan nilai lama)
+      const mt = parseInt($('#m-maxtokens').value, 10);
+      const tp = parseFloat($('#m-temp').value);
+      if (Number.isFinite(mt)) conn.maxTokens = mt;
+      if (Number.isFinite(tp)) conn.temperature = tp;
+      conn.stream = $('#m-stream').checked;
       const body = { action: editingId ? 'update' : 'add' };
       // Kalau edit dan field key kosong, jangan kirim key (server pertahankan yang lama).
       // Jangan kirim key yang di-mask ('•…') karena itu bukan key asli.
@@ -3210,7 +3238,7 @@
       // until releasePresetPreview() — no 10s auto-resume, so the user can take
       // their time posing without idle/blink/breath fighting the sliders.
       if (persistent) return;
-      let remaining = 10;
+      let remaining = 1000;
       const tickCountdown = () => {
         remaining--;
         if (remaining > 0) {
@@ -3845,6 +3873,23 @@
     }
 
     loadConns();
+
+    // Status koneksi REALTIME: testStatus/lastError/rateLimitedUntil ditulis
+    // server SETIAP KALI LLM benar-benar dipanggil (sukses maupun gagal), bukan
+    // hanya saat tombol Test ditekan. Polling ringan 4 dtk + render hanya bila
+    // signature berubah — daftar tidak berkedip dan klik tidak terganggu.
+    let pollBusy = false;
+    setInterval(async () => {
+      if (pollBusy || document.hidden) return;
+      pollBusy = true;
+      try {
+        const r = await fetch(API + '/api/config');
+        const d = await r.json();
+        if (connSig(d.connections || [], d.activeId) !== lastConnSig)
+          renderConns(d.connections || [], d.activeId);
+      } catch {}
+      pollBusy = false;
+    }, 4000);
   }
 
   // ── Sheet schema + per-model config constants ───────────────────

@@ -74,8 +74,7 @@ async function postJson(urlStr: string, body: string, headers: Record<string, st
     // Cap 2 MB dihitung dalam BYTE (bukan karakter) — balasan CJK bisa 3x lebih
     // besar dalam byte daripada panjang stringnya.
     if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("respon LLM terlalu besar");
-    let json: any;
-    try { json = JSON.parse(text); } catch { throw new Error("respon bukan JSON: " + text.slice(0, 200)); }
+    const json = extractJSON(text);
     if (!resp.ok) {
       const e: any = new Error(`HTTP ${resp.status}: ${json?.error?.message ?? text.slice(0, 200)}`);
       e.statusCode = resp.status;
@@ -83,6 +82,71 @@ async function postJson(urlStr: string, body: string, headers: Record<string, st
     }
     return json;
   } finally { clearTimeout(to); }
+}
+
+/**
+ * Parse respons LLM yang toleran terhadap proxy tidak standar. Kasus nyata
+ * (relay openai-compatible lokal): meski request tidak meminta stream, proxy
+ * membalas Content-Type: text/event-stream dengan SATU JSON utuh yang
+ * ditempel langsung ekornya `data: [DONE]` — JSON.parse murni gagal padahal
+ * datanya lengkap. Tiga lapis: JSON murni → kumpulkan payload "data:" (chunk
+ * delta streaming digabung) → potong objek pertama yang seimbang kurungnya.
+ */
+export function extractJSON(text: string): any {
+  // Body kosong = kasus berbeda dari "bukan JSON": provider memutus/mematikan
+  // respons diam-diam (faucet kering, relay tanpa status). Pesannya harus
+  // mengarahkan ke tindakan, bukan sekadar menyebut JSON.
+  if (!String(text || "").trim())
+    throw new Error("respon KOSONG dari provider — relay/faucet mungkin kehabisan kuota atau memutus koneksi diam-diam; coba lagi sebentar atau pakai koneksi lain");
+  try { return JSON.parse(text); } catch {}
+  // 1) Body berbentuk SSE: ambil semua payload baris "data:".
+  const dataLines: string[] = [];
+  for (const m of text.matchAll(/(?:^|\n)[ \t]*data:[ \t]*([^\n]*)/g)) {
+    const p = m[1].trim();
+    if (p && p !== "[DONE]") dataLines.push(p);
+  }
+  if (dataLines.length) {
+    // Baris yang rusak (respons terpotong di tengah chunk) di-LEWATI, bukan
+    // menggagalkan semuanya — konten parsial lebih berguna daripada error.
+    const objs = dataLines
+      .map((d) => { try { return JSON.parse(d); } catch { return null; } })
+      .filter((o): o is any => o !== null);
+    if (objs.length) {
+      if (objs.length === 1) return objs[0];
+      const merged: any = { choices: [{ message: { role: "assistant", content: "" } }] };
+      for (const o of objs) {
+        const c = o?.choices?.[0];
+        const piece = c?.delta?.content ?? c?.message?.content ?? "";
+        if (piece) merged.choices[0].message.content += piece;
+        if (o?.usage) merged.usage = o.usage;
+      }
+      return merged;
+    }
+  }
+  // 2) JSON utuh + sampah setelahnya: potong objek pertama yang seimbang
+  //    kurung kurawalnya (string-aware, agar "}" di dalam teks tidak menghitung).
+  const start = text.indexOf("{");
+  if (start >= 0) {
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (!depth) {
+          try { return JSON.parse(text.slice(start, i + 1)); } catch { break; }
+        }
+      }
+    }
+  }
+  throw new Error("respon bukan JSON: " + text.slice(0, 200));
 }
 
 export async function callLLM(conn: Connection, messages: ChatMessage[], clientSystem: string = ""): Promise<string> {
@@ -100,7 +164,11 @@ export async function callLLM(conn: Connection, messages: ChatMessage[], clientS
       if (!base) throw new Error("baseUrl belum diisi untuk openai-compatible");
     } else if (provider === "groq") base = "https://api.groq.com/openai/v1";
     else base = "https://api.openai.com/v1";
-    const body = JSON.stringify({ model, messages: buildChatMessages(messages, sys), temperature: temp, max_tokens: maxT });
+    // `stream` EKSPLISIT: false = default aman (sebagian relay salah paham
+    // "field absen" sebagai stream mode dan membalas body event-stream rusak);
+    // true = opt-in untuk gateway yang memotong generasi lambat — bytes yang
+    // mengalir mencegah idle-timeout, dan extractJSON merakit ulang chunk-nya.
+    const body = JSON.stringify({ model, messages: buildChatMessages(messages, sys), temperature: temp, max_tokens: maxT, stream: conn.stream === true });
     const r = await postJson(base + "/chat/completions", body, { Authorization: "Bearer " + apiKey });
     const text = r?.choices?.[0]?.message?.content ?? "";
     if (!text) throw new Error(provider + " kosong: " + JSON.stringify(r).slice(0, 200));
@@ -130,6 +198,20 @@ export async function callLLM(conn: Connection, messages: ChatMessage[], clientS
 }
 
 export interface LLMResult { reply: string; used: string; }
+
+// Body kosong / bukan-JSON itu kegagalan TRANSIEN relay (faucet kering sesaat,
+// respons terpotong) — tidak layak cooldown 30 detik di percobaan pertama.
+// Coba sekali lagi koneksi yang sama secara senyap; gagal kedua kali baru
+// diperlakukan seperti error biasa (cooldown + fallback).
+async function callWithOneRetry(conn: Connection, messages: ChatMessage[], clientSystem: string): Promise<string> {
+  try {
+    return await callLLM(conn, messages, clientSystem);
+  } catch (e: any) {
+    if (/respon KOSONG|respon bukan JSON/.test(String(e?.message || "")))
+      return await callLLM(conn, messages, clientSystem);
+    throw e;
+  }
+}
 
 // ── Multi-LLM role routing ─────────────────────────────────────
 // Satu LLM "serba bisa" menerima seluruh konteks (termasuk dulu: tabel
@@ -228,7 +310,7 @@ export function llmWithFallback(
       if (idx >= order2.length) { const e: any = new Error("Semua connection gagal (cek panel ⚙️ AI Connections)."); e.httpStatus = 502; e.kind = "all-failed"; return reject(e); }
       const conn = order2[idx++];
       if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) return tryNext();
-      callLLM(conn, messages, clientSystem).then((reply) => {
+      callWithOneRetry(conn, messages, clientSystem).then((reply) => {
         conn.testStatus = "success"; (conn as any).lastError = ""; conn.rateLimitedUntil = null as any;
         persist(conns);
         resolve({ reply, used: conn.id });

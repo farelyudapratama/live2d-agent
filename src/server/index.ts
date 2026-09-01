@@ -3,7 +3,7 @@
  * No external deps except Bun.
  */
 import { ConfigManager, queueJsonWrite, mergeEventsIntoConfig } from "../shared/config";
-import { llmWithFallback, callLLM, llmForRole, normalizeRoles } from "../shared/llm-client";
+import { llmWithFallback, callLLM, llmForRole, normalizeRoles, salvageJSONArrayOfObjects } from "../shared/llm-client";
 import type { ChatMessage } from "../shared/types";
 import { sanitizeMotionAsset } from "../client/animation/motion-dsl";
 import { readdirSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from "fs";
@@ -399,6 +399,12 @@ Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti den
   try{
     const {reply}=await llmForRole("sheet", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
+    // Balasan ada tapi TIDAK memuat array utuh → coba salvage: balasan terpotong
+    // (budget token habis / koneksi putus di tengah array) biasanya masih
+    // memuat N-1 preset utuh. Lebih baik 11 preset daripada 0 + tebakan user.
+    if(!Array.isArray(parsed)||!parsed.length){ const salvaged=salvageJSONArrayOfObjects(clean); if(salvaged.length){ parsed=salvaged; console.warn("[analyze-sheet] balasan LLM terpotong — diselamatkan", salvaged.length, "preset utuh dari array rusak"); } }
+    // Masih kosong juga = bukan truncation parsial; jelaskan ke user.
+    if(!Array.isArray(parsed)||!parsed.length){ return json({presets:[], warning:"balasan LLM tidak berisi array preset yang bisa diparse (kemungkinan terpotong — perbesar maxTokens koneksi, atau coba lagi / pakai koneksi lain); awalan balasan: "+String(clean).slice(0,120)}); }
     const ranges=new Map(params.map((p:any)=>[p.id,{lo:Number(p.min),hi:Number(p.max)}])); const partIds=new Set(parts); const existingSet=new Set(existing);
     const str=(v:any,cap:number)=> (typeof v==="string"? v.replace(/[\u0000-\u001F\u007F]/g,"").trim().slice(0,cap): "");
     const seen=new Set<string>(); let dropped=0;

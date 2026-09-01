@@ -5,7 +5,7 @@
  * Content-Type text/event-stream, padahal request tidak meminta stream.
  */
 import { describe, it, expect } from "bun:test";
-import { extractJSON } from "../src/shared/llm-client";
+import { extractJSON, salvageJSONArrayOfObjects } from "../src/shared/llm-client";
 
 const RELAY_BODY =
   '{"id":"chatcmpl-RXCYt5B1g88yDAiLwcqSzYmZ","object":"chat.completion","created":1788073032,' +
@@ -63,5 +63,47 @@ describe("extractJSON", () => {
   it("body KOSONG → pesan manusiawi, bukan 'respon bukan JSON'", () => {
     expect(() => extractJSON("")).toThrow(/respon KOSONG/);
     expect(() => extractJSON("   \n")).toThrow(/respon KOSONG/);
+  });
+});
+
+describe("salvageJSONArrayOfObjects", () => {
+  it("array utuh → semua objek terparse, urutan terjaga", () => {
+    const t = '[{"a":1},{"b":"dua"},{"c":{"d":3}}]';
+    const arr = salvageJSONArrayOfObjects(t);
+    expect(arr.length).toBe(3);
+    expect(arr[0].a).toBe(1);
+    expect(arr[2].c.d).toBe(3);
+  });
+
+  it("array TERPOTONG di tengah objek terakhir → N-1 objek utuh diselamatkan", () => {
+    // kasus nyata: finishReason MAX_TOKENS membelah preset terakhir
+    const t = `[
+      {"name":"Senyum","values":{"ParamMouthForm":1}},
+      {"name":"Sedih","values":{"ParamMouthForm":-1}},
+      {"name":"Kaget","values":{"ParamEyeLSmi`;
+    const arr = salvageJSONArrayOfObjects(t);
+    expect(arr.length).toBe(2);
+    expect(arr[0].name).toBe("Senyum");
+    expect(arr[1].name).toBe("Sedih");
+  });
+
+  it("objek berisi tanda kurung di dalam string tidak salah hitung", () => {
+    const t = '[{"note":"haha } :-{","n":1},{"n":2}]';
+    const arr = salvageJSONArrayOfObjects(t);
+    expect(arr.length).toBe(2);
+    expect(arr[0].note).toBe("haha } :-{");
+  });
+
+  it("string dengan escape \\\" tidak menutup string lebih awal", () => {
+    const t = '[{"s":"kata \\" pembuka"},{"n":9}]';
+    const arr = salvageJSONArrayOfObjects(t);
+    expect(arr.length).toBe(2);
+    expect(arr[1].n).toBe(9);
+  });
+
+  it("bukan array / kosong → []", () => {
+    expect(salvageJSONArrayOfObjects('{"bukan":"array"}')).toEqual([]);
+    expect(salvageJSONArrayOfObjects("")).toEqual([]);
+    expect(salvageJSONArrayOfObjects("respon teks polos tanpa kurung")).toEqual([]);
   });
 });

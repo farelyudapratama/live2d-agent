@@ -59,10 +59,15 @@ function toGeminiContents(messages: ChatMessage[]) {
   return messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.content }] }));
 }
 
-// Bun-native fetch with timeout + size cap
-async function postJson(urlStr: string, body: string, headers: Record<string, string> = {}): Promise<any> {
+// Bun-native fetch with timeout + size cap. `idle` = timeout di-reset setiap
+// kali body mengalir (dipakai saat conn.stream=true): gateway stream lambat
+// (faucet + model reasoning bisa >60 dtk TOTAL tapi tak pernah diam >60 dtk)
+// tidak boleh dibunuh oleh batas absolut — yang membunuh adalah SENYAP.
+async function postJson(urlStr: string, body: string, headers: Record<string, string> = {}, opts: { idle?: boolean } = {}): Promise<any> {
   const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(new Error(`timeout: LLM tidak merespon dalam ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS);
+  let timedOut = false;
+  let to = setTimeout(() => { timedOut = true; controller.abort(new Error(`timeout: LLM tidak merespon dalam ${TIMEOUT_MS / 1000}s`)); }, TIMEOUT_MS);
+  const reset = () => { if (!timedOut) { clearTimeout(to); to = setTimeout(() => { timedOut = true; controller.abort(new Error(`timeout: LLM senyap ${TIMEOUT_MS / 1000}s`)); }, TIMEOUT_MS); } };
   try {
     const resp = await fetch(urlStr, {
       method: "POST",
@@ -70,7 +75,23 @@ async function postJson(urlStr: string, body: string, headers: Record<string, st
       body,
       signal: controller.signal,
     });
-    const text = await resp.text();
+    let text: string;
+    if (opts.idle && resp.body) {
+      // Baca stream manual supaya setiap chunk yang datang meng-reset timer.
+      const reader = resp.body.getReader();
+      const chunks: Uint8Array[] = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) { chunks.push(value); reset(); }
+      }
+      const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+      let off = 0;
+      for (const c of chunks) { merged.set(c, off); off += c.length; }
+      text = new TextDecoder().decode(merged);
+    } else {
+      text = await resp.text();
+    }
     // Cap 2 MB dihitung dalam BYTE (bukan karakter) — balasan CJK bisa 3x lebih
     // besar dalam byte daripada panjang stringnya.
     if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("respon LLM terlalu besar");
@@ -149,6 +170,41 @@ export function extractJSON(text: string): any {
   throw new Error("respon bukan JSON: " + text.slice(0, 200));
 }
 
+/**
+ * Salvage array-of-objects dari balasan yang TERPOTONG (finishReason
+ * MAX_TOKENS / koneksi putus di tengah array): satu per satu objek `{…}`
+ * level-atas yang SELESAI di-parse; objek terakhir yang terpotong diabaikan.
+ * Bukan pengganti parse utuh — ini penyelamat supaya 11 preset utuh tidak
+ * dibuang hanya karena preset ke-12 kebelah. String-aware (koma/tanda kutip
+ * di dalam string tidak dihitung sebagai kurung).
+ */
+export function salvageJSONArrayOfObjects(text: string): any[] {
+  const src = String(text || "");
+  const start = src.indexOf("[");
+  if (start < 0) return [];
+  const out: any[] = [];
+  let depth = 0, objStart = -1, inStr = false, esc = false;
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") { if (depth === 0) objStart = i; depth++; }
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objStart >= 0) {
+        try { out.push(JSON.parse(src.slice(objStart, i + 1))); } catch { /* objek rusak → lewati */ }
+        objStart = -1;
+      } else if (depth < 0) break;   // kurung lebih tutup — struktur aneh, berhenti
+    }
+  }
+  return out;
+}
+
 export async function callLLM(conn: Connection, messages: ChatMessage[], clientSystem: string = ""): Promise<string> {
   const provider = (conn.provider ?? "openai-compatible").toLowerCase() as LLMProvider;
   const apiKey = cleanKey(conn.apiKey);
@@ -169,7 +225,7 @@ export async function callLLM(conn: Connection, messages: ChatMessage[], clientS
     // true = opt-in untuk gateway yang memotong generasi lambat — bytes yang
     // mengalir mencegah idle-timeout, dan extractJSON merakit ulang chunk-nya.
     const body = JSON.stringify({ model, messages: buildChatMessages(messages, sys), temperature: temp, max_tokens: maxT, stream: conn.stream === true });
-    const r = await postJson(base + "/chat/completions", body, { Authorization: "Bearer " + apiKey });
+    const r = await postJson(base + "/chat/completions", body, { Authorization: "Bearer " + apiKey }, { idle: conn.stream === true });
     const text = r?.choices?.[0]?.message?.content ?? "";
     if (!text) throw new Error(provider + " kosong: " + JSON.stringify(r).slice(0, 200));
     return text.trim();
@@ -183,8 +239,17 @@ export async function callLLM(conn: Connection, messages: ChatMessage[], clientS
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     const body = JSON.stringify({ systemInstruction: sys ? { parts: [{ text: sys }] } : undefined, contents: toGeminiContents(messages), generationConfig: { temperature: temp, maxOutputTokens: maxT, candidateCount: 1 } });
     const r = await postJson(url, body);
-    const text = r?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("") ?? "";
-    if (!text) throw new Error("Gemini kosong: " + JSON.stringify(r).slice(0,200));
+    const cand = r?.candidates?.[0];
+    const text = cand?.content?.parts?.map((p: any) => p.text).join("") ?? "";
+    if (!text) {
+      // finishReason MAX_TOKENS + text kosong = seluruh budget habis untuk
+      // "thinking" internal gemini-2.5 sebelum satu pun teks keluar — naikkan
+      // maxTokens pada koneksi ini, bukan sekadar "coba lagi".
+      const hint = cand?.finishReason === "MAX_TOKENS"
+        ? " (finishReason=MAX_TOKENS: budget token habis untuk thinking — perbesar maxTokens di koneksi ini)"
+        : "";
+      throw new Error("Gemini kosong" + hint + ": " + JSON.stringify(r).slice(0, 200));
+    }
     return text.trim();
   }
   if (provider === "anthropic") {

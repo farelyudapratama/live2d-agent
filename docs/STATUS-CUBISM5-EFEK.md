@@ -4,6 +4,36 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-02 — freeze edit TIDAK menol physics lagi
+
+Lanjutan akar masalah yang sama: bukan cuma scanner — **freeze edit manual**
+(`freezeModelForEdit`, dipakai popup Penjelasan Parameter + Sheet preset editor
++ Motion Studio) juga me-nol-kan `im.physics`, sehingga geser slider pada param
+INPUT physics (ParamAngleX/BodyAngle*/Breath) saat model dibekukan tampak MATI
+total: 0 piksel, persis keluhan user. Diperbaiki dengan menyamakan freeze
+dengan scan:
+
+- `freezeModelForEdit` kini hanya membungkam **motion (stopAllMotions) +
+  expression reset + eyeBlink + breath + fidget/mouse-follow (aiLock)**.
+  Physics dibiarkan hidup — slider pada param input langsung terlihat
+  (terukur di browser, lumine, freeze aktif: ParamAngleX -30 vs +30 =
+  **23.994 px berubah**, dulu 0 px).
+- Nilai slider pada param OUTPUT physics tetap menang lewat override guard
+  (re-assert di beforeModelUpdate = SETELAH physics.evaluate), jadi kedua
+  arah input/output sama-sama bekerja saat frozen.
+- `unfreezeModelForEdit` tetap memulihkan physics/eyeBlink/breath dari
+  `state._frozenRefs` (same-ref, no-op untuk physics).
+- Guard: `test-visual-calibration.js` section 8 +3 assertion (freeze tidak
+  menulis `im.physics = null`, blink/breath tetap dibungkam, unfreeze
+  memulihkan refs). Suite total: **212 unit + 525 guard, 0 gagal**.
+- Tombol "🧪 Kalibrasi Efek" TETAP DIPERTAHANKAN (keputusan sesi ini):
+  fungsinya menghasilkan data badge "🚫 tanpa efek" per param (cache
+  localStorage v2 per model), menandai param yang GENUINE tidak terikat art
+  (lumine: 20/223 — rantai _1/_4 VBridger dsb.), dan memfilter param mati
+  dari saran preset AI (`filterVisfxDead` di analyze-sheet) supaya LLM tidak
+  mengusulkan preset yang pasti tampak rusak. Setelah fix scan 2026-09-01 (3),
+  datanya jujur; sebelum fix, badge banyak yang salah menandai param hidup.
+
 ## UPDATE 2026-09-01 (3) — scan kalibrasi diperbaiki + cache lama di-invalidasi
 
 Investigasi keluhan user "param physics (contoh `ParamBodyPhysicsRX1_1`) tidak

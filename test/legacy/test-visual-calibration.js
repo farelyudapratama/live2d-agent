@@ -168,5 +168,21 @@ ok('settle frames untuk konvergensi spring physics sebelum render MIN/MAX',
   /const VISFX_SETTLE_FRAMES = \d+;/.test(appSrc) &&
   (appSrc.match(/settle\(\);/g) || []).length >= 3);
 
+// ── 8. freeze edit TIDAK menol physics ──────────────────────────────────────
+// Keluhan user: geser slider param input physics (ParamAngleX/BodyAngle*)
+// saat popup parameter membekukan model → TIDAK ada perubahan visual sama
+// sekali. Penyebab: freeze lama me-nol-kan im.physics, padahal di rig
+// VBridger param itu cuma INPUT — kepala/badan/rok bergerak LEWAT rantai
+// physics. Terukur: AngleX 0 px physics-mati vs ±26.000 px physics-hidup.
+section('freeze edit: physics tetap hidup, blink/napas tetap dibungkam');
+const freezeFn = extractFn(appSrc, 'freezeModelForEdit');
+const unfreezeFn = extractFn(appSrc, 'unfreezeModelForEdit');
+ok('freezeModelForEdit tidak menuliskan im.physics = null (statement; komentar boleh menyebutnya)',
+  !!freezeFn && !/im\.physics\s*=\s*null\s*;/.test(freezeFn));
+ok('freezeModelForEdit tetap membungkam eyeBlink + breath',
+  !!freezeFn && /im\.eyeBlink = null; im\.breath = null;/.test(freezeFn));
+ok('unfreezeModelForEdit tetap memulihkan physics/eyeBlink/breath dari _frozenRefs',
+  !!unfreezeFn && /im\.physics = state\._frozenRefs\.physics;/.test(unfreezeFn));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

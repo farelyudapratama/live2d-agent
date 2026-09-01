@@ -7,31 +7,50 @@
 ## UPDATE 2026-09-01 (3) — scan kalibrasi diperbaiki + cache lama di-invalidasi
 
 Investigasi keluhan user "param physics (contoh `ParamBodyPhysicsRX1_1`) tidak
-bereaksi ke slider" menghasilkan: **slider-nya sendiri benar** — diukur di
-browser dengan jalur slider persis (setSticky + freeze + override guard +
-render penuh), RX1_1 mengubah **17.473 piksel** antara MIN/MAX. Param itu
-bertipe **BlendShape** (171/223 param rig v5 bertipe ini) — kelas param yang
-dulu memang mati total oleh shim stamp v5→v4; pasca-fix shim kini berevaluasi.
-Pengalaman "tidak ada perubahan" berasal dari data kalibrasi pra-fix yang
-menandai param-param itu mati. Yang diperbaiki agar scan berikutnya akurat:
+bereaksi ke slider" menemukan TIGA titik buta scanner sekaligus. Hasil akhir
+setelah semua diperbaiki (scan asli via tombol, lumine): **mati turun
+84 → 20/223**, `ParamAngleX` 0 → ±22.000 px, `ParamBodyAngleX` 0 → ±124.000,
+`ParamSkirtX1` kembali ±63.000 (sempat 430 saat physics-hidup-tanpa-re-assert).
+`ParamBodyPhysicsRX1_1` terukur ±0 piksel (±396 px pada JPEG, 0.07% layar) —
+badge "🚫 tanpa efek" untuk param itu kini JUJUR dan konsisten dengan
+pengalaman user menggesernya (tak terlihat mata).
 
-- **Dua penulis parameter dibungkam selama scan** (`runVisualCalibration`,
-  app.js):
-  (1) override guard kini minggir saat scan (flag `state.visfxScanning`,
-  dicek di awal handler `beforeModelUpdate`) — dulu sticky overrides dari
-  slider yang pernah digeser + rawDrive di-re-assert di tengah scan dan
-  menimpa tulisan MIN/MAX, membuat param itu terukur "mati" palsu;
-  (2) grup Idle di-stash selama scan (`mm.groups.idle = null`) —
-  `motionManager.update` me-restart idle saat queue kosong, dan evaluasi
-  CubismMotion dimulai dengan `loadParameters()` yang MENGHAPUS tulisan scan.
-  Param yang dianimasikan idle terukur mati palsu di model yang
-  mendeklarasikan grup Idle (lumine tidak punya — model lain ada).
+Tiga gangguan yang kini dibungkam selama scan (`runVisualCalibration`, app.js):
+
+1. **Overrides user di-stash; param yang DISCAN dipasang sebagai override
+   sementara.** Dulu: sticky overrides (slider yang pernah digeser,
+   eye-follow, aksesoris) + rawDrive di-re-assert guard pada
+   `beforeModelUpdate` dan menimpa tulisan MIN/MAX scan → param itu terukur
+   "mati" palsu. Kini `state.overrides` diganti map kosong + `state.rawDrive`
+   null selama scan, dan param yang discan dipasang sebagai override — guard
+   me-re-assert MIN/MAX pada titik yang benar (setelah physics.evaluate,
+   sebelum o.update yang dirender), lalu semuanya dipulihkan di finally.
+2. **Grup Idle di-stash** (`mm.groups.idle = null`) — `motionManager.update`
+   me-restart idle saat queue kosong; evaluasi CubismMotion dimulai dengan
+   `loadParameters()` yang MENGHAPUS tulisan scan. Param yang dianimasikan
+   idle terukur mati palsu di model yang mendeklarasikan grup Idle (lumine
+   tidak punya — model lain ada).
+3. **PHYSICS TETAP HIDUP selama scan** — freeze meng-nol-kan `im.physics`,
+   padahal param INPUT physics (AngleX/BodyAngle*/Breath, dst.) hanya
+   berdampak piksel MELALUI rantai physics: physics mati → MIN vs MAX
+   dirender identik → mati palsu (terukur: AngleX 0 px physics-mati vs
+   ±24.000 px physics-hidup). Konsekuensinya physics menimpa param output
+   tiap frame — ditangani oleh (1): guard menulis ulang MIN/MAX SETELAH
+   physics.evaluate. Settle frames (`VISFX_SETTLE_FRAMES` = 4) memberi
+   spring waktu konvergen sebelum render dibandingkan.
+
+Lainnya:
 - **Cache kalibrasi dibump ke v2** (`visfxStoreKey` → `l2d_visfx_v2_<key>`) —
-  data scan lama (ternoda kedua titik buta di atas dan/atau diambil saat
-  shim stamp masih buta) otomatis tak terbaca. Scan ulang SEKALI untuk badge
-  akurat; data lama tinggal yatim di localStorage (bukan data loss).
-- Guard: `test-visual-calibration.js` +7 assertion (isolasi scan + prefix v2).
-  Suite total kini: **212 unit + 521 guard, 0 gagal** (11 suite).
+  data scan lama (ternoda titik buta 1/2 dan/atau diambil saat shim stamp
+  masih buta) otomatis tak terbaca. Scan ulang SEKALI untuk badge akurat;
+  data lama tinggal yatim di localStorage (bukan data loss).
+- Guard: `test-visual-calibration.js` dirombak ke kontrak baru (stash
+  overrides + override-per-param + physics hidup + settle + prefix v2).
+  Suite total kini: **212 unit + 522 guard, 0 gagal** (11 suite).
+- Catatan verifikasi: mengukur dari tab latar belakang browser menyesatkan
+  bila lupa rAF/ticker app tak jalan di sana — `internalModel.update` baru
+  dievaluasi saat RENDER (`_render`), jadi pompa uji harus mencakup
+  `renderer.render(stage)`, bukan cuma `Ticker.shared.update()`.
 
 ## UPDATE 2026-09-01 (2) — gate overlay vs efek native (dobel-gambar) SELESAI
 

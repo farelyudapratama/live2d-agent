@@ -83,10 +83,6 @@
     // Hasil kalibrasi efek visual (visfxLoad()) — map id → {changed, maxDelta, at}.
     // Null = belum dikalibrasi. Cache UI di localStorage per model, bukan sheet.
     visfxMap: null,
-    // True SELAMA 🧪 kalibrasi efek berjalan: scan menulis MIN/MAX langsung ke
-    // buffer, jadi override guard harus minggir (re-assert sticky/rawDrive akan
-    // menimpa tulisan scan → param yang pernah digeser slider terukur mati palsu).
-    visfxScanning: false,
     // ── Raw parameter drive (Motion Studio) ──
     // { paramId: number } nilai ABSOLUT yang ditulis PALING AKHIR setiap frame
     // dengan weight 1, jadi ia menang atas idle fidget, emosi, dan overrides.
@@ -255,9 +251,6 @@
     if (!im || typeof im.on !== 'function' || im.__overrideGuard) return;
     im.__overrideGuard = true;
     im.on('beforeModelUpdate', () => {
-      // 🧪 kalibrasi sedang menulis MIN/MAX langsung ke buffer — re-assert di
-      // sini akan menimpanya dan param-nya terukur "mati" palsu.
-      if (state.visfxScanning) return;
       const cm = coreModel();
       if (!cm) return;
       for (const id in state.overrides) {
@@ -329,20 +322,32 @@
   // Scan penuh: render tiap param di MIN dan MAX, hitung piksel yang berubah.
   // Butuh sheet (sumber range) — "Inspeksi Model dulu" kalau kosong. Model
   // dibekukan selama scan (persistent freeze) lalu dilepas. Hasil: map id →
-  // {changed, maxDelta, at}. Dua penulis parameter harus DIBUNGKAM selama scan,
-  // kalau tidak param tertentu terukur "mati" palsu (0 piksel) padahal hidup:
-  //  (1) override guard — sticky overrides (slider yang pernah digeser,
-  //      eye-follow, aksesoris) + rawDrive di-re-assert tiap frame pada
-  //      beforeModelUpdate, menimpa tulisan MIN/MAX scan. Flag visfxScanning
-  //      membuat guard minggir. (Catatan lama "override konstan di kedua
-  //      render = tidak memengaruhi selisih" hanya benar untuk param LAIN —
-  //      untuk param yang discan sendiri, override-lah yang tampil.)
+  // {changed, maxDelta, at}. Gangguan yang dibungkam selama scan (semuanya
+  // pernah membuat param terukur "mati" palsu = 0 piksel padahal hidup):
+  //  (1) overrides user (slider yang pernah digeser, eye-follow, aksesoris)
+  //      + rawDrive — di-re-assert tiap frame pada beforeModelUpdate dan
+  //      menimpa tulisan MIN/MAX scan. Selama scan: overrides user di-stash,
+  //      dan param yang DISCAN dipasang sebagai override sementara supaya
+  //      guard me-re-assert MIN/MAX pada titik yang benar (lihat di bawah).
   //  (2) auto-restart grup Idle — motionManager.update me-restart idle saat
   //      queue kosong; evaluasi CubismMotion dimulai dengan loadParameters()
   //      yang MENGHAPUS tulisan scan lalu menulis kurva motion. Param yang
   //      dianimasikan idle terukur mati palsu di model yang mendeklarasikan
   //      grup Idle di model3.json (lumine tidak punya — model lain ada).
   //      Grup idle di-stash selama scan, dipulihkan di finally.
+  //  (3) PHYSICS HARUS TETAP HIDUP — freeze meng-nol-kan im.physics, padahal
+  //      param INPUT physics (AngleX/BodyAngle*/Breath, dst.) hanya berdampak
+  //      piksel MELALUI rantai physics: dengan physics mati, MIN vs MAX
+  //      dirender identik dan param itu terukur mati palsu (terukur lumine:
+  //      AngleX 0 px physics-mati vs ±24.000 px physics-hidup).
+  //      Urutan tulisan jadi krusial: physics menimpa param output tiap
+  //      frame, jadi param yang discan dipasang sebagai OVERRIDE — guard
+  //      me-re-assert MIN/MAX pada beforeModelUpdate, yaitu SETELAH
+  //      physics.evaluate dan tepat sebelum o.update yang dirender. Input
+  //      param tetap dikonsumsi rantai physics di frame yang sama, output
+  //      tidak ditimpa spring. Settle frames memberi spring waktu konvergen
+  //      sebelum render dibandingkan.
+  const VISFX_SETTLE_FRAMES = 4;
   async function runVisualCalibration(statusEl) {
     const im = state.model && state.model.internalModel;
     const cm = coreModel();
@@ -377,19 +382,40 @@
     const mm = im.motionManager;
     const savedIdleGroup = (mm && mm.groups) ? mm.groups.idle : undefined;
     if (mm && mm.groups) mm.groups.idle = null;   // startRandomMotion(null) = no-op
-    state.visfxScanning = true;
+    // (3) PHYSICS tetap hidup selama scan — freeze meng-nol-kan im.physics,
+    // padahal param INPUT physics (AngleX/BodyAngle*/Breath, dst.) hanya
+    // berdampak piksel MELALUI rantai physics: dengan physics mati, MIN vs
+    // MAX dirender identik dan param itu terukur mati palsu (terukur lumine:
+    // AngleX 0 px physics-mati vs ±24.000 px physics-hidup).
+    if (state._frozenRefs && !im.physics && state._frozenRefs.physics) im.physics = state._frozenRefs.physics;
+    // (1b) overrides user di-STASH penuh (bukan cuma guard yang minggir):
+    // slider yang pernah digeser / eye-follow / aksesoris tidak boleh
+    // menimpa tulisan scan. PARAM YANG DISCAN justru dipasang sebagai
+    // override sementara — guard me-re-assert MIN/MAX pada
+    // beforeModelUpdate, yaitu SETELAH physics.evaluate dan tepat sebelum
+    // o.update, sehingga output param tidak ditimpa spring physics DAN
+    // input param tetap dikonsumsi rantai physics di frame yang sama.
+    const savedOverrides = state.overrides;
+    const savedRawDrive = state.rawDrive;
+    state.overrides = {};
+    state.rawDrive = null;
     const map = {};
+    const settle = () => { for (let s = 0; s < VISFX_SETTLE_FRAMES; s++) im.update(16.7, performance.now()); };
     try {
       for (let i = 0; i < params.length; i++) {
         const p = params[i];
         if (statusEl && (i & 7) === 0) statusEl.textContent = 'kalibrasi efek ' + (i + 1) + '/' + params.length + '…';
         stopMotions();
+        state.overrides[p.id] = p.min;   // guard me-re-assert nilai ini tiap frame
         cm.setParameterValueById(p.id, p.min);
         im.update(16.7, performance.now());
+        settle();
         const a = renderNow();
         stopMotions();
+        state.overrides[p.id] = p.max;
         cm.setParameterValueById(p.id, p.max);
         im.update(16.7, performance.now());
+        settle();
         const b = renderNow();
         let changed = 0, maxDelta = 0;
         for (let q = 0; q < a.length; q += 4) {
@@ -398,12 +424,15 @@
           if (d > maxDelta) maxDelta = d;
         }
         map[p.id] = { changed, maxDelta, at: Date.now() };
+        delete state.overrides[p.id];
         cm.setParameterValueById(p.id, Number.isFinite(p.def) ? p.def : 0);
+        settle();   // kembalikan physics ke pose default sebelum param berikutnya
         // yield agar UI tetap bernapas dan progress terlihat
         if ((i & 3) === 3) await new Promise(r => setTimeout(r, 0));
       }
     } finally {
-      state.visfxScanning = false;
+      state.overrides = savedOverrides;
+      state.rawDrive = savedRawDrive;
       if (mm && mm.groups) mm.groups.idle = savedIdleGroup;
       editorFreezeApi && editorFreezeApi.unfreeze && editorFreezeApi.unfreeze();
       try { rt.destroy(true); } catch (e) {}

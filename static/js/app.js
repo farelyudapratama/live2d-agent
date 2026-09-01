@@ -24,25 +24,35 @@
   'use strict';
 
   // ─── moc version-stamp compatibility shim ───────────────────────
-  // The bundled Cubism 4.2.2 core rejects moc binary versions > 4
-  // (C.Moc.fromArrayBuffer returns null). Many Cubism 3 / early-Cubism-4
+  // Core lama (Cubism 4.2.2) menolak moc binary ber-stamp versi > 4
+  // (C.Moc.fromArrayBuffer returns null). Banyak Cubism 3 / early-Cubism-4
   // models are stamped version 5 but use a v4-compatible layout; the core
   // simply refuses them. Rewrite the 4-byte version stamp at offset 4 to 4
   // so the core accepts them — no Cubism Editor re-export required.
+  //
+  // Core 5.1 (yang sekarang di-vendor) SUDAH mendukung moc v5 — dan menurunkan
+  // stamp secara membuta justru MEMATIKAN fitur v5: ParameterType_BlendShape
+  // (efek EX02-05/08-11 rig lumine v5 — heart eye/blush/dizzy dst.) tidak
+  // pernah diinisialisasi keyform-nya, jadi slidernya bergerak tapi tidak ada
+  // piksel yang berubah (terukur 2026-09-01: exType=1, dOp=0 dengan stamp 4;
+  // evaluasi penuh tanpa stamp). Urutan sekarang: coba stamp ASLI dulu; hanya
+  // kalau core menolak, stamp diturunkan ke 4 lalu dicoba lagi.
   (function patchCubismCore() {
     const core = window.Live2DCubismCore;
     if (!core || !core.Moc || !core.Moc.fromArrayBuffer) return;
     const orig = core.Moc.fromArrayBuffer.bind(core.Moc);
     core.Moc.fromArrayBuffer = function (buf) {
+      const ab = (buf instanceof ArrayBuffer) ? buf : (buf && buf.buffer) || buf;
+      const direct = orig(ab);
+      if (direct) return direct;
       try {
-        const ab = (buf instanceof ArrayBuffer) ? buf : (buf && buf.buffer) || buf;
         const u8 = new Uint8Array(ab);
         if (u8.length > 8) {
           const v = u8[4] | (u8[5] << 8) | (u8[6] << 16) | (u8[7] << 24);
-          if (v > 4) { u8[4] = 4; u8[5] = 0; u8[6] = 0; u8[7] = 0; }
+          if (v > 4) { u8[4] = 4; u8[5] = 0; u8[6] = 0; u8[7] = 0; return orig(ab); }
         }
-      } catch (e) { /* fall through to original */ }
-      return orig(buf);
+      } catch (e) { /* fall through to null result */ }
+      return direct;
     };
   })();
 

@@ -138,24 +138,35 @@ ok('cache localStorage — sengaja bukan sheet (skema v4 aman)',
 ok('scan tidak menyentuh nama parameter tertentu (model-agnostic)',
   !/visfx[\s\S]*"Param(Angle|EX|Skirt)/.test(appSrc.slice(appSrc.indexOf('function visfxStoreKey'), appSrc.indexOf('function visfxLoad'))));
 
-// ── 6. isolasi scan — dua penulis parameter dibungkam selama kalibrasi ──────
+// ── 6. isolasi scan — overrides di-stash, param scan jadi override ──────────
 // Tanpa ini param tertentu terukur "mati" palsu (0 piksel) padahal hidup:
-// override guard me-re-assert sticky/slider/eye-follow + rawDrive menimpa
-// tulisan MIN/MAX scan, dan auto-restart grup Idle memulai evaluasi motion
-// dengan loadParameters() yang MENGHAPUS tulisan scan.
-section('isolasi scan: guard minggir + grup Idle di-stash selama kalibrasi');
-ok('state punya flag visfxScanning (default false)',
-  appSrc.includes('visfxScanning: false'));
-ok('override guard minggir saat scan (cek flag SEBELUM re-assert)',
-  /function installOverrideGuard[\s\S]{0,1200}if \(state\.visfxScanning\) return;[\s\S]{0,600}applyRawDrive|function installOverrideGuard[\s\S]{0,1200}if \(state\.visfxScanning\) return;/.test(appSrc));
-ok('runVisualCalibration menyalakan flag SEBELUM loop scan',
-  /state\.visfxScanning = true;[\s\S]{0,600}for \(let i = 0; i < params\.length/.test(appSrc));
-ok('flag dipadamkan + grup Idle dipulihkan di finally (scan gagal pun bersih)',
-  /finally \{[\s\S]{0,400}state\.visfxScanning = false;[\s\S]{0,400}mm\.groups\.idle = savedIdleGroup/.test(appSrc));
+// overrides user (slider/eye-follow/aksesoris) + rawDrive di-re-assert pada
+// beforeModelUpdate dan menimpa tulisan MIN/MAX scan; auto-restart grup Idle
+// memulai evaluasi motion dengan loadParameters() yang MENGHAPUS tulisan.
+section('isolasi scan: overrides di-stash, grup Idle di-stash');
+ok('runVisualCalibration men-stash overrides + rawDrive user',
+  /const savedOverrides = state\.overrides;[\s\S]{0,200}const savedRawDrive = state\.rawDrive;[\s\S]{0,200}state\.overrides = \{\};[\s\S]{0,200}state\.rawDrive = null;/.test(appSrc));
+ok('overrides dipulihkan di finally (scan gagal pun bersih)',
+  /finally \{[\s\S]{0,400}state\.overrides = savedOverrides;[\s\S]{0,200}state\.rawDrive = savedRawDrive;/.test(appSrc));
+ok('param yang DISCAN dipasang sebagai override (guard re-assert MIN/MAX pada beforeModelUpdate — setelah physics, sebelum o.update)',
+  /state\.overrides\[p\.id\] = p\.min;[\s\S]{0,600}state\.overrides\[p\.id\] = p\.max;/.test(appSrc) &&
+  /delete state\.overrides\[p\.id\];/.test(appSrc));
 ok('grup Idle di-stash selama scan (auto-restart motion tidak menghapus tulisan MIN/MAX)',
   /const savedIdleGroup = \(mm && mm\.groups\) \? mm\.groups\.idle : undefined;[\s\S]{0,200}mm\.groups\.idle = null;/.test(appSrc));
-ok('flag visfxScanning hanya ditulis oleh runVisualCalibration (bukan jalur lain)',
-  (appSrc.match(/state\.visfxScanning = (true|false)/g) || []).length === 2);
+ok('grup Idle dipulihkan di finally',
+  /finally \{[\s\S]{0,600}mm\.groups\.idle = savedIdleGroup/.test(appSrc));
+
+// ── 7. physics tetap hidup selama scan ──────────────────────────────────────
+// Param INPUT physics (AngleX/BodyAngle*/Breath) hanya berdampak piksel lewat
+// rantai physics: dengan im.physics = null (freeze), MIN vs MAX dirender
+// identik dan param itu terukur "mati" palsu. Terukur empiris (lumine):
+// AngleX 0 px physics-mati vs ±24.000 px physics-hidup.
+section('physics tetap hidup selama scan');
+ok('physics dikembalikan setelah freeze (dari _frozenRefs)',
+  /freeze\(null, true\);[\s\S]{0,2000}state\._frozenRefs && !im\.physics && state\._frozenRefs\.physics\) im\.physics = state\._frozenRefs\.physics/.test(appSrc));
+ok('settle frames untuk konvergensi spring physics sebelum render MIN/MAX',
+  /const VISFX_SETTLE_FRAMES = \d+;/.test(appSrc) &&
+  (appSrc.match(/settle\(\);/g) || []).length >= 3);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

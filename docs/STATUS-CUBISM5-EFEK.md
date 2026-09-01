@@ -4,6 +4,32 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-02 (4) — jalur saran preset AI diperbaiki & diuji end-to-end
+
+Keluhan "analisis AI untuk sheet gagal mulu" dianamis sampai akar:
+
+1. **Role `sheet` cuma dipegang satu koneksi** (gemini "germini") yang sering
+   HTTP 503 high demand — tak ada kandidat fallback ber-role sheet. Kini
+   ada koneksi kedua **"Tf-mimo"** (tokenfaucet, model `mimo-v2.5`, role
+   sheet, stream:true) lewat `POST /api/config` — chat user (gpt-5.6-terra)
+   tidak tersentuh. Germini tetap urutan pertama; 503 → jatuh ke Tf-mimo.
+2. **Gateway openai-compatible memutus non-stream dgn HTTP 524 ~15 dtk.**
+   conn.stream=true wajib untuk faucet ini. Kelemahan lamanya: postJson
+   memakai timeout ABSOLUT 60 dtk — mimo dengan prompt 50k char butuh
+   36-59 dtk → bisa ter-abort acak. Kini timeout jadi **idle timeout**
+   (di-reset tiap chunk stream) saat conn.stream=true.
+3. **Truncation senyap**: gemini-2.5 (thinking model) memakan budget output
+   utk reasoning — maxTokens 2048 membuat JSON 12 preset terpotong → parse
+   gagal → `presets:[]` tanpa penjelasan. maxTokens germini dinaikkan ke
+   8192 (via API), balasan terpotong kini di-**salvage**
+   (`salvageJSONArrayOfObjects` — N-1 objek utuh diselamatkan, string-aware)
+   dan kalau nihil, warning eksplisit + awalan balasan dikirim ke user.
+
+Hasil end-to-end lewat endpoint asli (payload 223 param + 128 catatan):
+**12 preset valid** (emosi/properti) dalam 36 dtk, tersimpan ke
+`presets.ai` sheet lumine. Guard: unit test salvage (13) — total **217 unit
++ 505 guard, 0 gagal**. Commit ffd57c3.
+
 ## UPDATE 2026-09-02 (3) — peta param 神宫白子 + popup param (cari/grup/label cdi3) + grup di payload AI
 
 **Peta param model kedua (神宫白子 / 面饼0, Cubism 5.0):** seluruh 214 param

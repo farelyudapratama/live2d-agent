@@ -80,8 +80,9 @@
     // The model re-evaluates its own motion/physics every frame, so we re-apply
     // these after each model update to keep them "held".
     overrides: {},
-    // Hasil kalibrasi efek visual (visfxLoad()) — map id → {changed, maxDelta, at}.
-    // Null = belum dikalibrasi. Cache UI di localStorage per model, bukan sheet.
+    // Cache pengukuran efek visual LEGACY (visfxLoad()) — map id → {changed,
+    // maxDelta, at}. Fitur kalibrasinya sudah dihapus; data warisan ini kini
+    // cuma dibaca gate overlay-vs-native. Null = tidak pernah discan.
     visfxMap: null,
     // ── Raw parameter drive (Motion Studio) ──
     // { paramId: number } nilai ABSOLUT yang ditulis PALING AKHIR setiap frame
@@ -272,174 +273,28 @@
     });
   }
 
-  // ── Kalibrasi efek visual (model-agnostic — diukur dari engine) ──
-  // Scan merender tiap parameter pada nilai MIN dan MAX lalu menghitung
-  // piksel framebuffer yang berubah. 0 piksel = parameter tidak terikat
-  // art di rig INI: bisa param kontrol (Anime/adjust), rantai physics yang
-  // output-nya tidak dikonsumsi (segmen _1/_4), atau art efek yang tidak
-  // ikut diekspor (contoh nyata lumine: EX02-05/08-11 "heart eye"/"blush"/
-  // "tear" — label cdi3 rigger mengonfirmasi semuanya efek overlay yang
-  // hilang dari rig distribusi). Guard: test/legacy/test-visual-calibration.js.
-  // Hasilnya cache UI di localStorage per model — SENGAJA bukan di sheet,
-  // supaya skema v4 dan aturan "angka hanya dari engine" tidak tersentuh;
-  // hilangnya cache hanya berarti slider kembali tanpa label, bukan data loss.
+  // ── Cache pengukuran efek visual (LEGACY — hanya untuk gate overlay) ──
+  // Dulu ada fitur "🧪 Kalibrasi Efek" (render tiap param MIN vs MAX, hitung
+  // piksel berubah) + badge "🚫 tanpa efek" + filter saran preset AI.
+  // DIHAPUS 2026-09-02 atas keputusan user: hasil ukurnya sering tidak cocok
+  // dengan apa yang terlihat (param bergerak halus terukur "mati"; param
+  // yatim seperti ParamEyePhysics18 — tidak ada di physics3.json maupun di
+  // ikatan art — justru terukur benar). Yang tersisa: cache localStorage v2
+  // per model DIBACA oleh gate overlay-vs-native (overlayGateSuppress) sebagai
+  // bukti "efek native hidup" untuk mencegah dobel-gambar. Tanpa data (model
+  // tak pernah discan / localStorage bersih) gate fail-open: overlay jalan
+  // seperti sebelum fix shim — bukan efek yang hilang. Tidak ada scanner baru:
+  // data yang ada adalah warisan scan lama dan tidak pernah ditulis ulang.
   function visfxStoreKey(modelKey) {
     // v2 — cache lama (kunci 'l2d_visfx_…') dihasilkan scanner yang ternoda
     // override-hold + idle-restart, dan/atau diambil saat shim stamp moc
     // v5→v4 masih membuta (param BlendShape terukur mati palsu — 171/223
-    // param rig v5 bertipe ini). Data lama otomatis tak terbaca; scan ulang
-    // sekali untuk badge yang akurat.
+    // param rig v5 bertipe ini). Data lama otomatis tak terbaca.
     return 'l2d_visfx_v2_' + (modelKey || 'default');
-  }
-  function visfxIsDead(map, id) {
-    return !!(map && map[id] && map[id].changed === 0);
-  }
-  function visfxSummarize(map) {
-    const out = { total: 0, dead: 0, alive: 0, scannedAt: null };
-    for (const id in (map || {})) {
-      out.total++;
-      if (map[id] && map[id].changed === 0) out.dead++; else out.alive++;
-      if (map[id] && map[id].at && (!out.scannedAt || map[id].at > out.scannedAt)) {
-        out.scannedAt = map[id].at;
-      }
-    }
-    return out;
-  }
-  // Param mati dikeluarkan dari payload usulan preset AI: menyuruh LLM
-  // mengusulkan pose lewat param yang tak mengubah gambar hanya menghasilkan
-  // preset yang tampak rusak.
-  function filterVisfxDead(params, map) {
-    if (!map) return params;
-    return params.filter(p => !p || !p.id || !visfxIsDead(map, p.id));
   }
   function visfxLoad() {
     try { return JSON.parse(localStorage.getItem(visfxStoreKey(currentModelKey())) || 'null'); }
     catch (e) { return null; }
-  }
-  function visfxSave(map) {
-    try { localStorage.setItem(visfxStoreKey(currentModelKey()), JSON.stringify(map)); } catch (e) {}
-  }
-  // Scan penuh: render tiap param di MIN dan MAX, hitung piksel yang berubah.
-  // Butuh sheet (sumber range) — "Inspeksi Model dulu" kalau kosong. Model
-  // dibekukan selama scan (persistent freeze) lalu dilepas. Hasil: map id →
-  // {changed, maxDelta, at}. Gangguan yang dibungkam selama scan (semuanya
-  // pernah membuat param terukur "mati" palsu = 0 piksel padahal hidup):
-  //  (1) overrides user (slider yang pernah digeser, eye-follow, aksesoris)
-  //      + rawDrive — di-re-assert tiap frame pada beforeModelUpdate dan
-  //      menimpa tulisan MIN/MAX scan. Selama scan: overrides user di-stash,
-  //      dan param yang DISCAN dipasang sebagai override sementara supaya
-  //      guard me-re-assert MIN/MAX pada titik yang benar (lihat di bawah).
-  //  (2) auto-restart grup Idle — motionManager.update me-restart idle saat
-  //      queue kosong; evaluasi CubismMotion dimulai dengan loadParameters()
-  //      yang MENGHAPUS tulisan scan lalu menulis kurva motion. Param yang
-  //      dianimasikan idle terukur mati palsu di model yang mendeklarasikan
-  //      grup Idle di model3.json (lumine tidak punya — model lain ada).
-  //      Grup idle di-stash selama scan, dipulihkan di finally.
-  //  (3) PHYSICS HARUS TETAP HIDUP — freeze meng-nol-kan im.physics, padahal
-  //      param INPUT physics (AngleX/BodyAngle*/Breath, dst.) hanya berdampak
-  //      piksel MELALUI rantai physics: dengan physics mati, MIN vs MAX
-  //      dirender identik dan param itu terukur mati palsu (terukur lumine:
-  //      AngleX 0 px physics-mati vs ±24.000 px physics-hidup).
-  //      Urutan tulisan jadi krusial: physics menimpa param output tiap
-  //      frame, jadi param yang discan dipasang sebagai OVERRIDE — guard
-  //      me-re-assert MIN/MAX pada beforeModelUpdate, yaitu SETELAH
-  //      physics.evaluate dan tepat sebelum o.update yang dirender. Input
-  //      param tetap dikonsumsi rantai physics di frame yang sama, output
-  //      tidak ditimpa spring. Settle frames memberi spring waktu konvergen
-  //      sebelum render dibandingkan.
-  const VISFX_SETTLE_FRAMES = 4;
-  async function runVisualCalibration(statusEl) {
-    const im = state.model && state.model.internalModel;
-    const cm = coreModel();
-    if (!state.model || !im || !cm) throw new Error('model belum siap');
-    if (state.talking) throw new Error('tunggu karakter selesai bicara');
-    // lastSheet bisa kosong di sesi segar (sheet di-cache localStorage) —
-    // jatuh ke loadCharacterSheet() sebelum menyuruh user inspeksi ulang.
-    const sheet = (state.lastSheet && Array.isArray(state.lastSheet.params) && state.lastSheet.params.length)
-      ? state.lastSheet : loadCharacterSheet();
-    if (sheet && sheet !== state.lastSheet) state.lastSheet = sheet;
-    const params = ((sheet && sheet.params) || [])
-      .filter(p => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max) && p.max > p.min)
-      .slice(0, 400);
-    if (!params.length) throw new Error('belum ada sheet — buka Inspeksi Model dulu');
-
-    const renderer = app.renderer;
-    if (!renderer || !renderer.plugins || !renderer.plugins.extract)
-      throw new Error('renderer tidak mendukung extract');
-    const rt = PIXI.RenderTexture.create({ width: Math.max(64, app.screen.width), height: Math.max(64, app.screen.height) });
-    const W = Math.max(64, app.screen.width), H = Math.max(64, app.screen.height);
-
-    const stopMotions = () => { try { im.motionManager.stopAllMotions(); } catch (e) {} };
-    const renderNow = () => {
-      renderer.render(state.model, { renderTexture: rt });
-      // extract.canvas membuat canvas baru setiap panggilan — context 2D-nya
-      // harus diambil dari canvas hasil itu, bukan disimpan dari panggilan awal.
-      const cv = renderer.plugins.extract.canvas(rt);
-      return cv.getContext('2d').getImageData(0, 0, W, H).data;
-    };
-
-    editorFreezeApi && editorFreezeApi.freeze && editorFreezeApi.freeze(null, true);
-    const mm = im.motionManager;
-    const savedIdleGroup = (mm && mm.groups) ? mm.groups.idle : undefined;
-    if (mm && mm.groups) mm.groups.idle = null;   // startRandomMotion(null) = no-op
-    // (3) PHYSICS tetap hidup selama scan — freeze meng-nol-kan im.physics,
-    // padahal param INPUT physics (AngleX/BodyAngle*/Breath, dst.) hanya
-    // berdampak piksel MELALUI rantai physics: dengan physics mati, MIN vs
-    // MAX dirender identik dan param itu terukur mati palsu (terukur lumine:
-    // AngleX 0 px physics-mati vs ±24.000 px physics-hidup).
-    if (state._frozenRefs && !im.physics && state._frozenRefs.physics) im.physics = state._frozenRefs.physics;
-    // (1b) overrides user di-STASH penuh (bukan cuma guard yang minggir):
-    // slider yang pernah digeser / eye-follow / aksesoris tidak boleh
-    // menimpa tulisan scan. PARAM YANG DISCAN justru dipasang sebagai
-    // override sementara — guard me-re-assert MIN/MAX pada
-    // beforeModelUpdate, yaitu SETELAH physics.evaluate dan tepat sebelum
-    // o.update, sehingga output param tidak ditimpa spring physics DAN
-    // input param tetap dikonsumsi rantai physics di frame yang sama.
-    const savedOverrides = state.overrides;
-    const savedRawDrive = state.rawDrive;
-    state.overrides = {};
-    state.rawDrive = null;
-    const map = {};
-    const settle = () => { for (let s = 0; s < VISFX_SETTLE_FRAMES; s++) im.update(16.7, performance.now()); };
-    try {
-      for (let i = 0; i < params.length; i++) {
-        const p = params[i];
-        if (statusEl && (i & 7) === 0) statusEl.textContent = 'kalibrasi efek ' + (i + 1) + '/' + params.length + '…';
-        stopMotions();
-        state.overrides[p.id] = p.min;   // guard me-re-assert nilai ini tiap frame
-        cm.setParameterValueById(p.id, p.min);
-        im.update(16.7, performance.now());
-        settle();
-        const a = renderNow();
-        stopMotions();
-        state.overrides[p.id] = p.max;
-        cm.setParameterValueById(p.id, p.max);
-        im.update(16.7, performance.now());
-        settle();
-        const b = renderNow();
-        let changed = 0, maxDelta = 0;
-        for (let q = 0; q < a.length; q += 4) {
-          const d = Math.max(Math.abs(a[q] - b[q]), Math.abs(a[q + 1] - b[q + 1]), Math.abs(a[q + 2] - b[q + 2]));
-          if (d > 10) changed++;
-          if (d > maxDelta) maxDelta = d;
-        }
-        map[p.id] = { changed, maxDelta, at: Date.now() };
-        delete state.overrides[p.id];
-        cm.setParameterValueById(p.id, Number.isFinite(p.def) ? p.def : 0);
-        settle();   // kembalikan physics ke pose default sebelum param berikutnya
-        // yield agar UI tetap bernapas dan progress terlihat
-        if ((i & 3) === 3) await new Promise(r => setTimeout(r, 0));
-      }
-    } finally {
-      state.overrides = savedOverrides;
-      state.rawDrive = savedRawDrive;
-      if (mm && mm.groups) mm.groups.idle = savedIdleGroup;
-      editorFreezeApi && editorFreezeApi.unfreeze && editorFreezeApi.unfreeze();
-      try { rt.destroy(true); } catch (e) {}
-    }
-    state.visfxMap = map;
-    visfxSave(map);
-    return visfxSummarize(map);
   }
 
   // ── Parts (opacity) — distinct from Parameters ──
@@ -750,7 +605,7 @@
       startBlink();
       startIdle();
       installOverrideGuard(state.model.internalModel);
-      state.visfxMap = visfxLoad();
+      state.visfxMap = visfxLoad();   // cache legacy untuk gate overlay-vs-native
       wireInteractions();
       detectModelCapabilities();   // adapt emotions/params to THIS model
       prefetchOverlayGate();       // bindings .exp3 untuk gate overlay-vs-native (fire-and-forget)
@@ -1799,19 +1654,21 @@
 
   // ── Gate overlay vs efek native (dobel-gambar di rig v5) ────────
   // Overlay kompensasi dibuat untuk ekspresi yang rig-nya TIDAK menggambar
-  // apa pun (0 piksel via kalibrasi). Setelah shim moc v5→v4 diperbaiki
-  // (try-genuine-first), rig v5 dengan keyform BlendShape kini hidup —
-  // exp_heart dsb. menggambar efeknya sendiri, dan overlay menggambar LAGI
-  // (hati melayang dobel). Gate: kalau ekspresi NATIVE yang cocok ada dan
-  // kalibrasi mengukur efeknya ALIVE, overlay ditekan. Dua sumber data:
+  // apa pun. Setelah shim moc v5→v4 diperbaiki (try-genuine-first), rig v5
+  // dengan keyform BlendShape kini hidup — exp_heart dsb. menggambar efeknya
+  // sendiri, dan overlay menggambar LAGI (hati melayang dobel). Gate: kalau
+  // ekspresi NATIVE yang cocok ada dan pengukuran lama mengukur efeknya
+  // ALIVE, overlay ditekan. Dua sumber data:
   //   • bindings .exp3 dari disk (GET /api/model/expressions?name=) —
   //     nama → daftar param id yang ditulis file .exp3 itu. Cukup SATU
-  //     param yang terikat art (kalibrasi bukan 0 piksel) untuk menyimpulkan
-  //     efeknya digambar native.
-  //   • state.visfxMap — hasil kalibrasi efek visual (per param: changed,
-  //     maxDelta). Tanpa kalibrasi = TIDAK TAHU → fail-open (overlay jalan,
-  //     seperti dulu); kegagalan fetch juga fail-open. Menekan overlay hanya
-  //     boleh terjadi dengan bukti terukur, tidak dengan tebakan.
+  //     param terukur mengubah piksel untuk menyimpulkan efeknya digambar
+  //     native.
+  //   • state.visfxMap — cache pengukuran LEGACY dari fitur "Kalibrasi
+  //     Efek" yang sudah dihapus (per param: changed, maxDelta). Tidak ada
+  //     scanner baru; data hanya dari localStorage warisan. Tanpa data =
+  //     TIDAK TAHU → fail-open (overlay jalan, seperti dulu); kegagalan
+  //     fetch juga fail-open. Menekan overlay hanya boleh terjadi dengan
+  //     bukti terukur, tidak dengan tebakan.
   // Per model (cache dibuang saat model diganti); nama file .exp3 tidak
   // diinterpretasi — cuma dicocokkan dengan nama ekspresi yang dipasang.
   let overlayGateExprs = null;   // { name: [paramId, ...] } | null | undefined (undefined = belum di-fetch)
@@ -3744,16 +3601,6 @@
         gEl.className = 'pn-group'; gEl.textContent = '· ' + group;
         head.appendChild(gEl);
       }
-      // Kalibrasi efek visual: param yang terukur 0 piksel diberi tanda —
-      // menggesernya memang tidak akan mengubah apa pun di rig ini.
-      if (state.visfxMap && visfxIsDead(state.visfxMap, id)) {
-        row.classList.add('dead-param');
-        row.title = 'Param kontrol — tidak terikat art di rig ini (0 piksel saat kalibrasi efek).';
-        const badge = document.createElement('span');
-        badge.className = 'pn-dead-badge';
-        badge.textContent = '🚫 tanpa efek';
-        head.appendChild(badge);
-      }
       row.appendChild(head);
 
       const sliderRow = document.createElement('div');
@@ -3837,10 +3684,10 @@
         if (window.__addChat) window.__addChat('agent', 'Belum ada sheet. Inspeksi model dulu (tab 📁 Model → 🔍 Inspeksi Model).');
         return;
       }
-      // Cache kalibrasi dimuat per model saat load — tapi wireUI bisa jalan
-      // sebelum itu; refresh status saat popup dibuka agar selalu akurat.
+      // Cache pengukuran lama dimuat per model saat load — tapi wireUI bisa
+      // jalan sebelum itu; sinkronkan saat popup dibuka (gate overlay yang
+      // membaca visfxMap tetap jalan untuk model yang pernah discan).
       if (!state.visfxMap) state.visfxMap = visfxLoad();
-      paintVisfxStatus();
       renderParamNotesPopup(sheet);
       if (pnPopup) { pnPopup.classList.remove('hidden'); pnPopup.setAttribute('aria-hidden', 'false'); }
     }
@@ -3859,41 +3706,6 @@
     if (pnOpenBtn) pnOpenBtn.addEventListener('click', openParamNotesPopup);
     if (pnCloseBtn) pnCloseBtn.addEventListener('click', closeParamNotesPopup);
     if (pnSaveAll) pnSaveAll.addEventListener('click', saveAllParamNotes);
-
-    // ── 🧪 Kalibrasi efek visual ─────────────────────────────────
-    // Ukur param mana yang benar-benar mengubah gambar (render MIN vs MAX,
-    // hitung piksel) lalu tandai baris yang mati. Hasil: cache localStorage
-    // per model; slider mati diberi badge "🚫 tanpa efek" dan dikeluarkan
-    // dari usulan preset AI. Model-agnostic: diukur, bukan di-hardcode.
-    const pnVisfxBtn = $('#btn-visfx-calibrate');
-    const visfxStatus = $('#visfx-status');
-    function paintVisfxStatus() {
-      if (!visfxStatus) return;
-      const sum = visfxSummarize(state.visfxMap);
-      if (!sum.total) { visfxStatus.textContent = 'belum dikalibrasi'; return; }
-      visfxStatus.textContent = sum.dead + '/' + sum.total + ' param tanpa efek visual' +
-        (sum.scannedAt ? ' · ' + new Date(sum.scannedAt).toLocaleDateString() : '');
-    }
-    if (pnVisfxBtn) pnVisfxBtn.addEventListener('click', async () => {
-      if (pnVisfxBtn.disabled) return;
-      pnVisfxBtn.disabled = true;
-      try {
-        const sum = await runVisualCalibration(visfxStatus);
-        paintVisfxStatus();
-        // Repaint popup + preset editor supaya badge muncul tanpa reopen.
-        if (state.lastSheet) {
-          if (!pnPopup.classList.contains('hidden')) renderParamNotesPopup(state.lastSheet);
-          const presetSlidersEl = $('#preset-param-sliders');
-          if (presetSlidersEl && presetSlidersEl.childElementCount) renderPresetSliders(state.lastSheet);
-        }
-        console.log('[visfx] kalibrasi selesai:', sum.dead, 'dari', sum.total, 'param tanpa efek visual');
-      } catch (e) {
-        if (visfxStatus) visfxStatus.textContent = 'gagal: ' + e.message;
-      } finally {
-        pnVisfxBtn.disabled = false;
-      }
-    });
-    paintVisfxStatus();
 
     function paintDraft() {
       const box = shEls.values;
@@ -6415,11 +6227,7 @@
     const allParams = (sheet.params || [])
       .filter(p => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max))
       .map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def, label: p.label || '' }));
-    // Kalibrasi efek visual: param yang terukur tidak mengubah piksel apa
-    // pun (0 pada min vs max) tidak diusulkan lagi ke LLM — preset yang
-    // dibangun di atasnya pasti tampak rusak. Tanpa data kalibrasi, tanpa
-    // filter (perilaku lama).
-    const params = filterVisfxDead(allParams, state.visfxMap);
+    const params = allParams;
     if (!params.length) return { count: 0 };
 
     const parts = (sheet.parts || []).map(p => (p && p.id) || p).filter(Boolean);

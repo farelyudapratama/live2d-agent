@@ -1760,21 +1760,3 @@ input[type="range"]::-moz-range-thumb {
   body::before, body::after { display: none; }
 }
 
-/* ── Kalibrasi efek visual: baris param tanpa efek ─────────────── */
-/* Baris slider param yang terukur 0 piksel saat kalibrasi (MIN vs MAX
-   tidak mengubah framebuffer): diredupkan + badge, bukan disembunyikan —
-   param tetap boleh digeser (kontrol event bisa jadi penting kelak),
-   tapi UI jujur bahwa menggesernya tidak mengubah gambar di rig ini. */
-.pn-row.dead-param { opacity: 0.55; }
-.pn-row.dead-param .pn-range { accent-color: #666; }
-.pn-row .pn-dead-badge {
-  margin-left: auto;
-  font-size: 10px;
-  color: #d99;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 120, 120, 0.25);
-  border-radius: 8px;
-  padding: 1px 7px;
-  white-space: nowrap;
-}
-#visfx-status { margin-left: 8px; font-size: 11px; opacity: 0.75; }

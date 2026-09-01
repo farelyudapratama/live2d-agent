@@ -3569,7 +3569,17 @@
         };
         try { im.motionManager.stopAllMotions(); } catch (e) {}
         try { if (im.motionManager.expressionManager) im.motionManager.expressionManager.resetExpression(); } catch (e) {}
-        im.physics = null; im.eyeBlink = null; im.breath = null;
+        // PHYSICS TIDAK di-nol-kan. Di rig VBridger, kepala/badan/rok bergerak
+        // LEWAT rantai physics: ParamAngleX & kawan-kawannya cuma INPUT, jadi
+        // dengan im.physics = null slider pada param itu mengubah buffer tapi
+        // tak mengubah satu piksel pun — tampak mati total (terukur: AngleX
+        // 0 px physics-mati vs ±26.000 px physics-hidup). Physics dibiarkan
+        // jalan supaya slider input terlihat efeknya; nilai slider pada param
+        // OUTPUT tetap menang lewat override guard (re-assert di
+        // beforeModelUpdate = SETELAH physics.evaluate). Blink/breath tetap
+        // dibungkam — itu penulis parameter yang mengganggu pembacaan slider,
+        // bukan bagian dari rantai deformasi.
+        im.eyeBlink = null; im.breath = null;
         if (im.focusController) { im.focusController.x = 0; im.focusController.y = 0; }
       }
       _freezeStatusEl = statusEl || null;

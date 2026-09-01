@@ -70,6 +70,9 @@
     // The model re-evaluates its own motion/physics every frame, so we re-apply
     // these after each model update to keep them "held".
     overrides: {},
+    // Hasil kalibrasi efek visual (visfxLoad()) — map id → {changed, maxDelta, at}.
+    // Null = belum dikalibrasi. Cache UI di localStorage per model, bukan sheet.
+    visfxMap: null,
     // ── Raw parameter drive (Motion Studio) ──
     // { paramId: number } nilai ABSOLUT yang ditulis PALING AKHIR setiap frame
     // dengan weight 1, jadi ia menang atas idle fidget, emosi, dan overrides.
@@ -257,6 +260,117 @@
         try { cm.setParameterValueById(id, v, 1); } catch (e) {}
       }
     });
+  }
+
+  // ── Kalibrasi efek visual (model-agnostic — diukur dari engine) ──
+  // Scan merender tiap parameter pada nilai MIN dan MAX lalu menghitung
+  // piksel framebuffer yang berubah. 0 piksel = parameter tidak terikat
+  // art di rig INI: bisa param kontrol (Anime/adjust), rantai physics yang
+  // output-nya tidak dikonsumsi (segmen _1/_4), atau art efek yang tidak
+  // ikut diekspor (contoh nyata lumine: EX02-05/08-11 "heart eye"/"blush"/
+  // "tear" — label cdi3 rigger mengonfirmasi semuanya efek overlay yang
+  // hilang dari rig distribusi). Guard: test/legacy/test-visual-calibration.js.
+  // Hasilnya cache UI di localStorage per model — SENGAJA bukan di sheet,
+  // supaya skema v4 dan aturan "angka hanya dari engine" tidak tersentuh;
+  // hilangnya cache hanya berarti slider kembali tanpa label, bukan data loss.
+  function visfxStoreKey(modelKey) {
+    return 'l2d_visfx_' + (modelKey || 'default');
+  }
+  function visfxIsDead(map, id) {
+    return !!(map && map[id] && map[id].changed === 0);
+  }
+  function visfxSummarize(map) {
+    const out = { total: 0, dead: 0, alive: 0, scannedAt: null };
+    for (const id in (map || {})) {
+      out.total++;
+      if (map[id] && map[id].changed === 0) out.dead++; else out.alive++;
+      if (map[id] && map[id].at && (!out.scannedAt || map[id].at > out.scannedAt)) {
+        out.scannedAt = map[id].at;
+      }
+    }
+    return out;
+  }
+  // Param mati dikeluarkan dari payload usulan preset AI: menyuruh LLM
+  // mengusulkan pose lewat param yang tak mengubah gambar hanya menghasilkan
+  // preset yang tampak rusak.
+  function filterVisfxDead(params, map) {
+    if (!map) return params;
+    return params.filter(p => !p || !p.id || !visfxIsDead(map, p.id));
+  }
+  function visfxLoad() {
+    try { return JSON.parse(localStorage.getItem(visfxStoreKey(currentModelKey())) || 'null'); }
+    catch (e) { return null; }
+  }
+  function visfxSave(map) {
+    try { localStorage.setItem(visfxStoreKey(currentModelKey()), JSON.stringify(map)); } catch (e) {}
+  }
+  // Scan penuh: render tiap param di MIN dan MAX, hitung piksel yang berubah.
+  // Butuh sheet (sumber range) — "Inspeksi Model dulu" kalau kosong. Model
+  // dibekukan selama scan (persistent freeze) lalu dilepas; slider yang sedang
+  // dipegang user tetap dihormati (override konstan di kedua render = tidak
+  // memengaruhi selisih). Hasil: map id → {changed, maxDelta, at}.
+  async function runVisualCalibration(statusEl) {
+    const im = state.model && state.model.internalModel;
+    const cm = coreModel();
+    if (!state.model || !im || !cm) throw new Error('model belum siap');
+    if (state.talking) throw new Error('tunggu karakter selesai bicara');
+    // lastSheet bisa kosong di sesi segar (sheet di-cache localStorage) —
+    // jatuh ke loadCharacterSheet() sebelum menyuruh user inspeksi ulang.
+    const sheet = (state.lastSheet && Array.isArray(state.lastSheet.params) && state.lastSheet.params.length)
+      ? state.lastSheet : loadCharacterSheet();
+    if (sheet && sheet !== state.lastSheet) state.lastSheet = sheet;
+    const params = ((sheet && sheet.params) || [])
+      .filter(p => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max) && p.max > p.min)
+      .slice(0, 400);
+    if (!params.length) throw new Error('belum ada sheet — buka Inspeksi Model dulu');
+
+    const renderer = app.renderer;
+    if (!renderer || !renderer.plugins || !renderer.plugins.extract)
+      throw new Error('renderer tidak mendukung extract');
+    const rt = PIXI.RenderTexture.create({ width: Math.max(64, app.screen.width), height: Math.max(64, app.screen.height) });
+    const W = Math.max(64, app.screen.width), H = Math.max(64, app.screen.height);
+
+    const stopMotions = () => { try { im.motionManager.stopAllMotions(); } catch (e) {} };
+    const renderNow = () => {
+      renderer.render(state.model, { renderTexture: rt });
+      // extract.canvas membuat canvas baru setiap panggilan — context 2D-nya
+      // harus diambil dari canvas hasil itu, bukan disimpan dari panggilan awal.
+      const cv = renderer.plugins.extract.canvas(rt);
+      return cv.getContext('2d').getImageData(0, 0, W, H).data;
+    };
+
+    editorFreezeApi && editorFreezeApi.freeze && editorFreezeApi.freeze(null, true);
+    const map = {};
+    try {
+      for (let i = 0; i < params.length; i++) {
+        const p = params[i];
+        if (statusEl && (i & 7) === 0) statusEl.textContent = 'kalibrasi efek ' + (i + 1) + '/' + params.length + '…';
+        stopMotions();
+        cm.setParameterValueById(p.id, p.min);
+        im.update(16.7, performance.now());
+        const a = renderNow();
+        stopMotions();
+        cm.setParameterValueById(p.id, p.max);
+        im.update(16.7, performance.now());
+        const b = renderNow();
+        let changed = 0, maxDelta = 0;
+        for (let q = 0; q < a.length; q += 4) {
+          const d = Math.max(Math.abs(a[q] - b[q]), Math.abs(a[q + 1] - b[q + 1]), Math.abs(a[q + 2] - b[q + 2]));
+          if (d > 10) changed++;
+          if (d > maxDelta) maxDelta = d;
+        }
+        map[p.id] = { changed, maxDelta, at: Date.now() };
+        cm.setParameterValueById(p.id, Number.isFinite(p.def) ? p.def : 0);
+        // yield agar UI tetap bernapas dan progress terlihat
+        if ((i & 3) === 3) await new Promise(r => setTimeout(r, 0));
+      }
+    } finally {
+      editorFreezeApi && editorFreezeApi.unfreeze && editorFreezeApi.unfreeze();
+      try { rt.destroy(true); } catch (e) {}
+    }
+    state.visfxMap = map;
+    visfxSave(map);
+    return visfxSummarize(map);
   }
 
   // ── Parts (opacity) — distinct from Parameters ──
@@ -567,6 +681,7 @@
       startBlink();
       startIdle();
       installOverrideGuard(state.model.internalModel);
+      state.visfxMap = visfxLoad();
       wireInteractions();
       detectModelCapabilities();   // adapt emotions/params to THIS model
       startIdleMotion();           // auto-play model's own motions so it isn't a static T-pose
@@ -3327,7 +3442,11 @@
       // EVERY parameter + part, no cap — the popup scrolls.
       for (const p of params) {
         if (!p || !p.id || typeof p.min !== 'number' || typeof p.max !== 'number') continue;
-        appendNoteRow(pnList, p.id, p.id, p.group, p.min, p.max, p.def, false,
+        // Label tampil duluan (nama asli rigger dari cdi3), id mengikuti —
+        // membedakan "Heart eye · ParamEX08" dari nomor telanjang. Banyak
+        // sheet menyimpan label = id sendiri; jangan duplikasi.
+        const shown = (p.label && p.label !== p.id) ? (p.label + ' · ' + p.id) : p.id;
+        appendNoteRow(pnList, p.id, shown, p.group, p.min, p.max, p.def, false,
           (typeof p.userNote === 'string') ? p.userNote : '');
       }
       for (const p of parts) {
@@ -3424,6 +3543,16 @@
         gEl.className = 'pn-group'; gEl.textContent = '· ' + group;
         head.appendChild(gEl);
       }
+      // Kalibrasi efek visual: param yang terukur 0 piksel diberi tanda —
+      // menggesernya memang tidak akan mengubah apa pun di rig ini.
+      if (state.visfxMap && visfxIsDead(state.visfxMap, id)) {
+        row.classList.add('dead-param');
+        row.title = 'Param kontrol — tidak terikat art di rig ini (0 piksel saat kalibrasi efek).';
+        const badge = document.createElement('span');
+        badge.className = 'pn-dead-badge';
+        badge.textContent = '🚫 tanpa efek';
+        head.appendChild(badge);
+      }
       row.appendChild(head);
 
       const sliderRow = document.createElement('div');
@@ -3507,6 +3636,10 @@
         if (window.__addChat) window.__addChat('agent', 'Belum ada sheet. Inspeksi model dulu (tab 📁 Model → 🔍 Inspeksi Model).');
         return;
       }
+      // Cache kalibrasi dimuat per model saat load — tapi wireUI bisa jalan
+      // sebelum itu; refresh status saat popup dibuka agar selalu akurat.
+      if (!state.visfxMap) state.visfxMap = visfxLoad();
+      paintVisfxStatus();
       renderParamNotesPopup(sheet);
       if (pnPopup) { pnPopup.classList.remove('hidden'); pnPopup.setAttribute('aria-hidden', 'false'); }
     }
@@ -3525,6 +3658,41 @@
     if (pnOpenBtn) pnOpenBtn.addEventListener('click', openParamNotesPopup);
     if (pnCloseBtn) pnCloseBtn.addEventListener('click', closeParamNotesPopup);
     if (pnSaveAll) pnSaveAll.addEventListener('click', saveAllParamNotes);
+
+    // ── 🧪 Kalibrasi efek visual ─────────────────────────────────
+    // Ukur param mana yang benar-benar mengubah gambar (render MIN vs MAX,
+    // hitung piksel) lalu tandai baris yang mati. Hasil: cache localStorage
+    // per model; slider mati diberi badge "🚫 tanpa efek" dan dikeluarkan
+    // dari usulan preset AI. Model-agnostic: diukur, bukan di-hardcode.
+    const pnVisfxBtn = $('#btn-visfx-calibrate');
+    const visfxStatus = $('#visfx-status');
+    function paintVisfxStatus() {
+      if (!visfxStatus) return;
+      const sum = visfxSummarize(state.visfxMap);
+      if (!sum.total) { visfxStatus.textContent = 'belum dikalibrasi'; return; }
+      visfxStatus.textContent = sum.dead + '/' + sum.total + ' param tanpa efek visual' +
+        (sum.scannedAt ? ' · ' + new Date(sum.scannedAt).toLocaleDateString() : '');
+    }
+    if (pnVisfxBtn) pnVisfxBtn.addEventListener('click', async () => {
+      if (pnVisfxBtn.disabled) return;
+      pnVisfxBtn.disabled = true;
+      try {
+        const sum = await runVisualCalibration(visfxStatus);
+        paintVisfxStatus();
+        // Repaint popup + preset editor supaya badge muncul tanpa reopen.
+        if (state.lastSheet) {
+          if (!pnPopup.classList.contains('hidden')) renderParamNotesPopup(state.lastSheet);
+          const presetSlidersEl = $('#preset-param-sliders');
+          if (presetSlidersEl && presetSlidersEl.childElementCount) renderPresetSliders(state.lastSheet);
+        }
+        console.log('[visfx] kalibrasi selesai:', sum.dead, 'dari', sum.total, 'param tanpa efek visual');
+      } catch (e) {
+        if (visfxStatus) visfxStatus.textContent = 'gagal: ' + e.message;
+      } finally {
+        pnVisfxBtn.disabled = false;
+      }
+    });
+    paintVisfxStatus();
 
     function paintDraft() {
       const box = shEls.values;
@@ -6043,9 +6211,14 @@
     if (!Array.isArray(sheet.presets.user)) sheet.presets.user = [];
     if (!Array.isArray(sheet.presets.ai)) sheet.presets.ai = [];
 
-    const params = (sheet.params || [])
+    const allParams = (sheet.params || [])
       .filter(p => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max))
       .map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def, label: p.label || '' }));
+    // Kalibrasi efek visual: param yang terukur tidak mengubah piksel apa
+    // pun (0 pada min vs max) tidak diusulkan lagi ke LLM — preset yang
+    // dibangun di atasnya pasti tampak rusak. Tanpa data kalibrasi, tanpa
+    // filter (perilaku lama).
+    const params = filterVisfxDead(allParams, state.visfxMap);
     if (!params.length) return { count: 0 };
 
     const parts = (sheet.parts || []).map(p => (p && p.id) || p).filter(Boolean);

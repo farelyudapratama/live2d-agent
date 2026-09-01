@@ -4,6 +4,35 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-01 (3) — scan kalibrasi diperbaiki + cache lama di-invalidasi
+
+Investigasi keluhan user "param physics (contoh `ParamBodyPhysicsRX1_1`) tidak
+bereaksi ke slider" menghasilkan: **slider-nya sendiri benar** — diukur di
+browser dengan jalur slider persis (setSticky + freeze + override guard +
+render penuh), RX1_1 mengubah **17.473 piksel** antara MIN/MAX. Param itu
+bertipe **BlendShape** (171/223 param rig v5 bertipe ini) — kelas param yang
+dulu memang mati total oleh shim stamp v5→v4; pasca-fix shim kini berevaluasi.
+Pengalaman "tidak ada perubahan" berasal dari data kalibrasi pra-fix yang
+menandai param-param itu mati. Yang diperbaiki agar scan berikutnya akurat:
+
+- **Dua penulis parameter dibungkam selama scan** (`runVisualCalibration`,
+  app.js):
+  (1) override guard kini minggir saat scan (flag `state.visfxScanning`,
+  dicek di awal handler `beforeModelUpdate`) — dulu sticky overrides dari
+  slider yang pernah digeser + rawDrive di-re-assert di tengah scan dan
+  menimpa tulisan MIN/MAX, membuat param itu terukur "mati" palsu;
+  (2) grup Idle di-stash selama scan (`mm.groups.idle = null`) —
+  `motionManager.update` me-restart idle saat queue kosong, dan evaluasi
+  CubismMotion dimulai dengan `loadParameters()` yang MENGHAPUS tulisan scan.
+  Param yang dianimasikan idle terukur mati palsu di model yang
+  mendeklarasikan grup Idle (lumine tidak punya — model lain ada).
+- **Cache kalibrasi dibump ke v2** (`visfxStoreKey` → `l2d_visfx_v2_<key>`) —
+  data scan lama (ternoda kedua titik buta di atas dan/atau diambil saat
+  shim stamp masih buta) otomatis tak terbaca. Scan ulang SEKALI untuk badge
+  akurat; data lama tinggal yatim di localStorage (bukan data loss).
+- Guard: `test-visual-calibration.js` +7 assertion (isolasi scan + prefix v2).
+  Suite total kini: **212 unit + 521 guard, 0 gagal** (11 suite).
+
 ## UPDATE 2026-09-01 (2) — gate overlay vs efek native (dobel-gambar) SELESAI
 
 Risiko "overlay emosi bisa dobel dengan efek native di rig v5" (disebut di
@@ -147,7 +176,8 @@ terbukti via flag). Yang benar: binding ada, evaluasinya butuh core
 - `ParamAnime01/2/3` (guruguru + tetesan air mata) dianimasikan oleh
   `idle.motion3.json` (direferensikan `lumine.vtube.json`
   `IdleAnimation`); keyform-nya juga tidak dievaluasi core 5.1.
-- Kalibrasi tersimpan di **localStorage** per model (`l2d_visfx_<key>`) —
+- Kalibrasi tersimpan di **localStorage** per model (`l2d_visfx_v2_<key>` —
+  v2 sejak fix scan 2026-09-01, data kunci lama basi; lihat UPDATE (3)) —
   sengaja bukan sheet (skema v4 tak tersentuh); hilangnya bukan data loss.
 
 ## Yang belum tuntas + opsi

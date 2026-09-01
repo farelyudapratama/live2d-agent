@@ -71,10 +71,12 @@ vm.createContext(sandbox);
 for (const { n, src } of fns) if (src) vm.runInContext(src, sandbox);
 
 // ── 1. visfxStoreKey ─────────────────────────────────────────────────────────
-section('visfxStoreKey: per model, aman untuk key kosong');
-ok('key mengandung model key', vm.runInContext('visfxStoreKey("model_abc")', sandbox) === 'l2d_visfx_model_abc');
-ok('model key kosong → default', vm.runInContext('visfxStoreKey("")', sandbox) === 'l2d_visfx_default');
-ok('null → default', vm.runInContext('visfxStoreKey(null)', sandbox) === 'l2d_visfx_default');
+section('visfxStoreKey: per model, aman untuk key kosong, v2 meng-invalidasi data lama');
+ok('key v2 mengandung model key', vm.runInContext('visfxStoreKey("model_abc")', sandbox) === 'l2d_visfx_v2_model_abc');
+ok('model key kosong → default', vm.runInContext('visfxStoreKey("")', sandbox) === 'l2d_visfx_v2_default');
+ok('null → default', vm.runInContext('visfxStoreKey(null)', sandbox) === 'l2d_visfx_v2_default');
+ok('prefix v2 — data scan pra-fix (ternoda override-hold/idle-restart, shim stamp v4) tak terbaca otomatis',
+  vm.runInContext('visfxStoreKey("x")', sandbox).startsWith('l2d_visfx_v2_'));
 
 // ── 2. visfxIsDead ───────────────────────────────────────────────────────────
 section('visfxIsDead: hanya changed === 0 yang mati');
@@ -135,6 +137,25 @@ ok('cache localStorage — sengaja bukan sheet (skema v4 aman)',
   appSrc.includes("localStorage.setItem(visfxStoreKey(currentModelKey())"));
 ok('scan tidak menyentuh nama parameter tertentu (model-agnostic)',
   !/visfx[\s\S]*"Param(Angle|EX|Skirt)/.test(appSrc.slice(appSrc.indexOf('function visfxStoreKey'), appSrc.indexOf('function visfxLoad'))));
+
+// ── 6. isolasi scan — dua penulis parameter dibungkam selama kalibrasi ──────
+// Tanpa ini param tertentu terukur "mati" palsu (0 piksel) padahal hidup:
+// override guard me-re-assert sticky/slider/eye-follow + rawDrive menimpa
+// tulisan MIN/MAX scan, dan auto-restart grup Idle memulai evaluasi motion
+// dengan loadParameters() yang MENGHAPUS tulisan scan.
+section('isolasi scan: guard minggir + grup Idle di-stash selama kalibrasi');
+ok('state punya flag visfxScanning (default false)',
+  appSrc.includes('visfxScanning: false'));
+ok('override guard minggir saat scan (cek flag SEBELUM re-assert)',
+  /function installOverrideGuard[\s\S]{0,1200}if \(state\.visfxScanning\) return;[\s\S]{0,600}applyRawDrive|function installOverrideGuard[\s\S]{0,1200}if \(state\.visfxScanning\) return;/.test(appSrc));
+ok('runVisualCalibration menyalakan flag SEBELUM loop scan',
+  /state\.visfxScanning = true;[\s\S]{0,600}for \(let i = 0; i < params\.length/.test(appSrc));
+ok('flag dipadamkan + grup Idle dipulihkan di finally (scan gagal pun bersih)',
+  /finally \{[\s\S]{0,400}state\.visfxScanning = false;[\s\S]{0,400}mm\.groups\.idle = savedIdleGroup/.test(appSrc));
+ok('grup Idle di-stash selama scan (auto-restart motion tidak menghapus tulisan MIN/MAX)',
+  /const savedIdleGroup = \(mm && mm\.groups\) \? mm\.groups\.idle : undefined;[\s\S]{0,200}mm\.groups\.idle = null;/.test(appSrc));
+ok('flag visfxScanning hanya ditulis oleh runVisualCalibration (bukan jalur lain)',
+  (appSrc.match(/state\.visfxScanning = (true|false)/g) || []).length === 2);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -7,6 +7,7 @@ import { join, dirname } from "path";
 
 const DEFAULT_CONFIG: Config = {
   activeId: null,
+  overlay: { enabled: true, alpha: 0.9, size: 1 },
   connections: [],
   tts: { endpoint: "" },
   events: {

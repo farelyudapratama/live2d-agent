@@ -44,6 +44,8 @@ export interface Config {
   camera: CameraConfig;
   motion: MotionConfig;
   stt: SttConfig;
+  // Overlay efek emosi app-level (js/emotion-overlay.js).
+  overlay: { enabled: boolean; alpha: number; size: number };
 }
 
 export interface EventConfig {

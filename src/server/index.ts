@@ -356,7 +356,7 @@ async function handleAnalyzeSheet(req:Request):Promise<Response>{
   const notes=(body.notes&&typeof body.notes==="object")?body.notes:{}; const noteOf=(id:string)=>{ const n=(notes as any)[id]; if(typeof n!=="string") return ""; return n.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"").trim().slice(0,300); };
   if(!params.length) return json({presets:[], warning:"tidak ada parameter dengan range valid"});
   if(!config.activeConnection) return json({presets:[], warning:"tidak ada koneksi AI aktif"});
-  const paramLines=params.map((p:any)=>{ const label= typeof p.label==="string"&&p.label.trim()? ` (${p.label.trim().slice(0,40)})`:""; let line=`- "${p.id}"${label} range [${Number(p.min)}, ${Number(p.max)}] default ${Number(p.def)}`; const pn=noteOf(p.id); if(pn) line+=` | penjelasan user: ${pn}`; return line; }).join("\n");
+  const paramLines=params.map((p:any)=>{ const label= typeof p.label==="string"&&p.label.trim()? ` (${p.label.trim().slice(0,40)})`:""; const group= typeof p.group==="string"&&p.group.trim()? ` [grup: ${p.group.trim().slice(0,40)}]`:""; let line=`- "${p.id}"${label}${group} range [${Number(p.min)}, ${Number(p.max)}] default ${Number(p.def)}`; const pn=noteOf(p.id); if(pn) line+=` | penjelasan user: ${pn}`; return line; }).join("\n");
   const prompt=`Kamu pakar rigging Live2D Cubism. Berdasarkan daftar parameter model di bawah, usulkan preset pose yang masuk akal dan SEBANYAK MUNGKIN VARIASI untuk model INI.
 
 PARAMETER TERSEDIA (hanya id di bawah yang boleh dipakai):

@@ -84,6 +84,10 @@
     // maxDelta, at}. Fitur kalibrasinya sudah dihapus; data warisan ini kini
     // cuma dibaca gate overlay-vs-native. Null = tidak pernah discan.
     visfxMap: null,
+    // Label + grup dari cdi3.json (DisplayInfo model): paramId → { label, group }.
+    // Nama & pengelompokan ASLI rigger — jauh lebih informatif daripada
+    // heuristik regex id. Di-fetch saat model dimuat; null = gagal/belum ada.
+    cdiInfo: null,
     // ── Raw parameter drive (Motion Studio) ──
     // { paramId: number } nilai ABSOLUT yang ditulis PALING AKHIR setiap frame
     // dengan weight 1, jadi ia menang atas idle fidget, emosi, dan overrides.
@@ -551,6 +555,8 @@
         // to a parameter the new model doesn't have.
         state.caps = {};
         state.modelParams = null;
+        // cdi3 milik model LAMA — id param beda model beda makna.
+        state.cdiInfo = null;
         // Emotion state is resolved against the OLD model's parameter ids, so all
         // of it is invalid the moment the model is swapped. Left behind, the eased
         // ease loop would keep writing the previous character's ids and the LLM
@@ -609,6 +615,7 @@
       wireInteractions();
       detectModelCapabilities();   // adapt emotions/params to THIS model
       prefetchOverlayGate();       // bindings .exp3 untuk gate overlay-vs-native (fire-and-forget)
+      prefetchCdiInfo();           // label + grup asli rigger dari cdi3 (fire-and-forget)
       startIdleMotion();           // auto-play model's own motions so it isn't a static T-pose
 
       // Classify this model's motion clips by semantic verb so gestures can be
@@ -1740,6 +1747,77 @@
   }
   function prefetchOverlayGate() {
     overlayGateExpBindings().catch(() => {});
+  }
+
+  // Judul grup rigger untuk header popup: GroupId mentah ("ParamGroup17") tak
+  // berarti — pakai label anggota pertama + jumlah sisanya. Penanda "Rig:"
+  // membedakannya dari grup heuristik.
+  function cdiGroupTitle(gid) {
+    if (!(state.cdiInfo && state.cdiInfo.groups.has(gid))) return gid;
+    const members = state.cdiInfo.groups.get(gid) || [];
+    const named = members.map(id => {
+      const info = state.cdiInfo.byId.get(id);
+      return info && info.label;
+    }).filter(Boolean);
+    return named.length
+      ? ('Rig: ' + named[0] + (named.length > 1 ? ' +' + (named.length - 1) : ''))
+      : gid;
+  }
+
+  // Label + pengelompokan ASLI rigger dari cdi3.json (DisplayInfo). Sumber:
+  //   Parameters[i] = { Id, Name, GroupId } — file yang sama yang ditulis
+  //   Live2D Editor saat rig dibuat. Gagal fetch = fitur tanpa data (label
+  //   kembali ke id mentah, grup kembali ke heuristik) — tidak error.
+  // state.cdiInfo = { byId: Map paramId → {label, group}, groups: Map GroupId →
+  // [paramId...] dalam urutan file }.
+  function prefetchCdiInfo() {
+    const modelPath = String(state.modelPath || '');
+    const dir = modelPath.split('/').slice(0, -1).join('/');
+    if (!dir) return;
+    // Ambil model3.json untuk menemukan DisplayInfo (path cdi3 relative ke
+    // folder model), lalu cdi3-nya sendiri.
+    fetch(API + '/' + modelPath)
+      .then(r => (r.ok ? r.json() : null))
+      .then(m3 => {
+        const cdiRel = m3 && m3.FileReferences && m3.FileReferences.DisplayInfo;
+        if (!cdiRel) return null;
+        return fetch(API + '/' + dir + '/' + cdiRel)
+          .then(r => (r.ok ? r.json() : null));
+      })
+      .then(cdi => {
+        if (!cdi || !Array.isArray(cdi.Parameters)) return;
+        const byId = new Map();
+        const groups = new Map();
+        for (const p of cdi.Parameters) {
+          if (!p || !p.Id) continue;
+          byId.set(p.Id, { label: String(p.Name || '').trim(), group: String(p.GroupId || '').trim() });
+          if (p.GroupId) {
+            if (!groups.has(p.GroupId)) groups.set(p.GroupId, []);
+            groups.get(p.GroupId).push(p.Id);
+          }
+        }
+        state.cdiInfo = { byId, groups };
+        // Sheet yang sudah ada (disk/localStorage) memakai label=id mentah +
+        // grup heuristik — patch in place supaya UI/LLM langsung merasakan
+        // label rigger tanpa menunggu re-inspect. label/grup BUKAN field
+        // user-authored, jadi menimpanya aman.
+        const sheet = state.lastSheet;
+        if (sheet && Array.isArray(sheet.params)) {
+          let changed = false;
+          for (const p of sheet.params) {
+            const info = byId.get(p && p.id);
+            if (!info) continue;
+            if (info.label && p.label !== info.label) { p.label = info.label; changed = true; }
+            if (info.group && p.group !== cdiGroupTitle(info.group)) { p.group = cdiGroupTitle(info.group); changed = true; }
+          }
+          if (changed) {
+            // Popup sedang terbuka? Render ulang lewat jembatan yang dipasang
+            // wireUI() (renderParamNotesPopup hidup di scope dalam wireUI).
+            if (window.__pnRefreshIfOpen) window.__pnRefreshIfOpen();
+          }
+        }
+      })
+      .catch(() => {});
   }
 
   // Overlay efek emosi (js/emotion-overlay.js): modul mandiri yang menggambar
@@ -3371,6 +3449,7 @@
     const pnCountdown = $('#pn-countdown');
     const pnSaveAll = $('#pn-save-all');
     const pnSaveStatus = $('#pn-save-status');
+    const pnSearch = $('#pn-search');
     let pnTimer = null;          // debounce for description autosave
     const pnStuckIds = new Set(); // param/part ids we setSticky'd (cleared on close)
 
@@ -3497,20 +3576,87 @@
         pnList.appendChild(p);
         return;
       }
-      // EVERY parameter + part, no cap — the popup scrolls.
+      // Kelompokkan param menurut grup yang sudah di-resolve (user > ai >
+      // heuristik sheet); header terpisah bikin 200+ baris bisa dinavigasi.
+      // Urutan = kemunculan pertama di sheet (stabil, ikut urutan rig).
+      const groups = [];
+      const byGroup = new Map();
       for (const p of params) {
         if (!p || !p.id || typeof p.min !== 'number' || typeof p.max !== 'number') continue;
-        // Label tampil duluan (nama asli rigger dari cdi3), id mengikuti —
-        // membedakan "Heart eye · ParamEX08" dari nomor telanjang. Banyak
-        // sheet menyimpan label = id sendiri; jangan duplikasi.
-        const shown = (p.label && p.label !== p.id) ? (p.label + ' · ' + p.id) : p.id;
-        appendNoteRow(pnList, p.id, shown, p.group, p.min, p.max, p.def, false,
-          (typeof p.userNote === 'string') ? p.userNote : '');
+        const g = resolveParamGroup(state.lastSheet || {}, p.id, p.group);
+        if (!byGroup.has(g)) { byGroup.set(g, []); groups.push(g); }
+        byGroup.get(g).push(p);
       }
-      for (const p of parts) {
-        if (!p || !p.id) continue;
-        appendNoteRow(pnList, p.id, p.id, 'Bagian (Parts)', 0, 1, (typeof p.def === 'number' ? p.def : 1), true, '');
+      // EVERY parameter + part, no cap — the popup scrolls.
+      for (const g of groups) {
+        const members = byGroup.get(g);
+        appendGroupHeader(pnList, g, members.length);
+        for (const p of members) {
+          // Label tampil duluan (nama asli rigger dari cdi3), id mengikuti —
+          // membedakan "Heart eye · ParamEX08" dari nomor telanjang. Banyak
+          // sheet menyimpan label = id sendiri; jangan duplikasi.
+          const shownLabel = (p.label && p.label !== p.id) ? (p.label + ' · ' + p.id) : p.id;
+          appendNoteRow(pnList, p.id, shownLabel, g, p.min, p.max, p.def, false,
+            (typeof p.userNote === 'string') ? p.userNote : '');
+        }
       }
+      if (parts.length) {
+        appendGroupHeader(pnList, 'Bagian (Parts)', parts.length);
+        for (const p of parts) {
+          if (!p || !p.id) continue;
+          appendNoteRow(pnList, p.id, p.id, 'Bagian (Parts)', 0, 1, (typeof p.def === 'number' ? p.def : 1), true, '');
+        }
+      }
+      applyPnFilter();
+    }
+
+    // Filter live untuk popup Penjelasan Parameter: cocokkan kueri pencarian
+    // pada id/label/grup + ISI catatan yang sedang diedit. Tanpa re-render —
+    // nilai slider & fokus textarea tidak ikut hilang. Header grup yang semua
+    // barisnya tersaring ikut disembunyikan.
+    function applyPnFilter() {
+      if (!pnList) return;
+      const q = (pnSearch && pnSearch.value || '').trim().toLowerCase();
+      let visible = 0;
+      const rows = Array.prototype.slice.call(pnList.querySelectorAll('.pn-row'));
+      for (const row of rows) {
+        const noteEl = row.querySelector('.pn-input');
+        const hay = (row.dataset.hay || '') + ' ' + (noteEl ? noteEl.value : '');
+        const show = !q || hay.toLowerCase().includes(q);
+        row.classList.toggle('pn-hidden', !show);
+        if (show) visible++;
+      }
+      let header = null, anyInGroup = false;
+      for (const el of pnList.children) {
+        if (el.classList.contains('pn-group-header')) {
+          if (header) header.classList.toggle('pn-hidden', !anyInGroup);
+          header = el; anyInGroup = false;
+        } else if (!el.classList.contains('pn-hidden')) {
+          anyInGroup = true;
+        }
+      }
+      if (header) header.classList.toggle('pn-hidden', !anyInGroup);
+      let empty = pnList.querySelector('.pn-empty-search');
+      if (q && !visible) {
+        if (!empty) {
+          empty = document.createElement('div');
+          empty.className = 'pn-empty pn-empty-search';
+          pnList.prepend(empty);
+        }
+        empty.textContent = 'Tidak ada param yang cocok dengan "' + q + '".';
+      } else if (empty) empty.remove();
+    }
+
+    function appendGroupHeader(list, title, count) {
+      const h = document.createElement('div');
+      h.className = 'pn-group-header';
+      const t = document.createElement('span');
+      t.className = 't'; t.textContent = title;
+      const c = document.createElement('span');
+      c.className = 'c'; c.textContent = count + ' param';
+      h.appendChild(t); h.appendChild(c);
+      list.appendChild(h);
+      return h;
     }
 
     // Build one row: id, slider (min..max), live value label, description box.
@@ -3535,6 +3681,8 @@
       row.classList.toggle('saved', !!note.trim());
       row.dataset.id = id;
       row.dataset.part = isPart ? '1' : '';
+      // Haystack pencarian (id + label + grup) — catatan dibaca live saat filter.
+      row.dataset.hay = (id + ' ' + label + ' ' + (group || '')).toLowerCase();
 
       // Description textarea.
       const input = document.createElement('textarea');
@@ -3704,6 +3852,14 @@
     }
 
     if (pnOpenBtn) pnOpenBtn.addEventListener('click', openParamNotesPopup);
+    if (pnSearch) pnSearch.addEventListener('input', applyPnFilter);
+    // Jembatan untuk kode di luar wireUI (mis. prefetchCdiInfo) yang perlu
+    // me-render ulang popup jika kebetulan sedang terbuka.
+    window.__pnRefreshIfOpen = () => {
+      if (pnPopup && !pnPopup.classList.contains('hidden') && state.lastSheet) {
+        renderParamNotesPopup(state.lastSheet);
+      }
+    };
     if (pnCloseBtn) pnCloseBtn.addEventListener('click', closeParamNotesPopup);
     if (pnSaveAll) pnSaveAll.addEventListener('click', saveAllParamNotes);
 
@@ -5926,30 +6082,37 @@
       }
     }
 
-    // 2) Classify params into groups — but ALWAYS keep the model's REAL id as
-    // the label. We must NOT translate/rename (e.g. "ParamAngleX2" -> "AngleX2")
-    // or apply PARAM_META English labels: the user wants the model's own
-    // parameter names shown directly (mix of human names like "Buka Mata Kiri"
-    // and physics ids like "ParamHeadPhysicsY1_1" — both are the model's truth).
+    // 2) Classify params into groups. Sumber label & grup ada dua, dengan
+    // prioritas: (a) cdi3.json milik rigger (Name + GroupId — nama yang ASLI
+    // ditulis pembuat rig, mis. "heart eye", "eyelashes shake4"), (b) heuristik
+    // regex id (physics/Sudut/Mata/…). Jangan pernah translate/rename id:
+    // dua-duanya tetap ditampilkan, label memperkaya, id tetap identitas.
+    const cdiById = (state.cdiInfo && state.cdiInfo.byId) || null;
     const classified = [];
     const used = new Set();
     for (const rp of rawParams) {
-      const label = rp.id;            // real model id, verbatim
-      let group = 'Lainnya';
-      if (/physics/i.test(rp.id)) {
-        group = 'Physics';            // model-driven physics outputs, kept apart
+      const label = (cdiById && cdiById.get(rp.id) && cdiById.get(rp.id).label) || rp.id;
+      let group;
+      if (cdiById && cdiById.get(rp.id) && cdiById.get(rp.id).group) {
+        // Grup rigger via judul turunan label anggota (lihat cdiGroupTitle).
+        group = cdiGroupTitle(cdiById.get(rp.id).group);
       } else {
-        for (const gname in PARAM_META) {
-          if (PARAM_META[gname][rp.id]) { group = gname; break; }
-        }
-        if (group === 'Lainnya') {
-          if (/^ParamAngle/.test(rp.id)) group = 'Sudut (Angle)';
-          else if (/^ParamEye/.test(rp.id)) group = 'Mata (Eye)';
-          else if (/^ParamBrow/.test(rp.id)) group = 'Alis (Eyebrow)';
-          else if (/^ParamMouth/.test(rp.id)) group = 'Mulut (Mouth)';
-          else if (/^ParamBody/.test(rp.id)) group = 'Badan (Body)';
-          else if (/^ParamHair/.test(rp.id)) group = 'Rambut (Hair)';
-          else group = 'Kustom';
+        group = 'Lainnya';
+        if (/physics/i.test(rp.id)) {
+          group = 'Physics';            // model-driven physics outputs, kept apart
+        } else {
+          for (const gname in PARAM_META) {
+            if (PARAM_META[gname][rp.id]) { group = gname; break; }
+          }
+          if (group === 'Lainnya') {
+            if (/^ParamAngle/.test(rp.id)) group = 'Sudut (Angle)';
+            else if (/^ParamEye/.test(rp.id)) group = 'Mata (Eye)';
+            else if (/^ParamBrow/.test(rp.id)) group = 'Alis (Eyebrow)';
+            else if (/^ParamMouth/.test(rp.id)) group = 'Mulut (Mouth)';
+            else if (/^ParamBody/.test(rp.id)) group = 'Badan (Body)';
+            else if (/^ParamHair/.test(rp.id)) group = 'Rambut (Hair)';
+            else group = 'Kustom';
+          }
         }
       }
       const entry = { id: rp.id, min: rp.min, max: rp.max, def: rp.def, group, label };
@@ -6226,7 +6389,8 @@
 
     const allParams = (sheet.params || [])
       .filter(p => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max))
-      .map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def, label: p.label || '' }));
+      .map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def, label: p.label || '',
+        group: resolveParamGroup(sheet, p.id, p.group) }));
     const params = allParams;
     if (!params.length) return { count: 0 };
 

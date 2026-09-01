@@ -80,5 +80,21 @@ ok('server menulis [grup: …] ke baris param prompt',
 ok('server tetap memvalidasi tipe group (string sebelum dipakai)',
   /typeof p\.group==="string"&&p\.group\.trim\(\)/.test(serverSrc));
 
+// ── 5. pose preset bisa dibatalkan + tes ekspresi teradopsi ─────────────────
+section('reset pose preset & tes ekspresi');
+ok('applyPreset mencatat param yang di-sticky (basis tombol Reset Pose)',
+  /setSticky\(id, Math\.max\(lo, Math\.min\(hi, Number\(raw\)\)\), 1\);[\s\S]{0,80}presetPoseParams\.add\(id\);/.test(appSrc));
+ok('opacity part dicatat SEBELUM diubah sebagai dasar pemulihan',
+  /if \(!presetPoseParts\.has\(id\)\) \{[\s\S]{0,400}getPartOpacityById\(id\);/.test(appSrc));
+ok('releasePresetPose menghapus override + memulihkan part + resetEmotion',
+  /function releasePresetPose\(\)[\s\S]{0,900}delete state\.overrides\[id\];[\s\S]{0,700}setPartOpacityById\(id,[\s\S]{0,300}resetEmotion\(\);/.test(appSrc));
+ok('tombol 🔄 Reset Pose ada di atas daftar preset',
+  /resetBtn\.textContent = '🔄 Reset Pose';/.test(appSrc));
+ok('setiap ekspresi teradopsi punya tombol tes (pasang di model)',
+  /testBtn\.textContent = '👁 tes';/.test(appSrc) &&
+  /window\.__live2dAgent\.setExpression\(e\.Name, 1\)/.test(appSrc));
+ok('hint System Prompt menjelaskan scope koneksi (persona tetap di Catatan Karakter)',
+  /Persona karakter jangan di sini: pakai 📝 Catatan Karakter/.test(htmlSrc));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

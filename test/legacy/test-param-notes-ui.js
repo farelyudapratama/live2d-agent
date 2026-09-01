@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+/* test-param-notes-ui.js — popup "Penjelasan Parameter": pencarian + header grup
+ * + label cdi3, dan payload analyze-sheet yang membawa grup.
+ *
+ * WHY THIS EXISTS
+ * Popup memuat 200+ baris slider (lumine: 223) — tanpa pencarian dan tanpa
+ * header grup, navigasinya buta. Label pun harusnya nama ASLI rigger dari
+ * cdi3.json ("heart eye", "eyelashes shake4"), bukan id mentah yang diketik
+ * ulang. Sementara itu payload saran preset AI kini mengirim grup supaya LLM
+ * tahu param mana yang sekeluarga (dan tidak menebak makna dari id).
+ *
+ * Run: node test/legacy/test-param-notes-ui.js
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..', '..');
+const appSrc = fs.readFileSync(path.join(ROOT, 'static', 'js', 'app.js'), 'utf8');
+const htmlSrc = fs.readFileSync(path.join(ROOT, 'static', 'index.html'), 'utf8');
+const cssSrc = fs.readFileSync(path.join(ROOT, 'static', 'css', 'app.css'), 'utf8');
+const serverSrc = fs.readFileSync(path.join(ROOT, 'src', 'server', 'index.ts'), 'utf8');
+
+let pass = 0, fail = 0;
+function ok(name, cond, detail) {
+  if (cond) { pass++; console.log(`  PASS  ${name}${detail ? '  -> ' + detail : ''}`); }
+  else { fail++; console.log(`  FAIL  ${name}${detail ? '  -> ' + detail : ''}`); }
+}
+function section(t) { console.log(`\n${t}`); }
+
+// ── 1. UI pencarian ──────────────────────────────────────────────────────────
+section('kotak pencarian popup');
+ok('input #pn-search ada di index.html (di dalam popup paramnotes)',
+  /id="paramnotes-popup"[\s\S]{0,2000}id="pn-search"/.test(htmlSrc));
+ok('pnSearch ter-wire ke event input',
+  /const pnSearch = \$\('#pn-search'\);/.test(appSrc) &&
+  /pnSearch\.addEventListener\('input', applyPnFilter\)/.test(appSrc));
+ok('applyPnFilter membaca catatan yang sedang diedit (bukan hanya label)',
+  /function applyPnFilter\(\)[\s\S]{0,600}\.pn-input[\s\S]{0,300}pn-hidden/.test(appSrc));
+ok('header grup tanpa baris terlihat ikut disembunyikan',
+  /pn-group-header[\s\S]{0,900}classList\.toggle\('pn-hidden', !anyInGroup\)/.test(appSrc));
+ok('CSS: .pn-hidden & .pn-group-header terdefinisi',
+  /\.pn-row\.pn-hidden \{ display: none; \}/.test(cssSrc) &&
+  /\.pn-group-header \{/.test(cssSrc));
+
+// ── 2. header grup ───────────────────────────────────────────────────────────
+section('header grup dari resolveParamGroup');
+ok('renderParamNotesPopup mengelompokkan param sebelum render',
+  /const byGroup = new Map\(\);[\s\S]{0,600}appendGroupHeader\(pnList, g, members\.length\)/.test(appSrc));
+ok('appendGroupHeader menulis judul + jumlah param',
+  /function appendGroupHeader\(list, title, count\)[\s\S]{0,500}textContent = count \+ ' param'/.test(appSrc));
+ok('Bagian (Parts) tetap jadi grup sendiri di ujung',
+  /appendGroupHeader\(pnList, 'Bagian \(Parts\)', parts\.length\)/.test(appSrc));
+
+// ── 3. label cdi3 ────────────────────────────────────────────────────────────
+section('label + grup asli rigger dari cdi3');
+ok('prefetchCdiInfo dipanggil saat loadModel (fire-and-forget)',
+  /prefetchOverlayGate\(\);[\s\S]{0,120}prefetchCdiInfo\(\)/.test(appSrc));
+ok('cdi3 diambil via DisplayInfo dari model3.json',
+  /FileReferences && m3\.FileReferences\.DisplayInfo/.test(appSrc));
+ok('state.cdiInfo dibuang saat model diganti (id param antar model tak bisa dipertukarkan)',
+  /state\.cdiInfo = null;/.test(appSrc));
+ok('inspectModel memakai label cdi3 bila ada, id mentah sebagai fallback',
+  /const label = \(cdiById && cdiById\.get\(rp\.id\) && cdiById\.get\(rp\.id\)\.label\) \|\| rp\.id;/.test(appSrc));
+ok('judul grup rigger diberi penanda "Rig: " + label anggota',
+  /function cdiGroupTitle\(gid\)[\s\S]{0,500}'Rig: ' \+ named\[0\]/.test(appSrc));
+ok('sheet yang sudah ada di-patch in place saat cdi3 tiba (tanpa menunggu re-inspect)',
+  /p\.label !== info\.label\) \{ p\.label = info\.label; changed = true; \}/.test(appSrc));
+ok('render ulang popup hanya lewat jembatan (scope terpisah, tanpa akses langsung)',
+  /window\.__pnRefreshIfOpen\(\)/.test(appSrc) &&
+  /window\.__pnRefreshIfOpen = \(\) => \{/.test(appSrc));
+
+// ── 4. payload analyze-sheet ─────────────────────────────────────────────────
+section('payload saran preset AI membawa grup');
+ok('allParams menyertakan group hasil resolveParamGroup',
+  /\.map\(p => \(\{ id: p\.id, min: p\.min, max: p\.max, def: p\.def, label: p\.label \|\| '',[\s\S]{0,200}group: resolveParamGroup\(sheet, p\.id, p\.group\) \}\)\)/.test(appSrc));
+ok('server menulis [grup: …] ke baris param prompt',
+  /\[grup: \$\{p\.group\.trim\(\)\.slice\(0, ?40\)\}\]/.test(serverSrc));
+ok('server tetap memvalidasi tipe group (string sebelum dipakai)',
+  /typeof p\.group==="string"&&p\.group\.trim\(\)/.test(serverSrc));
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

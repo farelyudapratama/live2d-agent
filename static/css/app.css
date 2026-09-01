@@ -1279,6 +1279,38 @@ input[type="range"]::-moz-range-thumb {
 }
 .pn-countdown:empty { display: none; }
 
+/* ── Popup param: pencarian + header grup ─────────────────────── */
+.pn-search {
+  margin: 8px 16px 0;
+  width: calc(100% - 32px);
+  padding: 6px 10px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: inherit;
+}
+.pn-search:focus { outline: none; border-color: var(--lamp-soft); }
+.pn-row.pn-hidden { display: none; }
+.pn-group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 16px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pn-group-header .t {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--lamp-soft);
+}
+.pn-group-header .c { font-size: 10px; opacity: .6; }
+.pn-group-header.pn-hidden { display: none; }
+.pn-empty-search { opacity: .7; font-size: 12px; }
+
 .paramnotes-list,
 .preset-editor-body {
   flex: 1;

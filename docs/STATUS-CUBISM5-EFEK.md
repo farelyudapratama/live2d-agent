@@ -4,6 +4,44 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-02 (3) — peta param 神宫白子 + popup param (cari/grup/label cdi3) + grup di payload AI
+
+**Peta param model kedua (神宫白子 / 面饼0, Cubism 5.0):** seluruh 214 param
+dirender MIN vs MAX (freeze persistent + override-per-param + physics hidup +
+**settle 45 frame sebelum tiap render**): **213 hidup, 1 mati** (`Param5` =
+高光/highlight), 13 halus (31–115 px; highlight mata/pupil + aksesori kecil —
+pita, tombol controller). Kontras lumine (83/223 mati) — perbedaan murni rig,
+bukan runtime. PELAJARAN PENTING pengukuran: spring physics rig ini punya
+konstanta waktu panjang — tanpa settle panjang, sisa getar antar render
+menghasilkan noise 5–27 ribu px yang MENUTUPI param mati (hasil "0 mati"
+pertama tanpa settle itu palsu). Nilai param setia + render deterministik
+(tes MIN-vs-MIN dan render-ganda-0-px dipakai sebagai noise floor).
+
+**Popup "📝 Penjelasan Parameter" diperluas:**
+- Kotak pencarian (`#pn-search`): filter live id/label/grup + isi catatan;
+  header grup yang semua barisnya tersaring ikut disembunyikan; tanpa
+  re-render (nilai slider & fokus textarea tidak rusak).
+- Header grup (`appendGroupHeader`): param dikelompokkan via
+  `resolveParamGroup` (user > ai > heuristik), urutan kemunculan pertama;
+  "Bagian (Parts)" tetap seksi terpisah.
+- **Label + grup ASLI rigger dari cdi3.json** (`prefetchCdiInfo`, fire-and-
+  forget saat loadModel): Name ("heart eye", "eyelashes shake4", 猫猫贴纸)
+  menggantikan id mentah sebagai label; GroupId jadi judul grup
+  `Rig: <label0> +N` (lihat `cdiGroupTitle`). Sheet yang sudah ada di-patch
+  in place saat data tiba (label/grup bukan field user); popup terbuka
+  di-render ulang lewat jembatan `window.__pnRefreshIfOpen` (scope wireUI).
+
+**Saran preset AI:** payload analyze-sheet kini menyertakan `group` per param
+(dikirim client, ditulis server ke prompt sebagai `[grup: …]`) supaya LLM
+tahu param mana yang sekeluarga. Ditambah pembersihan data: **95 catatan
+userNote palsu sisa scanner lama** (template "Tidak ada efek visual
+terdeteksi…" — termasuk klaim keliru "ParamAngleX tak dipakai rig" yang
+terbantahkan scan 2026-09-02) dihapus dari sheet lumine; catatan analisis
+asli (128) dipertahankan. Berkas sheet git-ignored (data user).
+
+Guard baru: `test-param-notes-ui.js` (18 assertion). Suite kini **212 unit +
+505 guard, 0 gagal**.
+
 ## UPDATE 2026-09-02 (2) — fitur "🧪 Kalibrasi Efek" DIHAPUS (keputusan user)
 
 User memutuskan menghapus fitur kalibrasi efek: hasil ukurnya sering tidak
@@ -301,11 +339,32 @@ terbukti via flag). Yang benar: binding ada, evaluasinya butuh core
 
 ## Cara verifikasi cepat (kalau sesi baru ragu)
 
-1. `bun run test` → harus 212 unit + 474+ guard, 0 gagal.
+1. `bun run test` → harus 212 unit + 487 guard, 0 gagal.
 2. `bun run src/server/index.ts` → buka 127.0.0.1:8310 → Load lumine →
    geser ParamCollarChange → warna ikat pinggang berubah.
-3. Popup Penjelasan Parameter → 🧪 Kalibrasi Efek → selesai ±30 dtk →
-   "94/223 param tanpa efek visual" + badge muncul.
-4. Load MyModel (Cubism 5.0) → termuat ±300ms.
-5. `window.__live2dAgent.setExpression('exp_heart',1)` → hati melayang
-   di atas kepala (overlay).
+3. Load MyModel (Cubism 5.0) → termuat ±300ms.
+4. `window.__live2dAgent.setExpression('exp_heart',1)` → hati melayang
+   di atas kepala (overlay) — lumine fresh TIDAK punya data visfx di
+   localStorage → gate fail-open → overlay jalan.
+5. Popup Penjelasan Parameter → TIDAK ada tombol 🧪 (fitur dihapus
+   2026-09-02 (2)) dan TIDAK ada badge "🚫 tanpa efek".
+
+## Peta param lumine (ukur 2026-09-02, model fresh dari distribusi)
+
+Model dibandingkan hash MD5 (zip distribusi = folder fresh = copy project,
+byte-identik) lalu SEMUA 223 param dirender MIN vs MAX (freeze persistent +
+override-per-param + physics hidup + pump `im.update` + render ke
+RenderTexture): **140 hidup, 83 mati (0 px), 11 halus (<60 px)**. Pola mati
+= fakta rig VBridger, bukan bug runtime:
+
+- Rantai physics `*Physics(R|L|)X/Y#_{1,4}`: segmen `_1`/`_4` mati, `_2`/`_3`
+  hidup (contoh RX2_3 = 23.512 px vs RX2_1 = 0) — rigger hanya memakai
+  segmen tengah tiap rantai.
+- `ParamEyePhysics8–14, 17, 18` (grup kedua fisika mata: "Pupil Physics2",
+  "eyelashes shake3/4", dst.) mati semua; 17/18 bahkan TIDAK ADA di
+  physics3.json. Grup pertama (1–7, 15–16) hidup tapi halus (eyelash
+  shake1/2 = 11–25 px).
+- Param mulut rigger `MouthFunnel/Shrug/PressLipOpen/PuckerWiden` mati;
+  `EX01/04/06/07/12` mati; `EX02/03/05/10` hidup tapi halus (14–52 px).
+- Implikasi: slider/preset pada param mati memang tidak akan pernah
+  berbuat apa-apa — bukan sesuatu yang bisa diperbaiki app.

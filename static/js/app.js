@@ -694,6 +694,7 @@
       state.visfxMap = visfxLoad();
       wireInteractions();
       detectModelCapabilities();   // adapt emotions/params to THIS model
+      prefetchOverlayGate();       // bindings .exp3 untuk gate overlay-vs-native (fire-and-forget)
       startIdleMotion();           // auto-play model's own motions so it isn't a static T-pose
 
       // Classify this model's motion clips by semantic verb so gestures can be
@@ -1737,12 +1738,106 @@
     }));
   }
 
+  // ── Gate overlay vs efek native (dobel-gambar di rig v5) ────────
+  // Overlay kompensasi dibuat untuk ekspresi yang rig-nya TIDAK menggambar
+  // apa pun (0 piksel via kalibrasi). Setelah shim moc v5→v4 diperbaiki
+  // (try-genuine-first), rig v5 dengan keyform BlendShape kini hidup —
+  // exp_heart dsb. menggambar efeknya sendiri, dan overlay menggambar LAGI
+  // (hati melayang dobel). Gate: kalau ekspresi NATIVE yang cocok ada dan
+  // kalibrasi mengukur efeknya ALIVE, overlay ditekan. Dua sumber data:
+  //   • bindings .exp3 dari disk (GET /api/model/expressions?name=) —
+  //     nama → daftar param id yang ditulis file .exp3 itu. Cukup SATU
+  //     param yang terikat art (kalibrasi bukan 0 piksel) untuk menyimpulkan
+  //     efeknya digambar native.
+  //   • state.visfxMap — hasil kalibrasi efek visual (per param: changed,
+  //     maxDelta). Tanpa kalibrasi = TIDAK TAHU → fail-open (overlay jalan,
+  //     seperti dulu); kegagalan fetch juga fail-open. Menekan overlay hanya
+  //     boleh terjadi dengan bukti terukur, tidak dengan tebakan.
+  // Per model (cache dibuang saat model diganti); nama file .exp3 tidak
+  // diinterpretasi — cuma dicocokkan dengan nama ekspresi yang dipasang.
+  let overlayGateExprs = null;   // { name: [paramId, ...] } | null | undefined (undefined = belum di-fetch)
+  let overlayGateModelPath = null;
+  // Server melaporkan `params` per ekspresi (Id dari isi file .exp3.json —
+  // ditambahkan ke discoverExpressions, backward-compatible).
+  function overlayGateExpBindings() {
+    if (overlayGateModelPath !== (state.modelPath || '')) {
+      overlayGateExprs = undefined;   // model ganti — cache basi
+      overlayGateModelPath = state.modelPath || '';
+    }
+    if (overlayGateExprs !== undefined) return Promise.resolve(overlayGateExprs);
+    const folder = String(state.modelPath || '').split('/')[1];
+    if (!folder) { overlayGateExprs = null; return Promise.resolve(null); }
+    return fetch(API + '/api/model/expressions?name=' + encodeURIComponent(folder))
+      .then(r => (r.ok ? r.json() : null))
+      .then(info => {
+        const map = {};
+        const list = (info && Array.isArray(info.expressions)) ? info.expressions : [];
+        for (const e of list) {
+          if (!e || !e.Name) continue;
+          map[e.Name] = Array.isArray(e.params) ? e.params.filter(Boolean) : [];
+        }
+        overlayGateExprs = map;
+        return map;
+      })
+      .catch(() => { overlayGateExprs = null; return null; });
+  }
+  // MURNI — dipakai guard test (vm), tanpa DOM/window/state. Keputusan gate:
+  //   true  = efek native TERUKUR hidup → overlay ditekan (hindari dobel-gambar)
+  //   false = tidak ada bukti native hidup → overlay jalan (fail-open)
+  // Fail-open adalah arah yang aman: data basi/kurang paling parah membuat
+  // overlay jalan seperti sebelum fix shim — bukan efek yang hilang.
+  //   • bukan efek overlay (resolveFx null) → bukan urusan gate
+  //   • tanpa kalibrasi (visfx null) → tidak tahu → jangan tekan
+  //   • bindings tidak memuat nama ini (mis. alias emosi 'sedih', bukan
+  //     nama .exp3) → bukan ekspresi native → jangan tekan
+  //   • param yang BELUM dikalibrasi diabaikan (bukan bukti); butuh minimal
+  //     satu param terukur changed > 0 untuk menyimpulkan native menggambar.
+  function overlayGateSuppress(name, bindings, visfx, resolveFx) {
+    if (typeof resolveFx !== 'function' || !resolveFx(name)) return false;
+    if (!visfx) return false;
+    const bare = String(name || '').replace(/^user:/, '');
+    const ids = (bindings && Object.prototype.hasOwnProperty.call(bindings, name)) ? bindings[name]
+      : (bindings && Object.prototype.hasOwnProperty.call(bindings, bare)) ? bindings[bare]
+      : null;
+    if (!Array.isArray(ids) || !ids.length) return false;
+    for (const id of ids) {
+      const m = visfx[id];
+      if (!m || typeof m.changed !== 'number') continue;
+      if (m.changed > 0) return true;
+    }
+    return false;
+  }
+  // Sinkron akses ke cache bindings (harus sudah di-fetch; undefined → null).
+  function overlayGateExpBindingsSync() {
+    return overlayGateExprs === undefined ? null : overlayGateExprs;
+  }
+  // Dipanggil fireOverlay: keputusan gate SYNC (jalur ekspresi sync), jadi
+  // bindings di-prefetch saat model dimuat; sebelum tiba → fail-open.
+  function overlayShouldSuppress(name) {
+    const ov = window.__emotionOverlay;
+    return overlayGateSuppress(
+      name,
+      overlayGateExpBindingsSync(),
+      state.visfxMap,
+      (ov && ov._resolve) ? (n) => ov._resolve(n) : null
+    );
+  }
+  function prefetchOverlayGate() {
+    overlayGateExpBindings().catch(() => {});
+  }
+
   // Overlay efek emosi (js/emotion-overlay.js): modul mandiri yang menggambar
   // efek hati/blush/kilau/air mata untuk ekspresi yang rig-nya tidak mengikat
   // art (terukur via kalibrasi). Nama apa pun diteruskan — yang tak cocok
   // diabaikan di dalam modul; kegagalan modul tidak boleh menyentuh ekspresi.
   function fireOverlay(name) {
-    try { window.__emotionOverlay && window.__emotionOverlay.onExpression(name); } catch (e) {}
+    try {
+      if (overlayShouldSuppress(name)) {
+        console.log('[overlay] suppressed (efek native hidup):', name);
+        return;
+      }
+      window.__emotionOverlay && window.__emotionOverlay.onExpression(name);
+    } catch (e) {}
   }
 
   async function applyExpression(name, intensity) {

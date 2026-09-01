@@ -155,7 +155,12 @@ function discoverExpressions(name:string){
   let declared: string[]=[]; try{ const mj=JSON.parse(stripBom(readFileSync(model3,"utf8"))); const ex=mj?.FileReferences?.Expressions; if(Array.isArray(ex)) declared=ex.map((e:any)=>e&&e.File).filter(Boolean); }catch{}
   const declaredSet=new Set(declared.map(f=>String(f).split(sep).join("/")));
   const found:any[]=[];
-  (function walk(d:string,depth:number){ if(depth>6) return; let entries:any[]=[]; try{ entries=readdirSync(d,{withFileTypes:true}); }catch{ return;} for(const e of entries){ const full=join(d,e.name); if(e.isDirectory()){ walk(full,depth+1); continue;} if(!e.name.toLowerCase().endsWith(".exp3.json")) continue; const rel=relative(baseDir,full).split(sep).join("/"); if(rel.startsWith("..")) continue; found.push({ Name:e.name.replace(/\.exp3\.json$/i,""), File:rel, declared:declaredSet.has(rel) }); } })(dir,0);
+  (function walk(d:string,depth:number){ if(depth>6) return; let entries:any[]=[]; try{ entries=readdirSync(d,{withFileTypes:true}); }catch{ return;} for(const e of entries){ const full=join(d,e.name); if(e.isDirectory()){ walk(full,depth+1); continue;} if(!e.name.toLowerCase().endsWith(".exp3.json")) continue; const rel=relative(baseDir,full).split(sep).join("/"); if(rel.startsWith("..")) continue; // params = Id yang ditulis file ekspresi (data rigger, bukan tebakan) —
+  // dipakai client untuk gate overlay-vs-native (dobel-gambar rig v5). File
+  // rusak → params kosong, bukan error: discovery tidak boleh gagal total.
+  let params:string[]=[]; try{ const j=JSON.parse(stripBom(readFileSync(full,"utf8"))); if(Array.isArray(j?.Parameters)) params=j.Parameters.map((p:any)=>p&&typeof p.Id==="string"?p.Id:null).filter(Boolean).slice(0,64); }catch{}
+  params=[...new Set(params)];
+  found.push({ Name:e.name.replace(/\.exp3\.json$/i,""), File:rel, declared:declaredSet.has(rel), params }); } })(dir,0);
   found.sort((a,b)=>a.Name.localeCompare(b.Name));
   return { model3: relative(DATA,model3).split(sep).join("/"), declaredCount:declaredSet.size, expressions:found, orphanCount:found.filter(f=>!f.declared).length };
 }

@@ -4,6 +4,34 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-01 (2) — gate overlay vs efek native (dobel-gambar) SELESAI
+
+Risiko "overlay emosi bisa dobel dengan efek native di rig v5" (disebut di
+bagian konsekuensi fix shim di bawah) kini ditangani dengan data terukur,
+bukan toggle manual:
+
+- **Server**: `discoverExpressions()` (`src/server/index.ts`) kini menyertakan
+  `params` per ekspresi — Id yang ditulis ISI file `.exp3.json` (baca disk,
+  dedupe, file rusak → `[]` bukan error). Backward-compatible: field lama
+  `Name/File/declared` tetap.
+- **Client** (`static/js/app.js`): `fireOverlay()` melewati gate
+  `overlayShouldSuppress()` sebelum menyalakan overlay. Gate = fungsi murni
+  `overlayGateSuppress(name, bindings, visfx, resolveFx)`: overlay DITEKAN
+  hanya bila ekspresi itu memetakan ke efek overlay (via `_resolve`), namanya
+  ada di bindings `.exp3` native, dan minimal SATU param bindings-nya terukur
+  HIDUP di kalibrasi (`changed > 0`). Semua keadaan tanpa bukti (belum
+  dikalibrasi, fetch gagal, alias emosi universal seperti `sedih` yang bukan
+  nama `.exp3`) → **fail-open**: overlay jalan seperti sebelumnya. Kegagalan
+  paling parah = dobel-gambar seperti sebelum fix shim, bukan efek hilang.
+- Bindings di-prefetch saat model dimuat (`prefetchOverlayGate()`, di samping
+  `detectModelCapabilities()`), cache dibuang saat model ganti.
+- Guard baru: `test/legacy/test-overlay-gate.ts` (28 assertion — server
+  in-process, keputusan murni via vm-extract, wiring level sumber).
+  Suite total kini: **212 unit + 514 guard, 0 gagal** (11 suite).
+- Catatan: kalibrasi yang tersimpan SEBELUM fix shim (masa stamp v4) akan
+  membuat gate fail-open untuk semua efek — aman (dobel seperti perilaku lama),
+  tapi re-scan kalibrasi tetap dianjurkan agar gate aktif dan badge akurat.
+
 ## UPDATE 2026-09-01 — AKAR MASALAH SEBENARNYA KETEMU (shim stamp v5→v4)
 
 Kesimpulan lama "butuh core ≥5.2" **TERBUKTI SALAH**. Akar masalah sesungguhnya:
@@ -20,21 +48,20 @@ Bukti A/B hari ini (core 5.1.0 yang sama, bytes moc3 yang sama, terverifikasi sh
   **DIEVALUASI** — mata spiral dizzy tampil, opacity ArtMesh44/225 0→1.
 - **Dengan shim** (app): nol perubahan drawable (`dVtx=0 dOp=0 dMul=0 dScr=0`).
 
-**Fix (sudah diterapkan, belum di-commit):** shim diubah menjadi *try-genuine-first* —
+**Fix (TER-COMMIT — `096175e`):** shim diubah menjadi *try-genuine-first* —
 coba `orig(ab)` dengan stamp asli; hanya kalau core mengembalikan null, stamp
-diturunkan ke 4 lalu dicoba lagi. Moc v5 asli → jalan penuh (fitur BlendShape hidup);
-moc "stamped-5-tapi-layout-v4" → tetap selamat lewat fallback lama. Test suite:
-212 unit + 494 guard, 0 gagal. Verifikasi visual: `setSticky('ParamEX05',1)` →
-mata spiral tampil di app.
+diturunkan ke 4 lalu dicoba lagi. Moc v5 asli → jalan penuh (fitur BlendShape
+hidup); moc "stamped-5-tapi-layout-v4" → tetap selamat lewat fallback lama.
 
 Konsekuensi & catatan lanjutan:
 - **Kesimpulan B di bawah (BlendShape butuh core ≥5.2) TIDAK LAGI BERLAKU** —
   core 5.1.0 mengevaluasi blendshape dengan baik selama stamp moc tidak dipalsukan.
   Opsi #1 di bawah (unduh core ≥5.2) tidak diperlukan untuk efek ini.
 - **Overlay emosi kini bisa dobel dengan efek native** di rig v5 (mis. exp_heart
-  menggambar hati via rig + overlay menggambar hati lagi). Kalau terlihat dobel,
-  gate overlay dengan data kalibrasi (lihat opsi #3 di bawah) atau matikan
-  `overlay.enabled`.
+  menggambar hati via rig + overlay menggambar hati lagi) — **SUDAH DI-GATE**
+  dengan data kalibrasi; lihat "UPDATE 2026-09-01 (2)" di atas. Kalau tetap
+  terlihat dobel di rig tertentu, cek dulu apakah kalibrasi sudah di-scan
+  ulang pasca-fix shim, atau matikan `overlay.enabled`.
 - Kalibrasi 🧪 "94/223 tanpa efek" untuk MyModel kini basi — di-scan saat shim
   masih men-stamp v4. Re-scan kalau mau badge yang akurat.
 
@@ -137,8 +164,10 @@ terbukti via flag). Yang benar: binding ada, evaluasinya butuh core
    hanya multiply yang diterapkan — cukup untuk collar, belum tentu untuk
    efek berbasis screen.
 3. **Overlay vs native**: overlay tetap ON default (config
-   `overlay.enabled`). Kalau kelak core 5.3 membuat efek native hidup,
-   overlay jadi pelengkap opsional — atau digate dengan data kalibrasi.
+   `overlay.enabled`). Gate dengan data kalibrasi kini TERPASANG (lihat
+   "UPDATE 2026-09-01 (2)") — efek yang terukur hidup tidak lagi digambar
+   dobel oleh overlay. Overlay tetap relevan sebagai kompensasi untuk ekspresi
+   yang rig-nya memang tidak mengikat art (rig v4.2, rig distribusi).
 4. Jangan migrasi pixi 8 hanya demi ini: rendering pixi 6 sudah benar;
    migrasi = menulis ulang seluruh integrasi (app.js, motion editor,
    overlay, guard semuanya terikat internal 0.4.0).

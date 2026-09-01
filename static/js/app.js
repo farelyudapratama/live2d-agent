@@ -83,6 +83,10 @@
     // Hasil kalibrasi efek visual (visfxLoad()) — map id → {changed, maxDelta, at}.
     // Null = belum dikalibrasi. Cache UI di localStorage per model, bukan sheet.
     visfxMap: null,
+    // True SELAMA 🧪 kalibrasi efek berjalan: scan menulis MIN/MAX langsung ke
+    // buffer, jadi override guard harus minggir (re-assert sticky/rawDrive akan
+    // menimpa tulisan scan → param yang pernah digeser slider terukur mati palsu).
+    visfxScanning: false,
     // ── Raw parameter drive (Motion Studio) ──
     // { paramId: number } nilai ABSOLUT yang ditulis PALING AKHIR setiap frame
     // dengan weight 1, jadi ia menang atas idle fidget, emosi, dan overrides.
@@ -251,6 +255,9 @@
     if (!im || typeof im.on !== 'function' || im.__overrideGuard) return;
     im.__overrideGuard = true;
     im.on('beforeModelUpdate', () => {
+      // 🧪 kalibrasi sedang menulis MIN/MAX langsung ke buffer — re-assert di
+      // sini akan menimpanya dan param-nya terukur "mati" palsu.
+      if (state.visfxScanning) return;
       const cm = coreModel();
       if (!cm) return;
       for (const id in state.overrides) {
@@ -284,7 +291,12 @@
   // supaya skema v4 dan aturan "angka hanya dari engine" tidak tersentuh;
   // hilangnya cache hanya berarti slider kembali tanpa label, bukan data loss.
   function visfxStoreKey(modelKey) {
-    return 'l2d_visfx_' + (modelKey || 'default');
+    // v2 — cache lama (kunci 'l2d_visfx_…') dihasilkan scanner yang ternoda
+    // override-hold + idle-restart, dan/atau diambil saat shim stamp moc
+    // v5→v4 masih membuta (param BlendShape terukur mati palsu — 171/223
+    // param rig v5 bertipe ini). Data lama otomatis tak terbaca; scan ulang
+    // sekali untuk badge yang akurat.
+    return 'l2d_visfx_v2_' + (modelKey || 'default');
   }
   function visfxIsDead(map, id) {
     return !!(map && map[id] && map[id].changed === 0);
@@ -316,9 +328,21 @@
   }
   // Scan penuh: render tiap param di MIN dan MAX, hitung piksel yang berubah.
   // Butuh sheet (sumber range) — "Inspeksi Model dulu" kalau kosong. Model
-  // dibekukan selama scan (persistent freeze) lalu dilepas; slider yang sedang
-  // dipegang user tetap dihormati (override konstan di kedua render = tidak
-  // memengaruhi selisih). Hasil: map id → {changed, maxDelta, at}.
+  // dibekukan selama scan (persistent freeze) lalu dilepas. Hasil: map id →
+  // {changed, maxDelta, at}. Dua penulis parameter harus DIBUNGKAM selama scan,
+  // kalau tidak param tertentu terukur "mati" palsu (0 piksel) padahal hidup:
+  //  (1) override guard — sticky overrides (slider yang pernah digeser,
+  //      eye-follow, aksesoris) + rawDrive di-re-assert tiap frame pada
+  //      beforeModelUpdate, menimpa tulisan MIN/MAX scan. Flag visfxScanning
+  //      membuat guard minggir. (Catatan lama "override konstan di kedua
+  //      render = tidak memengaruhi selisih" hanya benar untuk param LAIN —
+  //      untuk param yang discan sendiri, override-lah yang tampil.)
+  //  (2) auto-restart grup Idle — motionManager.update me-restart idle saat
+  //      queue kosong; evaluasi CubismMotion dimulai dengan loadParameters()
+  //      yang MENGHAPUS tulisan scan lalu menulis kurva motion. Param yang
+  //      dianimasikan idle terukur mati palsu di model yang mendeklarasikan
+  //      grup Idle di model3.json (lumine tidak punya — model lain ada).
+  //      Grup idle di-stash selama scan, dipulihkan di finally.
   async function runVisualCalibration(statusEl) {
     const im = state.model && state.model.internalModel;
     const cm = coreModel();
@@ -350,6 +374,10 @@
     };
 
     editorFreezeApi && editorFreezeApi.freeze && editorFreezeApi.freeze(null, true);
+    const mm = im.motionManager;
+    const savedIdleGroup = (mm && mm.groups) ? mm.groups.idle : undefined;
+    if (mm && mm.groups) mm.groups.idle = null;   // startRandomMotion(null) = no-op
+    state.visfxScanning = true;
     const map = {};
     try {
       for (let i = 0; i < params.length; i++) {
@@ -375,6 +403,8 @@
         if ((i & 3) === 3) await new Promise(r => setTimeout(r, 0));
       }
     } finally {
+      state.visfxScanning = false;
+      if (mm && mm.groups) mm.groups.idle = savedIdleGroup;
       editorFreezeApi && editorFreezeApi.unfreeze && editorFreezeApi.unfreeze();
       try { rt.destroy(true); } catch (e) {}
     }

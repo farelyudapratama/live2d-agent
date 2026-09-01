@@ -3308,6 +3308,29 @@
       const box = shEls.list;
       if (!box) return;
       box.textContent = '';
+      // Tombol Reset Pose selalu tersedia di atas daftar — membatalkan SEMUA
+      // pose yang dipasang preset (sticky override + part + ekspresi) tanpa
+      // harus mencari param satu-satu di popup.
+      const resetRow = document.createElement('div');
+      resetRow.className = 'preset-reset-row';
+      const resetBtn = document.createElement('button');
+      resetBtn.type = 'button';
+      resetBtn.className = 'mini-btn';
+      resetBtn.style.cssText = 'width:auto;padding:4px 12px;font-size:11px';
+      resetBtn.textContent = '🔄 Reset Pose';
+      resetBtn.title = 'Lepas semua pose preset yang sedang menempel (param, part, ekspresi) dan kembalikan kendali ke animasi idle.';
+      resetBtn.addEventListener('click', () => {
+        if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
+        const n = releasePresetPose();
+        setSheetStatus(n ? 'pose dilepas (' + n + ' target) — idle kembali' : 'tidak ada pose preset yang menempel', n ? 'ok' : '');
+      });
+      resetRow.appendChild(resetBtn);
+      const resetHint = document.createElement('span');
+      resetHint.className = 'preset-reset-hint';
+      resetHint.textContent = 'membatalkan semua Terap/Coba yang sedang menempel';
+      resetRow.appendChild(resetHint);
+      box.appendChild(resetRow);
+
       const items = resolvePresets(sheet, sheetCatFilter);
       if (!items.length) {
         const p = document.createElement('div');
@@ -3351,7 +3374,7 @@
             if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
             releasePresetPreview();
             const ok = applyPreset(p, p.category);
-            setSheetStatus(ok ? 'diterapkan: ' + p.name : 'tidak ada target valid di preset ini',
+            setSheetStatus(ok ? 'diterapkan: ' + p.name + ' — batal via 🔄 Reset Pose' : 'tidak ada target valid di preset ini',
               ok ? 'ok' : 'err');
           });
           row.appendChild(applyBtn);
@@ -3369,7 +3392,7 @@
             if (!state.model) { setSheetStatus('load model dulu', 'err'); return; }
             releasePresetPreview();
             const ok = applyPreset(p, p.category);
-            setSheetStatus(ok ? 'pratinjau: ' + p.name + ' (bisa dikembalikan)' : 'tidak ada target valid di preset ini',
+            setSheetStatus(ok ? 'pratinjau: ' + p.name + ' (batal via 🔄 Reset Pose)' : 'tidak ada target valid di preset ini',
               ok ? '' : 'err');
           });
           row.appendChild(tryBtn);
@@ -4207,6 +4230,19 @@
           lbl.className = 'p-name'; lbl.htmlFor = cb.id;
           lbl.textContent = e.Name + (e.declared ? ' (terdaftar)' : ' (yatim)');
           row.appendChild(cb); row.appendChild(lbl);
+          // Tes langsung: pasang ekspresi ini di model supaya ceklis bukan
+          // satu-satunya yang bisa dilakukan — user bisa LIHAT dulu efeknya
+          // sebelum memutuskan mengadopsi/menonaktifkan.
+          const testBtn = document.createElement('button');
+          testBtn.type = 'button'; testBtn.className = 'p-act';
+          testBtn.textContent = '👁 tes';
+          testBtn.title = 'Pasang ekspresi ini di model untuk melihat efeknya (ekspresi berikutnya otomatis menggantikan).';
+          testBtn.addEventListener('click', () => {
+            if (!state.model) { setAdoptionMsg('Load model dulu.', 'err'); return; }
+            window.__live2dAgent.setExpression(e.Name, 1);
+            setSheetStatus('ekspresi dipasang: ' + e.Name, '');
+          });
+          row.appendChild(testBtn);
           adEls.list.appendChild(row);
         }
       } catch (e) {
@@ -4888,6 +4924,45 @@
   // time, and ids not present in the sheet are dropped. Neither the stored file
   // nor the LLM is trusted to have stayed in range: min/max come from the engine
   // only, exactly as in Fase 0.
+  // ── Pelacak pose preset (untuk tombol Reset Pose) ──
+  // Terap/Coba/agent memasang sticky override lewat applyPreset(); tanpa
+  // pencatatan ini tidak ada cara membatalkannya — override guard me-re-assert
+  // nilainya tiap frame sehingga pose kelihatan TERKUNCI dan idle tidak bisa
+  // mengambil alih param itu lagi (keluhan user 2026-09-02). Parts dilacak
+  // berpasangan dengan opacity SEBELUM diubah supaya bisa dikembalikan persis.
+  const presetPoseParams = new Set();
+  const presetPoseParts = new Map();   // partId → opacity sebelumnya (null = tak terbaca)
+
+  // Lepas SEMUA pose yang dipasang preset: hapus sticky override (idle langsung
+  // mengambil alih lagi dan men-ease dari nilai sekarang — tanpa snap), pulihkan
+  // opacity part ke nilai semula (fallback: def dari sheet), dan padamkan
+  // ekspresi/overlay. Mengembalikan jumlah target yang dilepas.
+  function releasePresetPose() {
+    if (!state.model) return 0;
+    let released = 0;
+    for (const id of presetPoseParams) {
+      if (id in state.overrides) { try { delete state.overrides[id]; released++; } catch (e) {} }
+    }
+    presetPoseParams.clear();
+    if (presetPoseParts.size) {
+      try {
+        const cm = state.model.internalModel.coreModel;
+        const gm = (cm && cm.getModel) ? cm.getModel() : null;
+        const partDefs = new Map(((state.lastSheet && state.lastSheet.parts) || [])
+          .map(p => [(p && p.id) || p, typeof p.def === 'number' ? p.def : 1]));
+        for (const [id, prev] of presetPoseParts) {
+          const v = (prev != null && Number.isFinite(prev)) ? prev
+            : (partDefs.has(id) ? partDefs.get(id) : 1);
+          try { cm.setPartOpacityById(id, Math.max(0, Math.min(1, v))); released++; } catch (e) {}
+        }
+      } catch (e) {}
+      presetPoseParts.clear();
+    }
+    resetEmotion();
+    state.activeProperty = 'default';
+    return released;
+  }
+
   function applyPreset(nameOrPreset, category) {
     if (!state.model) return false;
     const preset = (typeof nameOrPreset === 'string')
@@ -4908,12 +4983,25 @@
       const lo = Number.isFinite(meta.min) ? meta.min : -1;
       const hi = Number.isFinite(meta.max) ? meta.max : 1;
       setSticky(id, Math.max(lo, Math.min(hi, Number(raw))), 1);
+      presetPoseParams.add(id);
       applied++;
     }
     for (const [id, raw] of Object.entries(preset.parts || {})) {
       if (!partIds.has(id)) continue;
       const v = Math.max(0, Math.min(1, Number(raw)));   // opacity is always 0..1
-      try { state.model.internalModel.coreModel.setPartOpacityById(id, v); applied++; }
+      try {
+        const cm = state.model.internalModel.coreModel;
+        if (!presetPoseParts.has(id)) {
+          // Catat opacity SEBELUM diubah — dasar pemulihan Reset Pose.
+          let prev = null;
+          try {
+            const gm = (cm && cm.getModel) ? cm.getModel() : null;
+            if (gm && typeof gm.getPartOpacityById === 'function') prev = gm.getPartOpacityById(id);
+          } catch (e) {}
+          presetPoseParts.set(id, prev);
+        }
+        cm.setPartOpacityById(id, v); applied++;
+      }
       catch (e) { /* part vanished with a model swap — ignore */ }
     }
     state.impulse = Math.min(1.0, state.impulse + 0.25);

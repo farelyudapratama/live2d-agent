@@ -4,6 +4,34 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-02 (2) — fitur "🧪 Kalibrasi Efek" DIHAPUS (keputusan user)
+
+User memutuskan menghapus fitur kalibrasi efek: hasil ukurnya sering tidak
+cocok dengan yang terlihat (param yang bergerak halus terukur "mati" di
+beberapa model), dan param yatim yang memang tidak bergerak justru membuat
+badge-nya terasa tak berguna. Yang dihapus:
+
+- Tombol `#btn-visfx-calibrate` + span `#visfx-status` (index.html) + CSS
+  `.dead-param`/`.pn-dead-badge` (app.css).
+- `runVisualCalibration()` + `VISFX_SETTLE_FRAMES` + badge di
+  `buildParamSliderRow` + status popup (app.js).
+- `visfxIsDead`/`visfxSummarize`/`filterVisfxDead`/`visfxSave` — saran preset
+  AI kembali mengirim SEMUA param (data yang tidak dipercaya justru bisa
+  menyembunyikan param yang benar-benar hidup dari LLM).
+- Guard `test-legacy/test-visual-calibration.js` dihapus (suites 11 → 10;
+  total kini 212 unit + 487 guard, 0 gagal).
+
+Yang DIPERTAHANKAN: gate overlay-vs-native (`overlayGateSuppress`) tetap
+membaca `state.visfxMap` — kini hanya sebagai cache LEGACY dari localStorage
+v2 warisan scan lama (tidak ada scanner baru; tidak pernah ditulis ulang).
+Tanpa data → fail-open (overlay jalan seperti dulu; terverifikasi di
+browser: lumine tanpa entri visfx → overlay heart tetap menyala, bindings
+`exp_heart` → ParamEX04/05/08/09/11 tetap terbaca dari server). Penjelasan
+param yang tidak bergerak kini manual: `ParamEyePhysics18` ("eyelashes
+shake4") TIDAK ADA sama sekali di `lumine.physics3.json` (outputs hanya
+EyePhysics1–16) dan tidak terikat art — param yatim rig distribusi; tidak
+ada kode apa pun yang bisa menggerakkannya. Kelas yang sama: RX1_1, EX02-11.
+
 ## UPDATE 2026-09-02 — freeze edit TIDAK menol physics lagi
 
 Lanjutan akar masalah yang sama: bukan cuma scanner — **freeze edit manual**

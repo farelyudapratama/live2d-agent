@@ -4,7 +4,41 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
-## Ringkasan satu paragraf
+## UPDATE 2026-09-01 — AKAR MASALAH SEBENARNYA KETEMU (shim stamp v5→v4)
+
+Kesimpulan lama "butuh core ≥5.2" **TERBUKTI SALAH**. Akar masalah sesungguhnya:
+**`patchCubismCore()` di `static/js/app.js`** — shim kompatibilitas warisan core
+4.2.2 yang menurunkan stamp versi moc3 `5 → 4` secara MEMBUTA sebelum
+`Moc.fromArrayBuffer`. Akibatnya moc3 v5 (lumine rig 5.x, hash e07d58a8) di-revive
+sebagai moc **v4** → tabel keyform BlendShape (ParameterType_BlendShape=1) tidak
+pernah diinisialisasi → EX02–05/08–11 tidak pernah terevaluasi walau nilai
+parameternya tertulis benar (terverifikasi: `ex05:1` di buffer, opacity
+ArtMesh44/225 tetap 0).
+
+Bukti A/B hari ini (core 5.1.0 yang sama, bytes moc3 yang sama, terverifikasi sha):
+- **Tanpa shim** (halaman minimal HTML + probe Bun): keyform BlendShape
+  **DIEVALUASI** — mata spiral dizzy tampil, opacity ArtMesh44/225 0→1.
+- **Dengan shim** (app): nol perubahan drawable (`dVtx=0 dOp=0 dMul=0 dScr=0`).
+
+**Fix (sudah diterapkan, belum di-commit):** shim diubah menjadi *try-genuine-first* —
+coba `orig(ab)` dengan stamp asli; hanya kalau core mengembalikan null, stamp
+diturunkan ke 4 lalu dicoba lagi. Moc v5 asli → jalan penuh (fitur BlendShape hidup);
+moc "stamped-5-tapi-layout-v4" → tetap selamat lewat fallback lama. Test suite:
+212 unit + 494 guard, 0 gagal. Verifikasi visual: `setSticky('ParamEX05',1)` →
+mata spiral tampil di app.
+
+Konsekuensi & catatan lanjutan:
+- **Kesimpulan B di bawah (BlendShape butuh core ≥5.2) TIDAK LAGI BERLAKU** —
+  core 5.1.0 mengevaluasi blendshape dengan baik selama stamp moc tidak dipalsukan.
+  Opsi #1 di bawah (unduh core ≥5.2) tidak diperlukan untuk efek ini.
+- **Overlay emosi kini bisa dobel dengan efek native** di rig v5 (mis. exp_heart
+  menggambar hati via rig + overlay menggambar hati lagi). Kalau terlihat dobel,
+  gate overlay dengan data kalibrasi (lihat opsi #3 di bawah) atau matikan
+  `overlay.enabled`.
+- Kalibrasi 🧪 "94/223 tanpa efek" untuk MyModel kini basi — di-scan saat shim
+  masih men-stamp v4. Re-scan kalau mau badge yang akurat.
+
+## Ringkasan satu paragraf (historis — dibuat sebelum akar masalah ketemu)
 
 Dukungan model Cubism 5.x dan efek rig dituntaskan sebagian besar: (1)
 **override guard** membuat nilai slider/pose bertahan 100% frame (dulu 0%),

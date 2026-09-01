@@ -14,6 +14,7 @@ import { execSync } from "child_process";
 // v1 sibling repo — the server must be self-contained.
 // @ts-ignore — modul TS client, dipakai bareng oleh server & bundle browser
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
+import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 
 const PORT = Number(process.env.PORT) || 8310;
 const ROOT = import.meta.dir;
@@ -145,7 +146,11 @@ function findCdi3(rootDir:string, depth=0): string|null{
 function discoverExpressions(name:string){
   const dir=join(MODEL_DIR,name||"");
   if(!dir.startsWith(MODEL_DIR)||!existsSync(dir)) throw new Error("not found");
-  const model3=findModel3(dir); if(!model3) throw new Error("no model3.json in folder");
+  let model3=findModel3(dir);
+  // Auto-Rescue: folder tanpa manifest — pakai blueprint rakitan sebagai daftar ekspresi.
+  if(!model3){ const bp=buildRescueBlueprint(dir); if(!bp) throw new Error("no model3.json in folder");
+    const ex=(bp.manifest.FileReferences.Expressions||[]).map((e:any)=>({ Name:e.Name, File:e.File, declared:true }));
+    return { model3: "model/"+(name||"")+"/"+RESCUE_FILENAME, declaredCount: ex.length, expressions: ex, orphanCount: 0 }; }
   const baseDir=dirname(model3);
   let declared: string[]=[]; try{ const mj=JSON.parse(stripBom(readFileSync(model3,"utf8"))); const ex=mj?.FileReferences?.Expressions; if(Array.isArray(ex)) declared=ex.map((e:any)=>e&&e.File).filter(Boolean); }catch{}
   const declaredSet=new Set(declared.map(f=>String(f).split(sep).join("/")));
@@ -605,15 +610,22 @@ async function handleSheetGet(req:Request):Promise<Response>{
 function handleListModels():Response{
   try{
     if(!existsSync(MODEL_DIR)) mkdirSync(MODEL_DIR,{recursive:true});
-    const folders=readdirSync(MODEL_DIR,{withFileTypes:true}).filter(d=>d.isDirectory()).map(d=>d.name).filter(name=>{ const dir=join(MODEL_DIR,name); try{ return !!findModel3(dir);}catch{return false;}}).sort();
-    return json({models:folders});
+    const folders=readdirSync(MODEL_DIR,{withFileTypes:true}).filter(d=>d.isDirectory()).map(d=>d.name);
+    // Auto-Rescue: folder tanpa manifest yang punya .moc3 ikut terdaftar —
+    // manifest virtualnya disajikan route /model/<folder>/__rescue__.model3.json.
+    const usable: string[]=[];
+    for(const name of folders){ const dir=join(MODEL_DIR,name); try{ if(findModel3(dir)||buildRescueBlueprint(dir)) usable.push(name); }catch{} }
+    return json({models:usable.sort()});
   }catch(e:any){ return json({error:e.message},500); }
 }
 function handleModelPath(req:Request):Response{
   try{
     const name=new URL(req.url).searchParams.get("name"); const dir=join(MODEL_DIR,name||"");
     if(!dir.startsWith(MODEL_DIR)||!existsSync(dir)) throw new Error("not found");
-    const abs=findModel3(dir); if(!abs) throw new Error("no model3.json in folder");
+        let abs=findModel3(dir);
+    // Auto-Rescue: folder tanpa manifest → sajikan blueprint virtual.
+    if(!abs){ const bp=buildRescueBlueprint(dir); if(!bp) throw new Error("no model3.json in folder");
+      return json({ path: "model/"+(name||"")+"/"+RESCUE_FILENAME, rescued: true }); }
     const rel=relative(DATA,abs).split(sep).join("/"); return json({path:rel});
   }catch(e:any){ return json({error:e.message},404); }
 }
@@ -774,6 +786,18 @@ server = Bun.serve({
     // Unknown /api/* → 404 JSON, BUKAN SPA fallback (v1 semantics)
     if(pathname.startsWith("/api/")) return json({error:"not found"},404);
     if(pathname==="/") pathname="/index.html";
+    // Auto-Rescue: manifest virtual model/<folder>/__rescue__.model3.json —
+    // dirakit di memori untuk folder yang tidak punya .model3.json sungguhan.
+    {
+      const m=decodeURIComponent(pathname).match(/^\/model\/([^/]+)\/__rescue__\.model3\.json$/i);
+      if(m){
+        const dir=join(MODEL_DIR,m[1]);
+        if(!dir.startsWith(MODEL_DIR)) return new Response("Forbidden",{status:403});
+        const bp=buildRescueBlueprint(dir);
+        if(!bp) return json({error:"folder ini tidak bisa dirakit (tidak ada .moc3, atau manifest sudah ada)"},404);
+        return json(bp.manifest);
+      }
+    }
     const staticResp=serveStatic(pathname);
     if(staticResp) return staticResp;
     // SPA fallback HANYA untuk path tanpa ekstensi (rute UI). Asset JS/CSS/

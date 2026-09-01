@@ -1548,6 +1548,10 @@
                 state.model.internalModel.motionManager.expressionManager;
     if (mgr && typeof mgr.resetExpression === 'function') mgr.resetExpression();
     setEmotionTargets({});
+    // Overlay efek emosi app-level ikut padam — resetEmotion adalah satu-satunya
+    // titik yang SELALU dilewati setiap kali ekspresi kembali ke normal (native,
+    // synthetic, maupun preset).
+    try { window.__emotionOverlay && window.__emotionOverlay.clear(); } catch (e) {}
   }
 
   // ─── Adaptive model capabilities (for user-imported models) ────
@@ -1723,6 +1727,14 @@
     }));
   }
 
+  // Overlay efek emosi (js/emotion-overlay.js): modul mandiri yang menggambar
+  // efek hati/blush/kilau/air mata untuk ekspresi yang rig-nya tidak mengikat
+  // art (terukur via kalibrasi). Nama apa pun diteruskan — yang tak cocok
+  // diabaikan di dalam modul; kegagalan modul tidak boleh menyentuh ekspresi.
+  function fireOverlay(name) {
+    try { window.__emotionOverlay && window.__emotionOverlay.onExpression(name); } catch (e) {}
+  }
+
   async function applyExpression(name, intensity) {
     if (!state.model) return;
 
@@ -1791,6 +1803,7 @@
         // Punctuate the emotion change with a clip whose verb matches it, so the
         // BODY agrees with the face instead of drifting on the old gesture.
         playEmotionClip(name);
+        fireOverlay(name);
         $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
         console.log('[Live2D] Universal emotion (native) ->', name, 'intensity:', intensity);
         return;
@@ -1805,6 +1818,10 @@
       }
       state.activeEmotion = name; state.activeProperty = 'default';
       resetEmotion();
+      // Overlay DIPASANG SEBELUM model.expression(): justru untuk ekspresi
+      // yang tidak terdaftar di model3.json (art-nya tidak diekspor) call
+      // expression() melempar — dan itulah kasus yang overlay-nya wajib jalan.
+      fireOverlay(name);
       try {
         await state.model.expression(name);
         $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
@@ -1828,9 +1845,16 @@
         const preset = state.supportedEmotions[name];
         setEmotionTargets(preset, intensity);
         playEmotionClip(name);   // body follows the face (see native branch)
+        fireOverlay(name);
       }
       $$('.expr-btn').forEach(b => b.classList.toggle('active', b.dataset.expr === name));
       console.log('[Live2D] Synthetic emotion ->', name, 'intensity:', intensity);
+    } else {
+      // Nama tak dikenal di mode synthetic (mis. 'exp_heart' — efek yang
+      // rig-nya tidak mengikat art, 0 piksel via kalibrasi): wajah tidak
+      // bisa diubah, dan justru INILAH kasus overlay kompensasi wajib.
+      // fireOverlay menyeleksi sendiri nama mana yang cocok tabelnya.
+      fireOverlay(name);
     }
   }
 
@@ -1900,6 +1924,8 @@
         MOTION.enabled = !!d.motion.enabled;
         if (typeof d.motion.gain === 'number') MOTION.gain = d.motion.gain;
       }
+      // Overlay efek emosi (js/emotion-overlay.js) — config.json "overlay".
+      if (d.overlay) window.__overlayCfg = Object.assign({}, window.__overlayCfg || {}, d.overlay);
     } catch (e) { /* pakai default */ }
   }
   loadAppConfig();
@@ -2196,6 +2222,7 @@
       playEmotionClip,
       clipIsPlaying,
       applyExpression,
+      renderer: app.renderer,   // untuk overlay efek emosi (ukur anchor kepala)
     };
 
     function sendBubble() {

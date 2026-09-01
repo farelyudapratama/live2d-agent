@@ -184,7 +184,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="GET" && path==="/api/config"){
     const cfg=config.load(); const conns=cfg.connections.map(c=>{ const o={...c} as any; if(o.apiKey && !o.apiKey.startsWith("MASUKKAN")) o.apiKey=config.maskKey(o.apiKey); o.roles=normalizeRoles(o.roles);   // selalu array — UI tak perlu cek undefined
     return o; });
-    return json({ activeId:cfg.activeId, connections:conns, tts:cfg.tts||{}, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{} });
+    return json({ activeId:cfg.activeId, connections:conns, tts:cfg.tts||{}, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{}, overlay:cfg.overlay||{} });
   }
   if(method==="POST" && path==="/api/config") return handleConfigPost(req);
   if(method==="POST" && path==="/api/test") return handleTestConnection(req);

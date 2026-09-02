@@ -369,6 +369,8 @@
   fitCanvas();
   window.addEventListener('resize', () => {
     fitCanvas();
+    // Latar gambar harus cover ulang ke ukuran stage yang baru.
+    try { fitStageBgImage(state.modelConfig && state.modelConfig.bgDim); } catch (e) {}
     if (state.model) {
       // Re-frame through frameModel() instead of slamming the model to the raw
       // screen CENTER. The model's anchor is top-left (0,0), so assigning
@@ -1007,14 +1009,69 @@
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 
-    // Scroll to zoom — scale AROUND the current screen-center of the model,
-    // so zooming out reveals the full body instead of shrinking toward the head.
+    // Scroll to zoom — scale AROUND the cursor, easing menuju target.
+    // Keluhan lama: langkah 0.08 tetap + clamp 0.15..3 terasa "jeglak" (lonjak,
+    // mentok), dan zoom selalu di sekitar tengah model sehingga titik di bawah
+    // kursor lari. Kini: faktor MULTIPLIKATIF per tikungan wheel (natural,
+    // responsif di rentang mana pun), target di-easing tiap frame (halus),
+    // rentang 0.05..8 (bebas dekat/mesra), dan zoom anchor = titik kursor.
+    let zoomTarget = null;
+    function applyZoomAround(cursor) {
+      const m = state.model;
+      if (!m) return;
+      const cur = m.scale.x;
+      if (!Number.isFinite(zoomTarget)) return;
+      const next = cur + (zoomTarget - cur) * 0.25;   // ease 25%/frame
+      if (Math.abs(zoomTarget - next) < Math.max(0.001, zoomTarget * 0.001)) {
+        setScaleAroundPoint(zoomTarget, cursor);
+        zoomTarget = null;
+        return;
+      }
+      setScaleAroundPoint(next, cursor);
+    }
+    function setScaleAroundPoint(newScale, cursor) {
+      const m = state.model;
+      if (!m) return;
+      const clamped = Math.max(0.05, Math.min(8, newScale));
+      // anchor: kursor (posisi kanvas) bila diberikan, bila tidak tengah model
+      const local = (cursor && m.toLocal)
+        ? m.toLocal(new PIXI.Point(cursor.x, cursor.y))
+        : null;
+      const wx = cursor ? cursor.x : m.x + m.width * m.scale.x / 2;
+      const wy = cursor ? cursor.y : m.y + m.height * m.scale.y / 2;
+      const k = clamped / m.scale.x;
+      m.scale.set(clamped);
+      if (local) {
+        // jaga titik di bawah kursor tetap di bawah kursor: pos = cursor - local*k
+        m.x = wx - local.x * k;
+        m.y = wy - local.y * k;
+      } else {
+        const mw = m.width * clamped, mh = m.height * clamped;
+        m.x = wx - mw / 2;
+        m.y = wy - mh / 2;
+      }
+      state.scale = clamped;
+      state.basePos.x = m.x;
+      state.basePos.y = m.y;
+      if ($('#sl-scale')) { $('#sl-scale').value = clamped.toFixed(2); $('#val-scale').textContent = clamped.toFixed(2); }
+    }
+    // Easing zoom dijalankan tiap frame rAF utama supaya halus walau event
+    // wheel datang beruntun (trackpad) — akhirnya setScaleAroundPoint yang
+    // menulis basePos, jadi idle sway tidak menariknya balik.
+    (function zoomEaseLoop() {
+      if (zoomTarget !== null && state.model) {
+        applyZoomAround(state._zoomCursor || null);
+      }
+      requestAnimationFrame(zoomEaseLoop);
+    })();
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       if (!state.model) return;
-      const delta = e.deltaY > 0 ? -0.08 : 0.08;
-      const newScale = Math.max(0.15, Math.min(3, state.model.scale.x + delta));
-      setScaleAroundCenter(newScale);
+      const rect = canvas.getBoundingClientRect();
+      const factor = Math.pow(1.0016, -e.deltaY);   // 1 tikungan wheel ≈ ±12%
+      const cur = state.model.scale.x;
+      zoomTarget = Math.max(0.05, Math.min(8, (zoomTarget != null ? zoomTarget : cur) * factor));
+      state._zoomCursor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       if (state._showFullBtn) state._showFullBtn();
     }, { passive: false });
 
@@ -1055,18 +1112,20 @@
   }
 
   // ─── Framing (top-level so loadModel + interactions can both call it) ───
-  // Zoom while keeping the model's on-screen center fixed (no head-only shrink).
+  // Zoom keeping the model's on-screen center fixed (dipakai slider & agent).
   function setScaleAroundCenter(newScale) {
     const m = state.model;
     if (!m) return;
-    const mw = m.width * m.scale.x, mh = m.height * m.scale.y;
-    const cx = m.x + mw / 2, cy = m.y + mh / 2;   // anchor is top-left (0,0)
-    m.scale.set(newScale);
-    const nw = m.width * newScale, nh = m.height * newScale;
+    const clamped = Math.max(0.05, Math.min(8, newScale));
+    const cx = m.x + m.width * m.scale.x / 2, cy = m.y + m.height * m.scale.y / 2;
+    m.scale.set(clamped);
+    const nw = m.width * clamped, nh = m.height * clamped;
     m.x = cx - nw / 2;
     m.y = cy - nh / 2;
-    state.scale = newScale;
-    if ($('#sl-scale')) { $('#sl-scale').value = newScale.toFixed(2); $('#val-scale').textContent = newScale.toFixed(2); }
+    state.scale = clamped;
+    state.basePos.x = m.x;     // idle sway anchor ikut — pose tidak "tertarik" balik
+    state.basePos.y = m.y;
+    if ($('#sl-scale')) { $('#sl-scale').value = clamped.toFixed(2); $('#val-scale').textContent = clamped.toFixed(2); }
   }
 
   // Frame the model: 'upper' (head+shoulders, default), 'full' (whole body), 'reset'.
@@ -2873,7 +2932,17 @@
       btn: $('#btn-save-cfg'),
       test: $('#btn-test-voice'),
       status: $('#cfg-status'),
+      bgColor: $('#cfg-bg-color'),
+      bgDim: $('#cfg-bg-dim'),
+      bgDimOut: $('#cfg-bg-dim-out'),
+      bgFile: $('#cfg-bg-file'),
+      bgPick: $('#btn-bg-pick'),
+      bgClear: $('#btn-bg-clear'),
+      bgReset: $('#btn-bg-reset'),
     };
+    // Draft gambar latar: undefined = pakai nilai tersimpan; dataURL = ganti;
+    // 'CLEAR' = hapus. Dipakai readConfigForm() saat tombol Simpan ditekan.
+    let bgImageDraft;
     function setCfgStatus(msg, kind) {
       if (!cfgEls.status) return;
       cfgEls.status.textContent = msg;
@@ -2909,6 +2978,12 @@
         }
         cfgEls.lang.value = c.ttsLang;
       }
+      // Latar panggung. bgImageDraft direset: draft yang belum disimpan tidak
+      // boleh selamat melewati repaint (aturan form yang sama dengan field lain).
+      bgImageDraft = undefined;
+      if (cfgEls.bgColor) cfgEls.bgColor.value = c.bgColor || '#0d0d10';
+      if (cfgEls.bgDim) cfgEls.bgDim.value = String(c.bgDim);
+      if (cfgEls.bgDimOut) cfgEls.bgDimOut.textContent = c.bgDim.toFixed(2);
     }
     refreshConfigForm = () => paintConfigForm(loadModelConfigLocal());
 
@@ -2921,7 +2996,59 @@
         ttsPitch: cfgEls.pitch ? Number(cfgEls.pitch.value) : undefined,
         ttsRate: cfgEls.rate ? Number(cfgEls.rate.value) : undefined,
         ttsLang: cfgEls.lang ? cfgEls.lang.value : undefined,
+        bgColor: cfgEls.bgColor ? cfgEls.bgColor.value : undefined,
+        bgDim: cfgEls.bgDim ? Number(cfgEls.bgDim.value) : undefined,
+        // undefined = biarkan nilai tersimpan; dataURL = ganti; 'CLEAR' = hapus.
+        bgImage: bgImageDraft !== undefined ? bgImageDraft : undefined,
       };
+    }
+
+    // Live preview latar: warna & slider dim langsung terasa tanpa menunggu Save
+    // (pola yang sama dengan framing/blink). Draft gambar mengikuti event-nya.
+    if (cfgEls.bgColor) {
+      cfgEls.bgColor.addEventListener('input', () => {
+        applyStageBackground(Object.assign({}, state.modelConfig, { bgColor: cfgEls.bgColor.value, bgImage: bgImageDraft === 'CLEAR' ? '' : (bgImageDraft !== undefined ? bgImageDraft : (state.modelConfig || {}).bgImage || '') }));
+        setCfgStatus('belum disimpan', '');
+      });
+    }
+    if (cfgEls.bgDim) {
+      cfgEls.bgDim.addEventListener('input', () => {
+        if (cfgEls.bgDimOut) cfgEls.bgDimOut.textContent = Number(cfgEls.bgDim.value).toFixed(2);
+        applyStageBackground(Object.assign({}, state.modelConfig, { bgDim: Number(cfgEls.bgDim.value), bgImage: bgImageDraft === 'CLEAR' ? '' : (bgImageDraft !== undefined ? bgImageDraft : (state.modelConfig || {}).bgImage || '') }));
+        setCfgStatus('belum disimpan', '');
+      });
+    }
+    if (cfgEls.bgPick && cfgEls.bgFile) {
+      cfgEls.bgPick.addEventListener('click', () => cfgEls.bgFile.click());
+      cfgEls.bgFile.addEventListener('change', () => {
+        const file = cfgEls.bgFile.files && cfgEls.bgFile.files[0];
+        if (!file) return;
+        if (file.size > 3 * 1024 * 1024) { setCfgStatus('gambar terlalu besar (maks 3 MB)', 'err'); return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+          bgImageDraft = String(reader.result || '');
+          applyStageBackground(Object.assign({}, state.modelConfig, { bgImage: bgImageDraft }));
+          setCfgStatus('gambar dimuat — tekan Simpan Pengaturan', '');
+        };
+        reader.onerror = () => setCfgStatus('gagal membaca gambar', 'err');
+        reader.readAsDataURL(file);
+        cfgEls.bgFile.value = '';   // pilih file sama lagi tetap memicu change
+      });
+    }
+    if (cfgEls.bgClear) {
+      cfgEls.bgClear.addEventListener('click', () => {
+        bgImageDraft = 'CLEAR';
+        applyStageBackground(Object.assign({}, state.modelConfig, { bgImage: '' }));
+        setCfgStatus('gambar latar dihapus — tekan Simpan Pengaturan', '');
+      });
+    }
+    if (cfgEls.bgReset) {
+      cfgEls.bgReset.addEventListener('click', () => {
+        bgImageDraft = 'CLEAR';
+        if (cfgEls.bgColor) cfgEls.bgColor.value = '#0d0d10';
+        applyStageBackground(Object.assign({}, state.modelConfig, { bgColor: '', bgImage: '' }));
+        setCfgStatus('latar kembali ke default — tekan Simpan Pengaturan', '');
+      });
     }
 
     // Live readout while dragging — no save, just feedback.
@@ -4427,6 +4554,13 @@
     // baked-in character name is what makes the app model-agnostic: importing
     // someone else's model must not leave another character's name in the UI.
     displayName: '',
+    // Background panggung (per model). bgColor: CSS color apa pun ('' = default
+    // stage). bgImage: data-URL gambar (ditampilkan cover, diredupkan lewat
+    // bgDim 0..1 supaya karakter tetap menonjol). Keduanya tersimpan di sheet
+    // config — ikut model, bukan global.
+    bgColor: '',
+    bgImage: '',
+    bgDim: 0.45,
   };
 
   const FRAMING_MODES = ['upper', 'full'];
@@ -5542,6 +5676,20 @@
     if (typeof raw.displayName === 'string') {
       c.displayName = raw.displayName.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 40);
     }
+    // Latar panggung: warna CSS apa pun (dipakai renderer PIXI — hex/nama),
+    // gambar HANYA data-URL (sumber file tak bisa dipercaya & tak bisa dipulihkan
+    // setelah reload), dan peredup 0..0.9. Kap data-URL 4 juta char — localStorage
+    // sheet yang menampungnya punya batas ±5 MB sendiri.
+    if (typeof raw.bgColor === 'string') {
+      const v = raw.bgColor.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 64);
+      c.bgColor = v;
+    }
+    if (typeof raw.bgImage === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(raw.bgImage)
+        && raw.bgImage.length <= 4_000_000) {
+      c.bgImage = raw.bgImage;
+    }
+    const d = Number(raw.bgDim);
+    if (Number.isFinite(d)) c.bgDim = Math.max(0, Math.min(0.9, d));
     return c;
   }
 
@@ -5900,10 +6048,97 @@
     if (state.model) {
       try { frameModel(c.framing); } catch (e) { console.warn('[config] framing failed:', e.message); }
     }
+    // Latar panggung ikut config per-model (warna / gambar / peredup).
+    try { applyStageBackground(c); } catch (e) { console.warn('[stage-bg] apply failed:', e.message); }
     // Identity lives in the same config object, so a save that changed
     // displayName must repaint the header here rather than at every call site.
     try { applyCharacterIdentity(); } catch (e) { console.warn('[identity] repaint failed:', e.message); }
     return c;
+  }
+
+  // ── Latar panggung custom (per-model) ──────────────────────────
+  // Canvas PIXI itu OPAQUE — latar harus digambar DI DALAMNYA, bukan elemen
+  // DOM di belakangnya. Warna: renderer.background.color. Gambar: sprite
+  // zIndex -1 (di bawah model 0), cover-fit ke ukuran stage, plus lapisan
+  // peredup (alpha bgDim) agar karakter tetap menonjol di latar terang.
+  function applyStageBackground(cfg) {
+    if (!app || app.destroyed) return;
+    const c = normalizeModelConfig(cfg);
+    try {
+      const hex = c.bgColor ? cssColorToHex(c.bgColor) : 0x0D0D10;
+      // Renderer webgl/legacy PIXI 6 punya setter `background` (BackgroundSystem)
+      // ATAU properti `backgroundColor` (renderer legacy). Dukung keduanya.
+      if (app.renderer.background && 'color' in app.renderer.background) {
+        app.renderer.background.color = hex;
+      } else if ('backgroundColor' in app.renderer) {
+        app.renderer.backgroundColor = hex;
+      } else {
+        app.renderer._backgroundColor = hex;
+        app.renderer._backgroundColorString = '#' + hex.toString(16).padStart(6, '0');
+      }
+    } catch (e) { console.warn('[stage-bg] color invalid:', c.bgColor); }
+
+    const want = c.bgImage || '';
+    if (!want) { removeStageBgImage(); return; }
+    if (state._bgImageKey === want && state._bgSprite) { fitStageBgImage(c.bgDim); return; }
+    removeStageBgImage();
+    const img = new Image();
+    img.onload = () => {
+      // Abaikan jika model/latar sudah berganti saat gambar dimuat.
+      const cur = state.modelConfig || {};
+      if ((cur.bgImage || '') !== want) return;
+      const tex = PIXI.Texture.from(img);
+      const spr = new PIXI.Sprite(tex);
+      spr.zIndex = -1;
+      app.stage.addChildAt(spr, 0);
+      state._bgSprite = spr;
+      state._bgImageKey = want;
+      fitStageBgImage(c.bgDim);
+    };
+    img.onerror = () => console.warn('[stage-bg] gambar gagal dimuat');
+    img.src = want;
+  }
+  function fitStageBgImage(dim) {
+    const spr = state._bgSprite;
+    if (!spr || !spr.texture) return;
+    const W = app.screen.width, H = app.screen.height;
+    const s = Math.max(W / spr.texture.width, H / spr.texture.height);   // cover
+    spr.width = spr.texture.width * s;
+    spr.height = spr.texture.height * s;
+    spr.x = (W - spr.width) / 2;
+    spr.y = (H - spr.height) / 2;
+    // Peredup: Graphics hitam alpha, zIndex -0.5 (di atas gambar, di bawah model).
+    if (!state._bgDimSprite) {
+      state._bgDimSprite = new PIXI.Graphics();
+      state._bgDimSprite.zIndex = -0.5;
+      app.stage.addChild(state._bgDimSprite);
+    }
+    const g = state._bgDimSprite;
+    g.clear();
+    g.beginFill(0x000000, Math.max(0, Math.min(0.9, Number(dim) || 0)));
+    g.drawRect(0, 0, W, H);
+    g.endFill();
+  }
+  function removeStageBgImage() {
+    if (state._bgSprite) { try { app.stage.removeChild(state._bgSprite); state._bgSprite.destroy(); } catch (e) {} }
+    if (state._bgDimSprite) { try { app.stage.removeChild(state._bgDimSprite); state._bgDimSprite.destroy(); } catch (e) {} }
+    state._bgSprite = null; state._bgDimSprite = null; state._bgImageKey = null;
+  }
+  // CSS color → 0xRRGGBB. Menerima #rgb/#rrggbb, rgb(), dan nama CSS dasar —
+  // input warna HTML selalu mengirim #rrggbb, sisanya untuk nilai manual.
+  function cssColorToHex(str) {
+    const s = String(str || '').trim().toLowerCase();
+    let m = s.match(/^#([0-9a-f]{3})$/);
+    if (m) return parseInt(m[1].split('').map(ch => ch + ch).join(''), 16);
+    m = s.match(/^#([0-9a-f]{6})$/);
+    if (m) return parseInt(m[1], 16);
+    m = s.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/);
+    if (m) return (Math.min(255, +m[1]) << 16) | (Math.min(255, +m[2]) << 8) | Math.min(255, +m[3]);
+    const named = { black: 0x000000, white: 0xffffff, red: 0xff0000, green: 0x008000, blue: 0x0000ff,
+      gray: 0x808080, grey: 0x808080, navy: 0x000080, teal: 0x008080, purple: 0x800080,
+      pink: 0xffc0cb, orange: 0xffa500, yellow: 0xffff00, brown: 0xa52a2a };
+    if (s in named) return named[s];
+    throw new Error('warna tidak dikenal: ' + s);
   }
 
   // Read the persisted config for the CURRENT model without hitting the network.

@@ -1640,6 +1640,17 @@
                  m.internalModel.motionManager.expressionManager;
       if (em && Array.isArray(em.deferred)) exprs = exprs.concat(em.deferred.map(x => x && x.name).filter(Boolean));
     } catch (e) {}
+    // SUMBER PALING ANDAL: settings.expressions — definisi {Name, File} yang
+    // DIBACA LOADER dari model3.json (plus adopsi yatim). m.expressions dan
+    // em.deferred ternyata kosong di pixi-live2d 0.4 utk model yang manifestnya
+    // lengkap: mode jatuh ke 'synthetic' padahal 8 .exp3 terdaftar (神宫白子)
+    // dan tombol tes ekspresi tidak berefek sama sekali (keluhan 2026-09-02).
+    try {
+      const st = m.internalModel && m.internalModel.settings;
+      if (st && Array.isArray(st.expressions)) {
+        exprs = exprs.concat(st.expressions.map(e => e && e.Name).filter(Boolean));
+      }
+    } catch (e) {}
     state.modelExpressions = Array.from(new Set(exprs.filter(Boolean)));
 
     state.emotionMode = state.modelExpressions.length ? 'native' : 'synthetic';

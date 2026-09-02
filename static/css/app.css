@@ -157,6 +157,24 @@ body::after {
    Statis & tanpa filter: blur — transisi gradasi diperrlebar supaya halus.
    Animasi/blur di layer ini berarti re-komposit penuh tiap frame di atas
    canvas WebGL yang memang beranimasi (sumber lag utama). */
+/* Latar panggung custom (per-model): menutupi canvas yang opaque.
+   Diatur lewat panel Pengaturan Model — warna dan/atau gambar (cover). */
+#stage-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;                       /* canvas di atasnya? tidak — canvas z-auto; bg digambar via zIndex di atas canvas */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+#stage-bg::after {                 /* lapisan peredup — menjaga karakter menonjol */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+}
+
 #stage-glow {
   position: absolute;
   inset: -4%;

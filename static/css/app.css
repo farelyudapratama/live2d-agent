@@ -12,29 +12,30 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* — tinta panggung — */
-  --ink-0: #141020;          /* latar terdalam (aubergine-hitam) */
-  --ink-1: #1C1629;          /* permukaan panel */
-  --ink-2: #262038;          /* permukaan terangkat */
-  --line: #372F4C;           /* hairline */
-  --line-soft: rgba(120, 106, 156, .18);
+  /* — tinta studio — grafit hangat, bukan ungu: karakter yang berwarna,
+     ruang kerjanya netral. Panel "menghilang" agar panggung yang tampil. */
+  --ink-0: #17161A;          /* latar terdalam (grafit) */
+  --ink-1: #1E1D22;          /* permukaan panel */
+  --ink-2: #26252B;          /* permukaan terangkat */
+  --line: #35343B;           /* hairline */
+  --line-soft: rgba(255, 255, 255, .09);
 
   /* — teks — */
-  --text: #EDE8F7;           /* lavender-white */
-  --muted: #9D93B8;
+  --text: #F2F1F4;
+  --muted: #9B98A3;
 
-  /* — cahaya — */
-  --lamp: #F5B85C;           /* lampu panggung (primer) */
+  /* — aksen: amber satu-satunya warna kontrol; warna lain milik karakter — */
+  --lamp: #F5B85C;           /* aktif / fokus */
   --lamp-soft: #FFD9A0;
-  --rose: #F08FB0;           /* suara karakter (sekunder) */
+  --rose: #F08FB0;           /* suara karakter (hanya di chat) */
   --mint: #8FDCC3;           /* status ok */
   --coral: #F2776B;          /* status gagal */
 
   --ink-on-lamp: #241A10;
 
-  --r-lg: 22px;
-  --r-md: 14px;
-  --r-sm: 10px;
+  --r-lg: 16px;
+  --r-md: 12px;
+  --r-sm: 9px;
 
   --font-ui: "Zen Kaku Gothic New", "Segoe UI", system-ui, sans-serif;
   --font-display: "Zen Maru Gothic", "Zen Kaku Gothic New", "Segoe UI", system-ui, sans-serif;
@@ -56,10 +57,7 @@ body {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text);
-  background:
-    radial-gradient(120% 90% at 18% -10%, #241B38 0%, transparent 55%),
-    radial-gradient(90% 70% at 88% 110%, #1F1631 0%, transparent 60%),
-    var(--ink-0);
+  background: var(--ink-0);
 }
 
 button {
@@ -140,8 +138,8 @@ body::after {
   min-width: 0;
   border-radius: var(--r-lg);
   overflow: hidden;
-  background: #0a0a14;                 /* samakan dgn PIXI backgroundColor */
-  border: 1px solid rgba(255, 255, 255, .055);
+  background: #0D0D10;                 /* panggung lebih gelap dari ruang kerja */
+  border: 1px solid rgba(255, 255, 255, .06);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, .04),
     0 24px 70px rgba(0, 0, 0, .5);
@@ -166,12 +164,12 @@ body::after {
   pointer-events: none;
   mix-blend-mode: screen;
   background: conic-gradient(from 180deg at 50% -12%,
-    transparent 37%,
-    rgba(245, 184, 92, .06) 44%,
-    rgba(245, 184, 92, .19) 49.4%,
-    rgba(255, 217, 160, .24) 50.6%,
-    rgba(245, 184, 92, .19) 55.5%,
-    rgba(245, 184, 92, .06) 62%,
+    transparent 38%,
+    rgba(245, 184, 92, .05) 45%,
+    rgba(245, 184, 92, .13) 49.4%,
+    rgba(255, 217, 160, .17) 50.6%,
+    rgba(245, 184, 92, .13) 55.5%,
+    rgba(245, 184, 92, .05) 62%,
     transparent 69%);
 }
 
@@ -188,8 +186,8 @@ body::after {
   mix-blend-mode: screen;
   border-radius: 50%;
   background: radial-gradient(ellipse at center,
-    rgba(245, 184, 92, .2) 0%,
-    rgba(240, 143, 176, .1) 42%,
+    rgba(245, 184, 92, .16) 0%,
+    rgba(240, 143, 176, .08) 42%,
     transparent 70%);
 }
 
@@ -408,20 +406,29 @@ body::after {
 #btn-toggle-controls:hover { border-color: rgba(245, 184, 92, .5); transform: rotate(30deg); }
 
 /* Indikator keadaan hidup */
+/* Lower-third siaran: satu strip OSD di bawah panggung (signature redesign).
+   Hadir/mood/tenang dibaca sekilas tanpa meninggalkan panggung. */
 #live-state {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 5;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+  background: rgba(18, 18, 21, .82);
+  border: 1px solid var(--line-soft);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
 }
 .ls-item {
   max-width: 100%;
-  padding: 3px 10px;
-  border-radius: 999px;
+  padding: 1px 6px;
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--muted);
-  background: rgba(20, 16, 32, .5);
-  border: 1px solid var(--line-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -575,16 +582,21 @@ body::after {
 
 /* ── Drawer backstage (panel kontrol) ─────────────────────────── */
 
+/* Panel kontrol: overlay DI ATAS PANGGUNG (bukan menutupi kolom chat).
+   Kini di level .app — fixed, memenuhi area stage, chat selalu terlihat. */
 #controls-panel {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
+  position: fixed;
+  top: 14px;
+  bottom: 14px;
+  left: 14px;
+  right: calc(380px + 14px + 14px);   /* stage berhenti sebelum sidebar */
+  z-index: 30;
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 14px;
   border-radius: var(--r-lg);
-  background: rgba(20, 16, 32, .97);
+  background: rgba(24, 24, 28, .97);
   border: 1px solid var(--line);
   box-shadow: 0 18px 50px rgba(0, 0, 0, .5);
   animation: slide-in .26s cubic-bezier(.2, .9, .3, 1);
@@ -619,24 +631,24 @@ body::after {
   grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   padding: 4px;
-  border-radius: 12px;
-  background: rgba(20, 16, 32, .6);
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, .35);
   border: 1px solid var(--line-soft);
 }
 .tab {
   padding: 7px 4px;
-  border-radius: 9px;
-  font-size: 11.5px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
   transition: color .15s, background .15s;
 }
 .tab:hover { color: var(--text); }
 .tab.active {
-  color: var(--lamp-soft);
+  color: var(--text);
   font-weight: 600;
   background: var(--ink-2);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 0 0 1px var(--line), 0 1px 0 rgba(255, 255, 255, .05);
 }
 
 .tab-body {
@@ -661,14 +673,47 @@ body::after {
   letter-spacing: .04em;
   color: var(--lamp-soft);
 }
+/* Eyebrow: label seksi gaya konsol — mono kapital renggang, tanpa emoji. */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 8px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 .section-title::after {
   content: "";
   flex: 1;
   height: 1px;
-  background: linear-gradient(90deg, var(--line), transparent);
+  background: var(--line-soft);
 }
 .tab-pane > .section-title:first-child,
 .tab-body > .section-title:first-child { margin-top: 2px; }
+
+/* Tombol ☰ di tepi panggung — pintu panel kontrol dari sisi stage. */
+.stage-ctl {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  font-size: 15px;
+  color: var(--text);
+  background: rgba(18, 18, 21, .82);
+  border: 1px solid var(--line-soft);
+  backdrop-filter: blur(6px);
+  transition: border-color .15s, color .15s;
+}
+.stage-ctl:hover { border-color: rgba(245, 184, 92, .55); color: var(--lamp); }
 
 .hint {
   margin: 6px 0;
@@ -845,6 +890,10 @@ input[type="range"]::-moz-range-thumb {
   border: 1px solid var(--line-soft);
 }
 .motion-card .mc-src.user { color: var(--lamp-soft); }
+/* Baris ekspresi teradopsi: satu baris penuh — ceklis, nama, tombol tes kanan. */
+#adoption-list .preset-item { flex-wrap: nowrap; }
+#adoption-list .p-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#adoption-list .p-act { margin-left: auto; }
 .model-item .mc-name { font-weight: 600; }
 .model-item .mc-src {
   font-family: var(--font-mono);
@@ -1273,8 +1322,9 @@ input[type="range"]::-moz-range-thumb {
 /* Flow: sidebar chat (380px) + panel kontrol menumpuk di kanan. Popup yang
    dibuka DARI panel kontrol tidak boleh menutupi kolom chat — geser ke kiri
    selebar sidebar sehingga chat tetap terlihat dan konteksnya utuh. */
-body:not(.controls-open) .pn-popup { right: 16px; }
-body.controls-open .pn-popup { right: calc(380px + 32px); }
+/* Popup selalu berhenti sebelum kolom chat — panel kontrol kini overlay
+   panggung, jadi popup dan panel tidak pernah berebut ruangan yang sama. */
+.pn-popup { right: calc(380px + 32px); }
 .ms-popup { width: min(940px, calc(100vw - 32px)); }
 
 .pn-popup-head {

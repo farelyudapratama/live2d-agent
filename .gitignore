@@ -9,3 +9,4 @@ static/js/bundle.js
 *.tmp
 .DS_Store
 data/sheets/
+*.log

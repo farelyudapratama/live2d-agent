@@ -2223,7 +2223,11 @@
   function wireUI() {
     // ── Sidebar controls toggle + tabs + frame controls ──
     $('#btn-toggle-controls').addEventListener('click', () => {
-      $('#controls-panel').classList.toggle('hidden');
+      const panel = $('#controls-panel');
+      panel.classList.toggle('hidden');
+      // Penanda untuk CSS: popup mengambang (pn-popup) bergeser kiri dari
+      // sidebar supaya kolom chat tetap terlihat saat panel kontrol terbuka.
+      document.body.classList.toggle('controls-open', !panel.classList.contains('hidden'));
     });
 
     // Drawer kontrol kini overlay (inset:0) — tanpa tombol ini dia menutupi
@@ -3688,8 +3692,13 @@
     function appendNoteRow(list, id, label, group, min, max, def, isPart, note) {
       const cur = readAny(id, isPart);
       const startVal = (cur != null && Number.isFinite(cur)) ? cur : def;
+      const resolvedGroup = resolveParamGroup(state.lastSheet || {}, id, group);
       const { row } = buildParamSliderRow({
-        id, label, group: resolveParamGroup(state.lastSheet || {}, id, group),
+        id, label,
+        // Header grup sudah menampilkan nama grup di atas kumpulan baris —
+        // badge per-baris jadi redundan dan membuat baris ramai. Grup tetap
+        // di-index untuk pencarian lewat dataset.hay di bawah.
+        group: '',
         min, max, def, isPart, value: startVal,
         onInput: (id, v, isPart) => {
           // Drive the model live. setSticky keeps it held each frame; while frozen
@@ -3705,7 +3714,7 @@
       row.dataset.id = id;
       row.dataset.part = isPart ? '1' : '';
       // Haystack pencarian (id + label + grup) — catatan dibaca live saat filter.
-      row.dataset.hay = (id + ' ' + label + ' ' + (group || '')).toLowerCase();
+      row.dataset.hay = (id + ' ' + label + ' ' + resolvedGroup).toLowerCase();
 
       // Description textarea.
       const input = document.createElement('textarea');
@@ -3945,7 +3954,11 @@
         const startVal = (draft.values[p.id] != null) ? draft.values[p.id]
           : (live != null && Number.isFinite(live)) ? live : dflt;
         const { row } = buildParamSliderRow({
-          id: p.id, label: p.id, group: p.group, min: p.min, max: p.max, def: dflt, isPart: false, value: startVal,
+          // Konsisten dengan popup Penjelasan Parameter: label nama rigger dari
+          // cdi3 ("heart eye"), bukan id mentah; grup lewat resolveParamGroup.
+          id: p.id, label: (p.label && p.label !== p.id) ? (p.label + ' · ' + p.id) : p.id,
+          group: resolveParamGroup(sheet, p.id, p.group),
+          min: p.min, max: p.max, def: dflt, isPart: false, value: startVal,
           onInput: (id, v) => {
             if (Math.abs(v - dflt) > 1e-3) draft.values[id] = Number(v.toFixed(3));
             else delete draft.values[id];

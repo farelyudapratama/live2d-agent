@@ -132,7 +132,7 @@
             <p style="margin:8px 0 2px">Atau upload <b>.zip</b> model:</p>
             <button id="btn-pick-zip" class="mini-btn">🗜️ Pilih File .zip</button>
             <input id="input-model-zip" type="file" accept=".zip,application/zip" hidden />
-            <p class="hint">Terima folder <i>atau</i> .zip. Folder bersarang (mis. <code>lumine_l2d/lumine/</code>) &amp; otomatis dibaca. Nama model = nama folder/zip.</p>
+            <p class="hint">Folder <i>atau</i> .zip; nama model diambil dari nama folder/zip.</p>
           </div>
           <div class="model-name-row">
             <input id="input-model-name" type="text" placeholder="nama model (mis. Hatsune)" />
@@ -246,14 +246,13 @@
             <button id="btn-sheet-reload-file" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">🔄 Muat Ulang dari File</button>
             <span id="reload-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
-          <p class="hint">Saran AI (🤖) tidak aktif sampai kamu tekan <b>Pakai</b>. Preset milikmu selalu menang atas saran AI dan atas nama bawaan.</p>
+          <p class="hint">Saran AI (🤖) aktif setelah kamu tekan <b>Pakai</b>; preset milikmu selalu menang.</p>
 
           <!-- Editor preset dipindah ke popup mengambang (#preset-editor-popup)
                supaya tampilannya seragam dengan 📝 Jelaskan Parameter. -->
           <div class="note-row">
             <button id="btn-open-preset-editor" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">✏️ Editor Preset</button>
           </div>
-          <p class="hint">Tekan <b>✏️ Editor Preset</b> untuk menyusun pose lewat slider (popup mengambang, serupa dengan 📝 Jelaskan Parameter).</p>
 
           <!-- Ekspresi teradopsi (opt-out).
                Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox

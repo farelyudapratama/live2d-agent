@@ -2233,19 +2233,17 @@
 
   function wireUI() {
     // ── Sidebar controls toggle + tabs + frame controls ──
-    $('#btn-toggle-controls').addEventListener('click', () => {
-      const panel = $('#controls-panel');
-      panel.classList.toggle('hidden');
-      // Penanda untuk CSS: popup mengambang (pn-popup) bergeser kiri dari
-      // sidebar supaya kolom chat tetap terlihat saat panel kontrol terbuka.
-      document.body.classList.toggle('controls-open', !panel.classList.contains('hidden'));
-    });
+    // Dua pintu untuk panel kontrol: gear di sidebar & ☰ di tepi panggung.
+    const setControlsOpen = (open) => {
+      $('#controls-panel').classList.toggle('hidden', !open);
+    };
+    const isOpen = () => !$('#controls-panel').classList.contains('hidden');
+    $('#btn-toggle-controls').addEventListener('click', () => setControlsOpen(!isOpen()));
+    const stageBtn = $('#btn-stage-controls');
+    if (stageBtn) stageBtn.addEventListener('click', () => setControlsOpen(!isOpen()));
 
-    // Drawer kontrol kini overlay (inset:0) — tanpa tombol ini dia menutupi
-    // tombol ⚙️-nya sendiri dan sekali kebuka tak bisa ditutup.
-    $('#btn-close-controls').addEventListener('click', () => {
-      $('#controls-panel').classList.add('hidden');
-    });
+    // Tombol tutup + Esc menutup panel yang kini overlay panggung (bukan sidebar).
+    $('#btn-close-controls').addEventListener('click', () => setControlsOpen(false));
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       const panel = $('#controls-panel');

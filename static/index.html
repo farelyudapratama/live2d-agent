@@ -30,7 +30,8 @@
       <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
            berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
            folder/.zip lewat UI, atau copy manual ke data/model/. -->
-      <div id="stage-empty" class="stage-empty hidden">
+      <button id="btn-stage-controls" class="stage-ctl" title="Buka panel kontrol">☰</button>
+        <div id="stage-empty" class="stage-empty hidden">
         <div class="se-box">
           <div class="se-title">Belum ada model Live2D</div>
           <p>Repo ini tidak menyertakan model (aset berlisensi). Impor model Cubism 4 milikmu lewat sini, atau copy folder model ke <code>data/model/</code> lalu muat ulang.</p>
@@ -46,6 +47,13 @@
       <div id="bubble" class="bubble hidden">
         <span id="bubble-text"></span>
         <div id="bubble-tail"></div>
+      </div>
+
+      <!-- Lower-third siaran: keadaan karakter di atas panggung (dipindah dari sidebar, redesign 2026-09-02). -->
+      <div id="live-state" aria-live="polite">
+        <span class="ls-item" id="ls-presence">👤 presence: —</span>
+        <span class="ls-item" id="ls-mood">😶 mood: —</span>
+        <span class="ls-item" id="ls-quiet">⏳ masa tenang: —</span>
       </div>
 
       <!-- Full Body button: only shows after the user manually zooms/drags -->
@@ -69,16 +77,7 @@
         <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
       </div>
 
-      <!-- Indikator keadaan hidup.
-           Mencerminkan window.__agent._reactiveState(): presence, mood + sumbernya,
-           dan masa tenang. Sebelumnya satu-satunya cara tahu kenapa karakter diam
-           adalah membaca console ([agent] masa tenang, skip event). -->
-      <div id="live-state" aria-live="polite">
-        <span class="ls-item" id="ls-presence">👤 presence: —</span>
-        <span class="ls-item" id="ls-mood">😶 mood: —</span>
-        <span class="ls-item" id="ls-quiet">⏳ masa tenang: —</span>
-      </div>
-
+      
       <!-- Chat history -->
       <div id="chat-log">
         <div class="msg agent">
@@ -105,18 +104,19 @@
       </div>
       <label class="brain-toggle">
         <input type="checkbox" id="toggle-brain" checked />
-        🧠 Mode Otak (LLM mikir & balas sendiri)
+        Mode Otak (LLM mikir & balas sendiri)
       </label>
 
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
            Semua ID & struktur pane dipertahankan persis — wiring app.js bergantung padanya. -->
+  </div><!-- /sidebar -->
       <div id="controls-panel" class="hidden">
         <div class="drawer-head">
           <div class="tabs">
-            <button class="tab active" data-tab="model">📁 Model</button>
-            <button class="tab" data-tab="sheet">📋 Sheet</button>
-            <button class="tab" data-tab="motion">🎬 Motion</button>
-            <button class="tab" data-tab="ai">⚙️ AI</button>
+            <button class="tab active" data-tab="model">Model</button>
+            <button class="tab" data-tab="sheet">Sheet</button>
+            <button class="tab" data-tab="motion">Motion</button>
+            <button class="tab" data-tab="ai">AI</button>
           </div>
           <button id="btn-close-controls" class="drawer-close" title="Tutup panel (Esc)">✕</button>
         </div>
@@ -124,7 +124,7 @@
 
         <!-- Model (import / switch user models) -->
         <div class="tab-pane active" data-pane="model">
-          <div class="section-title">📁 Model Live2D</div>
+          <div class="section-title">Model</div>
           <div id="model-drop" class="model-drop">
             <p>Drag &amp; drop folder model ke sini,<br />atau</p>
             <button id="btn-pick-model" class="mini-btn">📂 Pilih Folder Model</button>
@@ -144,7 +144,7 @@
           </div>
 
           <!-- Catatan karakter: free-text milik USER, ikut dikirim ke AI -->
-          <div class="section-title" style="margin-top:14px">📝 Catatan Karakter</div>
+          <div class="section-title" style="margin-top:14px">Catatan Karakter</div>
           <div class="note-box">
             <textarea id="input-user-note" rows="4"
               placeholder="Siapa dia? Sifat, gaya bicara, kebiasaan… mis. &quot;Dia pemalu, panggil aku Senpai, suka kucing.&quot;"
@@ -157,7 +157,7 @@
           </div>
 
           <!-- Pengaturan per-model: dulu hardcode & reset tiap reload -->
-          <div class="section-title" style="margin-top:14px">🎛️ Pengaturan Model Ini</div>
+          <div class="section-title" style="margin-top:14px">Pengaturan Model</div>
           <div class="cfg-box">
             <label class="cfg-row" for="cfg-display-name">
               <span class="cfg-label">Nama karakter</span>
@@ -218,7 +218,7 @@
              Tanpa dia, hasil analisa AI cuma menumpuk di sheets/*.json tanpa
              pernah bisa dipakai atau ditolak user. -->
         <div class="tab-pane" data-pane="sheet">
-          <div class="section-title">📋 Character Sheet</div>
+          <div class="section-title">Character Sheet</div>
           <div id="sheet-summary" class="sheet-summary">
             <p class="hint">Belum ada sheet. Buka tab 📁 Model → <b>Inspeksi Model</b> dulu.</p>
           </div>
@@ -227,7 +227,7 @@
                Dibuka sebagai popup mengambang di sisi kanan via tombol di bawah,
                supaya tidak menutupi model di stage kiri. Menampilkan SEMUA
                param + part dengan slider live + textarea deskripsi. -->
-          <div class="section-title" style="margin-top:14px">📝 Penjelasan Parameter</div>
+          <div class="section-title" style="margin-top:14px">Penjelasan Parameter</div>
           <div class="note-row">
             <button id="btn-open-paramnotes" class="mini-btn" style="width:auto;padding:5px 12px;font-size:12px">📝 Jelaskan Parameter</button>
             <span id="paramnotes-open-status" class="note-status"></span>
@@ -235,7 +235,7 @@
 
           <!-- Daftar preset per kategori. Entri user dan saran AI tampil
                berdampingan; yang AI diberi badge 🤖 supaya asalnya jelas. -->
-          <div class="section-title" style="margin-top:14px">🎭 Preset</div>
+          <div class="section-title" style="margin-top:14px">Preset</div>
           <div class="sheet-cats" id="sheet-cats" role="tablist" aria-label="Kategori preset"></div>
           <div id="sheet-preset-list" class="preset-list"></div>
           <div class="note-row">
@@ -257,7 +257,7 @@
           <!-- Ekspresi teradopsi (opt-out).
                Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox
                untuk mematikan adopsi per-file. Data dari GET /api/model/expressions-adoption. -->
-          <div class="section-title" style="margin-top:14px">🧬 Ekspresi Teradopsi</div>
+          <div class="section-title" style="margin-top:14px">Ekspresi</div>
           <div class="cfg-box" id="adoption-box">
             <p class="hint">File .exp3 di folder model yang lupa didaftarkan di model3.json diadopsi otomatis agar tidak mati. Matikan yang tak perlu.</p>
             <div id="adoption-list" class="preset-list"></div>
@@ -274,7 +274,7 @@
              tidak menutupi model di stage kiri — sama seperti 📝 Jelaskan
              Parameter & ✏️ Editor Preset. -->
         <div class="tab-pane" data-pane="motion">
-          <div class="section-title">🎬 Motion Studio</div>
+          <div class="section-title">Motion Studio</div>
           <p class="hint">Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b>
             — kepala, tangan, rambut, alis, apa pun yang rig-nya punya. Simpan dengan
             deskripsi &amp; tag, lalu AI bisa memakainya saat ngobrol. Gerakan bawaan
@@ -284,7 +284,7 @@
             <span id="motion-open-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
 
-          <div class="section-title" style="margin-top:14px">📚 Daftar Gerakan</div>
+          <div class="section-title" style="margin-top:14px">Daftar Gerakan</div>
           <div id="motion-registry-list" class="preset-list"></div>
           <p class="hint">Sumber: <b>bawaan</b> = 9 gerakan aplikasi, <b>model</b> = motion dari
             file model, <b>milikmu</b> = hasil Motion Studio. Hanya milikmu yang bisa diedit/hapus.</p>
@@ -292,7 +292,7 @@
 
         <!-- AI Connections (9router-style) -->
         <div class="tab-pane" data-pane="ai">
-          <div class="section-title">⚙️ AI Connections
+          <div class="section-title">Koneksi AI
             <button id="btn-add-conn" class="mini-btn" title="Tambah connection">＋</button>
           </div>
           <div id="conn-list" class="conn-list"></div>
@@ -302,7 +302,7 @@
                Modul js/camera-presence.js sudah lengkap sejak awal, tapi checkbox
                ini tidak pernah ada di markup: `getElementById('useCamera')` selalu
                null, jadi start() tak pernah bisa dipanggil user. Ini kontrolnya. -->
-          <div class="section-title">🎥 Kamera &amp; Reaksi</div>
+          <div class="section-title">Kamera</div>
           <div class="cfg-box">
             <div class="cfg-check-inline">
               <label class="cfg-check" for="use-camera">
@@ -318,7 +318,7 @@
         <!-- Kelakuan (Behaviour).
              User bisa atur masa tenang / idle lewat profil atau slider mentah,
              tanpa menyentuh config.json manual. Aksi mengupdate EVENTS live + persist. -->
-        <div class="section-title" style="margin-top:14px">🎚️ Kelakuan (Proaktivitas)</div>
+        <div class="section-title" style="margin-top:14px">Kelakuan</div>
         <div class="cfg-box" id="behaviour-box">
           <p class="hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
             Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.</p>
@@ -365,7 +365,6 @@
 
       </div>
     </div><!-- /controls-panel -->
-  </div><!-- /sidebar -->
   </div><!-- /.app -->
 
   <!-- § Connection editor modal -->

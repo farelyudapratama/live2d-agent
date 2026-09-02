@@ -813,10 +813,38 @@ input[type="range"]::-moz-range-thumb {
   gap: 6px;
   padding: 8px 10px;
   border-radius: 12px;
-  font-size: 12.5px;
-  background: rgba(38, 32, 56, .6);
+}
+/* Kartu gerakan di tab Motion: nama kiri, badge sumber, tombol aksi kanan.
+   Dulu tanpa CSS sendiri — tata letak acak, nama & sumber menyatu. */
+.motion-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  background: rgba(38, 32, 56, .55);
   border: 1px solid var(--line-soft);
 }
+.motion-card .mc-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.motion-card .mc-src {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--line-soft);
+}
+.motion-card .mc-src.user { color: var(--lamp-soft); }
 .model-item .mc-name { font-weight: 600; }
 .model-item .mc-src {
   font-family: var(--font-mono);
@@ -1242,6 +1270,11 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 30px 80px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
   animation: slide-left .26s cubic-bezier(.2, .9, .3, 1);
 }
+/* Flow: sidebar chat (380px) + panel kontrol menumpuk di kanan. Popup yang
+   dibuka DARI panel kontrol tidak boleh menutupi kolom chat — geser ke kiri
+   selebar sidebar sehingga chat tetap terlihat dan konteksnya utuh. */
+body:not(.controls-open) .pn-popup { right: 16px; }
+body.controls-open .pn-popup { right: calc(380px + 32px); }
 .ms-popup { width: min(940px, calc(100vw - 32px)); }
 
 .pn-popup-head {

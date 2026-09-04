@@ -24,6 +24,9 @@ export interface Connection {
   // tetap jalan tanpa diedit). Daftar sah: LLM_ROLES di llm-client.ts.
   roles?: string[];
   testStatus: "idle" | "success" | "error";
+  // false = dimatikan sementara: dilewati semua pemilihan koneksi (fallback &
+  // role routing) tanpa menghapus konfigurasinya. undefined = aktif.
+  enabled?: boolean;
   lastError?: string;
   rateLimitedUntil?: string;
 }

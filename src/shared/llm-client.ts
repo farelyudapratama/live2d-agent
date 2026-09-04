@@ -320,12 +320,13 @@ export function connHasRole(conn: Connection | null | undefined, role: string): 
  * Kosong berarti "pakai urutan default llmWithFallback" (aktif dulu).
  */
 export function orderForRole(role: string, conns: Connection[]): Connection[] {
-  const matching = conns.filter((c) => connHasRole(c, role));
+  const usable = conns.filter((c) => c.enabled !== false);
+  const matching = usable.filter((c) => connHasRole(c, role));
   if (!matching.length) {
     console.warn("[roles] tidak ada connection untuk role \"" + role + "\" — pakai semua connection");
     return [];
   }
-  const explicit = conns.filter((c) => normalizeRoles(c.roles).includes(role));
+  const explicit = usable.filter((c) => normalizeRoles(c.roles).includes(role));
   return explicit.concat(matching.filter((c) => !explicit.includes(c)));
 }
 
@@ -361,9 +362,13 @@ export function llmWithFallback(
   order?: Connection[]
 ): Promise<LLMResult> {
   return new Promise((resolve, reject) => {
-    const conns = getConnections();
-    if (!conns.length) { const e: any = new Error("Belum ada connection. Buka panel ⚙️ AI Connections."); e.httpStatus = 400; e.kind = "no-connections"; return reject(e); }
-    const active = getActive();
+    // PENTING: `allConns` (daftar utuh) yang dipersist — memfilter dulu lalu
+    // mempersist akan MENGHAPUS koneksi nonaktif dari config.json.
+    const allConns = getConnections();
+    const conns = allConns.filter((c) => c.enabled !== false);
+    if (!conns.length) { const e: any = new Error("Semua connection sedang dinonaktifkan — aktifkan lagi di panel ⚙️ AI Connections."); e.httpStatus = 400; e.kind = "no-connections"; return reject(e); }
+    const activeRaw = getActive();
+    const active = activeRaw && activeRaw.enabled === false ? null : activeRaw;
     // `order` opsional: daftar connection yang SUDAH diurutkan (dipakai
     // llmForRole). Bila tidak diberikan, perilaku lama dipertahankan persis:
     // active dulu, lalu sisanya urut config.
@@ -377,14 +382,14 @@ export function llmWithFallback(
       if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) return tryNext();
       callWithOneRetry(conn, messages, clientSystem).then((reply) => {
         conn.testStatus = "success"; (conn as any).lastError = ""; conn.rateLimitedUntil = null as any;
-        persist(conns);
+        persist(allConns);
         resolve({ reply, used: conn.id });
       }).catch((err) => {
         const status = err.statusCode ?? 0;
         const cls = classifyError(status, err.message);
         conn.testStatus = "error"; (conn as any).lastError = err.message;
         if (cls.shouldFallback) conn.rateLimitedUntil = new Date(Date.now() + (cls.cooldownMs || 30000)).toISOString() as any;
-        persist(conns);
+        persist(allConns);
         if (cls.shouldFallback && idx < order2.length) tryNext();
         else { const e: any = new Error("LLM error [" + (conn.name || conn.id) + "]: " + err.message); e.httpStatus = 502; e.kind = "llm-error"; e.conn = conn; reject(e); }
       });

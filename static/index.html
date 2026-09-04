@@ -78,7 +78,16 @@
         <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
       </div>
 
-      
+      <!-- Mode switcher: satu mode aktif; pindah mode = runtime lama dihancurkan -->
+      <div class="mode-switch" id="mode-switch" role="tablist">
+        <button data-mode="chat" class="active" title="Panggung + Chat">💬</button>
+        <button data-mode="vtuber" title="AI VTuber — Live Streaming">🎥</button>
+        <button data-mode="assistant" title="AI Assistant — Agent Lokal">🧠</button>
+        <button data-mode="pet" title="Desktop Pet">🐾</button>
+        <span id="mode-label" class="mode-label">Panggung</span>
+      </div>
+
+      <div id="mode-chat" class="mode-panel">
       <!-- Chat history -->
       <div id="chat-log">
         <div class="msg agent">
@@ -109,6 +118,83 @@
         <input type="checkbox" id="toggle-brain" checked />
         <span>Mode Otak (LLM mikir & balas sendiri)</span>
       </label>
+      </div><!-- /mode-chat -->
+
+      <!-- ═══ MODE: AI VTUBER (streaming) ═══ -->
+      <div id="mode-vtuber" class="mode-panel hidden">
+        <div class="section-title">AI VTuber — Live Stream</div>
+        <label class="cfg-row" for="vt-provider">
+          <span class="cfg-label">Platform</span>
+          <select id="vt-provider">
+            <option value="mock">Mock (simulasi, tanpa key)</option>
+            <option value="twitch">Twitch (baca chat)</option>
+            <option value="youtube">YouTube Live (chat + superchat)</option>
+          </select>
+        </label>
+        <label class="cfg-row" id="vt-row-channel" for="vt-channel">
+          <span class="cfg-label">Channel Twitch</span>
+          <input id="vt-channel" type="text" placeholder="mis. nama_channel" />
+        </label>
+        <label class="cfg-row" id="vt-row-ytid" for="vt-video-id">
+          <span class="cfg-label">Video ID Live YT</span>
+          <input id="vt-video-id" type="text" placeholder="mis. 5YxZabc123" />
+        </label>
+        <label class="cfg-row" id="vt-row-ytkey" for="vt-yt-key">
+          <span class="cfg-label">API Key YouTube</span>
+          <input id="vt-yt-key" type="password" placeholder="AIza…" />
+        </label>
+        <label class="cfg-row" for="vt-persona">
+          <span class="cfg-label">Gaya jawab</span>
+          <input id="vt-persona" type="text" value="ceria, singkat, suka emoji, panggil penonton dengan nama" />
+        </label>
+        <label class="cfg-check">
+          <input id="vt-respond" type="checkbox" checked /> <span>AI balas chat otomatis</span>
+        </label>
+        <label class="cfg-check">
+          <input id="vt-donate-respond" type="checkbox" checked /> <span>Ucapkan terima kasih saat donasi</span>
+        </label>
+        <label class="cfg-row" for="vt-cooldown">
+          <span class="cfg-label">Jeda antar balas (dtk)</span>
+          <input id="vt-cooldown" type="number" min="5" max="120" value="12" />
+        </label>
+        <div class="note-row">
+          <button id="vt-start" class="mini-btn">▶ Mulai</button>
+          <button id="vt-stop" class="mini-btn">■ Berhenti</button>
+          <span id="vt-status" class="note-status">tidak aktif</span>
+        </div>
+        <div id="vt-alert" class="vt-alert hidden"></div>
+        <div class="section-title" style="margin-top:10px">Feed Live</div>
+        <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
+        <p class="hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
+      </div>
+
+      <!-- ═══ MODE: AI ASSISTANT (agent lokal) ═══ -->
+      <div id="mode-assistant" class="mode-panel hidden">
+        <div class="section-title">AI Assistant — Agent Lokal</div>
+        <div class="as-workdir">
+          <span class="cfg-label">Folder kerja</span>
+          <input id="as-workdir" type="text" placeholder="(folder project ini)" />
+        </div>
+        <div id="as-log" class="as-log"></div>
+        <div id="as-approvals"></div>
+        <div class="chat-input">
+          <input type="text" id="as-input" placeholder="Minta apa? mis. baca struktur folder…" />
+          <button id="btn-as-send" title="Kirim">➤</button>
+        </div>
+        <p class="hint">Tools aman (lihat folder, baca file) jalan otomatis. Menulis file &amp; menjalankan perintah butuh persetujuanmu di panel ini.</p>
+      </div>
+
+      <!-- ═══ MODE: DESKTOP PET ═══ -->
+      <div id="mode-pet" class="mode-panel hidden">
+        <div class="section-title">Desktop Pet</div>
+        <p class="hint">Karakter berjalan sebagai jendela kecil selalu di atas (always-on-top) mengikuti panggung model yang sama. Jendela pet terpisah — app utama boleh diminimalkan.</p>
+        <div class="note-row">
+          <button id="pet-launch" class="mini-btn">🐾 Buka Jendela Pet</button>
+          <button id="pet-close" class="mini-btn">✕ Tutup Pet</button>
+        </div>
+        <div id="pet-status" class="note-status"></div>
+        <p class="hint">Jendela pet memakai Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
+      </div>
 
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
            Semua ID & struktur pane dipertahankan persis — wiring app.js bergantung padanya. -->
@@ -747,6 +833,7 @@
        Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js. -->
   <script src="js/bundle.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/mode-runtime.js"></script>
   <!-- Motion Studio UI: terisolasi. Dimuat SETELAH app.js
        karena memakai window.__live2dAgent (registry, runtime, sheet). -->
   <script src="js/motion-editor.js"></script>

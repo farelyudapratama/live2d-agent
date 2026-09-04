@@ -4,3 +4,21 @@
 ║       http://127.0.0.1:8310               ║
 ╚══════════════════════════════════════════════╝
 
+[mode] aktif -> assistant
+[roles] role=assistant -> bai
+[roles] role=assistant -> bai
+[roles] role=assistant -> bai
+[roles] role=assistant -> bai
+[mode] aktif -> stage
+[mode] aktif -> vtuber
+[roles] role=chat -> Tf > 9ruter > bai
+[roles] role=chat -> Tf > 9ruter > bai
+[roles] role=chat -> Tf > 9ruter > bai
+[roles] role=chat -> Tf > 9ruter > bai
+[roles] role=chat -> Tf > 9ruter > bai
+[roles] role=chat -> Tf > 9ruter > bai
+[roles] role=chat -> Tf > 9ruter > bai
+[mode] aktif -> assistant
+[roles] role=assistant -> bai
+[roles] role=assistant -> bai
+[mode] aktif -> pet

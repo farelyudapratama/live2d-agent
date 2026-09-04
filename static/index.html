@@ -819,6 +819,18 @@
       <button id="ms-generate" class="mini-btn ms-small">🪄 Buat dari Teks</button>
       <button id="ms-save" class="mini-btn ms-small">💾 Simpan</button>
       <span id="ms-status" class="note-status" role="status" aria-live="polite"></span>
+      <div id="ms-gen-box" class="ms-gen-box hidden">
+        <input id="ms-gen-input" type="text" maxlength="200"
+          placeholder="mis. senang, badan bergoyang kanan-kiri + senyum lebar" />
+        <div class="ms-gen-chips">
+          <button class="ms-gen-chip" data-q="Senang, kepala mengangguk-gangguk dan senyum lebar">senang mengangguk</button>
+          <button class="ms-gen-chip" data-q="Malu, kepala menunduk lalu melirik ke samping">malu menunduk</button>
+          <button class="ms-gen-chip" data-q="Kaget, badan tersentak ke belakang lalu diam">kaget tersentak</button>
+          <button class="ms-gen-chip" data-q="Marah, kepala digeleng-geleng dan alis menyeringai">marah geleng</button>
+          <button class="ms-gen-chip" data-q="Sedih, kepala turun pelan-pelan, mata turun">sedih turun</button>
+        </div>
+        <button id="ms-gen-go" class="mini-btn ms-small">🪄 Buat</button>
+      </div>
     </div>
   </div>
 

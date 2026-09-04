@@ -6162,29 +6162,83 @@
   const presetPoseParams = new Set();
   const presetPoseParts = new Map();
 
+  // Reset total: hapus SEMUA override yang menempel (preset, aksesori part,
+  // impulse/energy dari gesture), hentikan motion & gesture yang berjalan,
+  // reset ekspresi + target emosi, lalu kembalikan tiap param ke nilai default
+  // model. Dipanggil tombol 🔄 Reset Pose.
   function releasePresetPose() {
     if (!state.model) return 0;
     let released = 0;
-    for (const id of presetPoseParams) {
-      if (id in state.overrides) { try { delete state.overrides[id]; released++; } catch (e) {} }
-    }
+
+    // 1) Hapus override preset + SEMUA override param lain (aksesori lewat
+    //    setPartOpacity juga menulis state.overrides — kalau tidak dibersihkan,
+    //    override guard akan menulis ulang nilai lama tiap frame).
+    released += Object.keys(state.overrides).length;
+    for (const id in state.overrides) delete state.overrides[id];
     presetPoseParams.clear();
+
+    // 2) Part opacity (aksesori/properti): kembalikan ke opacity sebelum
+    //    preset dipasang (atau 1 = tampil) lalu tulis langsung ke core model.
     if (presetPoseParts.size) {
       try {
         const cm = state.model.internalModel.coreModel;
-        const gm = (cm && cm.getModel) ? cm.getModel() : null;
-        const partDefs = new Map(((state.lastSheet && state.lastSheet.parts) || [])
-          .map((p) => [(p && p.id) || p, typeof p.def === "number" ? p.def : 1]));
+        const partDefs = new Map(
+          ((state.lastSheet && state.lastSheet.parts) || []).map((p) => [
+            (p && p.id) || p,
+            typeof p.def === "number" ? p.def : 1,
+          ]),
+        );
         for (const [id, prev] of presetPoseParts) {
-          const v = (prev != null && Number.isFinite(prev)) ? prev
-            : (partDefs.has(id) ? partDefs.get(id) : 1);
-          try { cm.setPartOpacityById(id, Math.max(0, Math.min(1, v))); released++; } catch (e) {}
+          const v =
+            prev != null && Number.isFinite(prev)
+              ? prev
+              : partDefs.has(id)
+                ? partDefs.get(id)
+                : 1;
+          try {
+            cm.setPartOpacityById(id, Math.max(0, Math.min(1, v)));
+            released++;
+          } catch (e) {}
         }
       } catch (e) {}
       presetPoseParts.clear();
     }
+
+    // 3) Motion & gesture yang sedang berjalan: hentikan semua layer, lalu
+    //    mulai idle lagi supaya karakter tidak membeku di pose terakhir.
+    try {
+      if (window.__live2dAgent?.stopAllMotions) window.__live2dAgent.stopAllMotions();
+      else if (window.MotionRuntime?.stopAll) window.MotionRuntime.stopAll();
+      startIdleMotion();
+    } catch (e) {}
+
+    // 4) Nada/gaya dari gesture terakhir + kecepatan animasi kembali normal.
+    try {
+      state.impulse = 0;
+      state.energyBoost = 0;
+    } catch (e) {}
+
+    // 5) Ekspresi (.exp3) & target emosi → netral.
     resetEmotion();
+
+    // 6) Tulis nilai default semua parameter yang punya rentang tercatat —
+    //    frame ini langsung netral (tidak menunggu idle melunak).
+    try {
+      const cm = state.model.internalModel.coreModel;
+      if (cm && state.paramRange) {
+        for (const id in state.paramRange) {
+          const r = state.paramRange[id];
+          if (r && typeof r.def === "number") {
+            try {
+              cm.setParameterValueById(id, r.def, 1);
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+
     state.activeProperty = "default";
+    state.activeEmotion = "";
     return released;
   }
 

@@ -88,8 +88,8 @@ ok('opacity part dicatat SEBELUM diubah sebagai dasar pemulihan',
   /if \(!presetPoseParts\.has\(id\)\) \{[\s\S]{0,400}getPartOpacityById\(id\);/.test(appSrc));
 ok('releasePresetPose menghapus override + memulihkan part + resetEmotion',
   /function releasePresetPose\(\)[\s\S]{0,900}delete state\.overrides\[id\];[\s\S]{0,1400}setPartOpacityById\(id,[\s\S]{0,1600}resetEmotion\(\);/.test(appSrc));
-ok('releasePresetPose total: SEMUA override + motion berhenti + param ke default',
-  /for \(const id in state\.overrides\) delete state\.overrides\[id\];[\s\S]{0,2200}stopAllMotions\(\);[\s\S]{0,1600}setParameterValueById\(id, r\.def, 1\);/.test(appSrc));
+ok('releasePresetPose total: SEMUA override + motion berhenti + aiPose di-nol-kan + param ke default',
+  /for \(const id in state\.overrides\) delete state\.overrides\[id\];[\s\S]{0,2200}stopAllMotions\(\);[\s\S]{0,900}state\.aiPose = \{[\s\S]{0,2000}setParameterValueById\(id, def, 1\);/.test(appSrc));
 ok('tombol 🔄 Reset Pose ada di atas daftar preset',
   /resetBtn\.textContent = '🔄 Reset Pose';/.test(appSrc));
 ok('setiap ekspresi teradopsi punya tombol tes (pasang di model)',

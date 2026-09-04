@@ -1036,10 +1036,23 @@
   // parameter rig — itu hanya mengundang halusinasi id). Hasilnya langsung
   // dikonversi ke track parameter memakai peta peran model ini, jadi begitu
   // muncul di editor ia sudah berupa raw track yang bisa disunting.
-  async function generateFromText() {
-    const prompt = window.prompt('Gerakan seperti apa? mis. "malu, kepala menunduk lalu lihat ke samping"');
-    if (!prompt || !prompt.trim()) return;
-    setStatus('🪄 membuat gerakan…');
+  function toggleGenBox(force) {
+    const box = $('#ms-gen-box');
+    if (!box) return;
+    const show = force !== undefined ? force : box.classList.contains('hidden');
+    box.classList.toggle('hidden', !show);
+    if (show) {
+      const inp = $('#ms-gen-input');
+      if (inp) { inp.focus(); inp.select(); }
+    }
+  }
+
+  async function generateFromText(promptArg) {
+    const box = $('#ms-gen-box');
+    const input = $('#ms-gen-input');
+    const prompt = promptArg || (input ? input.value : '');
+    if (!prompt || !prompt.trim()) { toggleGenBox(true); setStatus('tulis dulu gerakan yang mau dibuat', 'err'); return; }
+    setStatus('🪄 membuat gerakan — AI memilih parameter & keyframe…');
     try {
       const r = await fetch(API + '/api/motions/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1060,7 +1073,10 @@
       state.selected = null;
       state.dirty = true;
       renderAll(); applyScrubPose();
-      setStatus('🤖 draft dibuat — tekan ▶ untuk melihat, Simpan kalau cocok', 'ok');
+      // langsung preview: user lihat gerakannya seketika
+      try { playPreview(); } catch (e) {}
+      setStatus('🤖 "' + (gen.name || 'draft') + '" dibuat (' + (gen.tracks || []).length + ' track, AI pilih parameternya) — Simpan kalau cocok', 'ok');
+      if (box) box.classList.add('hidden');
     } catch (e) {
       setStatus('gagal membuat: ' + e.message, 'err');
     }
@@ -1258,7 +1274,14 @@
 
     on('#ms-save', 'click', saveDraft);
     on('#ms-analyze', 'click', analyzeWithAI);
-    on('#ms-generate', 'click', generateFromText);
+    on('#ms-generate', 'click', () => toggleGenBox());
+    on('#ms-gen-go', 'click', () => generateFromText());
+    on('#ms-gen-input', 'keydown', (ev) => { if (ev.key === 'Enter') generateFromText(); });
+    document.querySelectorAll('.ms-gen-chip').forEach((ch) => ch.addEventListener('click', () => {
+      const inp = $('#ms-gen-input');
+      if (inp) inp.value = ch.dataset.q || '';
+      generateFromText(ch.dataset.q || '');
+    }));
 
     // Keyboard: Space = putar/berhenti · Delete/Backspace = hapus key terpilih ·
     // Ctrl+Z / Ctrl+Y (atau Ctrl+Shift+Z) = undo/redo · Escape = tutup.

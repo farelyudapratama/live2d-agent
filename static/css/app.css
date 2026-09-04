@@ -2555,3 +2555,22 @@ input[type="range"]::-moz-range-thumb {
 }
 .conn-switch input:checked + .slider { background: rgba(143,220,195,.35); border-color: rgba(143,220,195,.5); }
 .conn-switch input:checked + .slider::before { transform: translateX(13px); background: var(--mint, #8fdcc3); }
+
+/* ── Motion Studio: kotak prompt "Buat dari Teks" ─────────────── */
+.ms-gen-box {
+  width: 100%; display: flex; flex-direction: column; gap: 6px;
+  padding-top: 8px; border-top: 1px dashed var(--line-soft);
+}
+.ms-gen-box.hidden { display: none; }
+.ms-gen-box input {
+  width: 100%; font-size: 12px; padding: 6px 10px;
+  border-radius: 9px; border: 1px solid var(--line);
+  background: rgba(0,0,0,.3); color: var(--text);
+}
+.ms-gen-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ms-gen-chip {
+  font-size: 10.5px; padding: 3px 8px; border-radius: 99px;
+  border: 1px solid var(--line-soft); background: rgba(255,255,255,.04);
+  color: var(--muted); cursor: pointer; transition: all .12s;
+}
+.ms-gen-chip:hover { color: var(--text); border-color: var(--lamp); background: rgba(245,184,92,.1); }

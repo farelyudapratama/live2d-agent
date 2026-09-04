@@ -636,7 +636,31 @@
       const talkHead = state.talking ? Math.sin(t * 9.0) * 5 : 0;
 
       let bAx, bAy, bEx, bEy, bMf, bBx, bBy, bBz;
-      if (!state.aiLock) {
+      // Saat layer motion aktif (motionRuntime), POSE DIMILIKI motion:
+      // baca langsung aiPose (yang membawa delta motion via applyPoseDelta).
+      // Cabang lama hanya punya dua mode (look / aiLock+easing) — di mode
+      // normal delta motion diabaikan total, dan di aiLock easing 0.16 tiap
+      // frame meredam amplitudo hingga 85% (gerakan cepat sampai terlihat
+      // tidak berjalan).
+      const motionLayersActive = !!(
+        haveMotionSystem &&
+        motionRuntime &&
+        motionRuntime.isPlaying()
+      );
+      if (motionLayersActive) {
+        const P = state.aiPose;
+        const frozen = !!state.frozen;
+        const ft = state.fidgetT + state.fidgetSeed;
+        const amp = frozen ? 0 : 1 + liveliness * 1.6;
+        bAx = (P.ax || 0) + (frozen ? 0 : Math.sin(ft * 0.6) * 2 * amp);
+        bAy = (P.ay || 0) + (frozen ? 0 : Math.sin(ft * 0.45) * 1.5 * amp);
+        bEx = (P.ex || 0) + (frozen ? 0 : E1 * 0.4);
+        bEy = (P.ey || 0) + (frozen ? 0 : E2 * 0.4);
+        bMf = P.mouthForm || 0;
+        bBx = P.bodyX || 0;
+        bBy = P.bodyY || 0;
+        bBz = P.bodyZ || 0;
+      } else if (!state.aiLock) {
         const L = state.look,
           k = 0.28;
         L.ax += (L.tax - L.ax) * k;
@@ -708,6 +732,8 @@
         }
       }
 
+      // Saat layer motion aktif, pose dimiliki motion (lihat cabang di atas)
+      // — tulis langsung tanpa lerp supaya amplitudo motion tidak teredam.
       const ease = state.talking ? 0.25 : 0.16;
       const target = (role, vRef) => {
         const id = roleId(role);
@@ -715,6 +741,10 @@
         if (poseAuthority <= 0.001) return;
 
         const actual = roleClampActual(role, toActual(role, vRef));
+        if (motionLayersActive) {
+          pokeParam(id, actual, 1);
+          return;
+        }
         const cur = readParam(id);
         pokeParam(id, cur + (actual - cur) * ease * poseAuthority, 1);
       };
@@ -5654,53 +5684,64 @@
     }
   });
 
+  // Amplitudo & durasi sengaja diperbesar (±14-18°, 0.9-1.6 dtk) — gerakan
+  // perlu TERLIHAT jelas di panggung; versi lama (±6-12°, 0.6 dtk) terlalu
+  // halus sehingga dianggap tidak berjalan.
   const GESTURE_LIBRARY = {
     nod: [
-      { d: { ay: -8 }, ms: 160 },
-      { d: { ay: 6 }, ms: 160 },
-      { d: { ay: -5 }, ms: 140 },
-      { d: {}, ms: 160 },
+      { d: { ay: -14 }, ms: 260 },
+      { d: { ay: 12 }, ms: 240 },
+      { d: { ay: -9 }, ms: 220 },
+      { d: { ay: 4 }, ms: 180 },
+      { d: {}, ms: 200 },
     ],
     shake: [
-      { d: { ax: -10 }, ms: 150 },
-      { d: { ax: 10 }, ms: 150 },
-      { d: { ax: -7 }, ms: 140 },
-      { d: {}, ms: 160 },
+      { d: { ax: -16 }, ms: 220 },
+      { d: { ax: 16 }, ms: 220 },
+      { d: { ax: -12 }, ms: 200 },
+      { d: { ax: 7 }, ms: 180 },
+      { d: {}, ms: 220 },
     ],
     tilt_curious: [
-      { d: { bodyZ: 10, ax: 6, ex: 0.15 }, ms: 260 },
-      { d: { bodyZ: 8, ax: 5 }, ms: 500 },
+      { d: { bodyZ: 12, ax: 9, ex: 0.25 }, ms: 400 },
+      { d: { bodyZ: 10, ax: 7 }, ms: 800 },
+      { d: {}, ms: 240 },
     ],
     lean_excited: [
-      { d: { bodyY: -6, ay: -6 }, ms: 180 },
-      { d: { bodyY: 3, ay: 2 }, ms: 220 },
-      { d: {}, ms: 260 },
+      { d: { bodyY: -9, ay: -9, ey: 0.15 }, ms: 260 },
+      { d: { bodyY: 4, ay: 3 }, ms: 300 },
+      { d: {}, ms: 340 },
     ],
     recoil_surprised: [
-      { d: { ay: -12, bodyY: 6, ex: -0.1, ey: -0.15 }, ms: 140 },
-      { d: { ay: -4 }, ms: 260 },
-      { d: {}, ms: 300 },
+      { d: { ay: -16, bodyY: 9, ex: -0.15, ey: -0.2 }, ms: 200 },
+      { d: { ay: -6, ey: -0.1 }, ms: 380 },
+      { d: { ay: 2 }, ms: 220 },
+      { d: {}, ms: 320 },
     ],
     look_away_shy: [
-      { d: { ax: -14, ex: -0.35, ay: 6 }, ms: 320 },
-      { d: { ax: -8, ex: -0.2 }, ms: 500 },
+      { d: { ax: -17, ex: -0.45, ay: 8 }, ms: 460 },
+      { d: { ax: -10, ex: -0.3 }, ms: 760 },
+      { d: {}, ms: 260 },
     ],
     laugh_bounce: [
-      { d: { ay: -6, bodyY: -5 }, ms: 120 },
-      { d: { ay: 4, bodyY: 3 }, ms: 120 },
-      { d: { ay: -4, bodyY: -3 }, ms: 120 },
-      { d: { ay: 2, bodyY: 2 }, ms: 120 },
-      { d: {}, ms: 160 },
+      { d: { ay: -10, bodyY: -8 }, ms: 160 },
+      { d: { ay: 7, bodyY: 5 }, ms: 160 },
+      { d: { ay: -7, bodyY: -5 }, ms: 160 },
+      { d: { ay: 4, bodyY: 3 }, ms: 140 },
+      { d: { ay: -2 }, ms: 120 },
+      { d: {}, ms: 200 },
     ],
     think: [
-      { d: { bodyZ: -8, ax: -5, ay: 4, ex: -0.2, ey: -0.1 }, ms: 300 },
-      { d: { bodyZ: -6, ax: -4 }, ms: 700 },
+      { d: { bodyZ: -11, ax: -8, ay: 5, ex: -0.3, ey: -0.15 }, ms: 420 },
+      { d: { bodyZ: -9, ax: -6 }, ms: 1100 },
+      { d: {}, ms: 260 },
     ],
     wave_hi: [
-      { d: { ax: 8, ay: -4, bodyX: 4 }, ms: 200 },
-      { d: { ax: -6 }, ms: 200 },
-      { d: { ax: 4 }, ms: 200 },
-      { d: {}, ms: 200 },
+      { d: { ax: 12, ay: -6, bodyX: 6 }, ms: 300 },
+      { d: { ax: -9 }, ms: 280 },
+      { d: { ax: 6 }, ms: 260 },
+      { d: { ax: -3 }, ms: 200 },
+      { d: {}, ms: 260 },
     ],
   };
 

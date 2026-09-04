@@ -1,0 +1,345 @@
+/**
+ * js/mode-runtime.js — Sistem mode: chat (default) / vtuber / assistant / pet.
+ * Aturan ketat: HANYA SATU mode aktif. Pindah mode = runtime lama dihancurkan
+ * (interval, listener, feed dibersihkan) sebelum yang baru dinyalakan.
+ */
+(function () {
+  const API = location.origin;
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+  let active = "chat";
+  let destroyFn = null;
+  let pollTimer = null;
+
+  // ── Util ─────────────────────────────────────────────────────
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  async function post(path, body) {
+    const r = await fetch(API + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || "HTTP " + r.status);
+    return d;
+  }
+
+  // Panggilan LLM generik (dipakai vtuber untuk membalas chat)
+  async function askLLM(messages, system) {
+    const r = await fetch(API + "/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, system }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || "LLM error");
+    return d.reply || "";
+  }
+
+  // ── Mode switching ───────────────────────────────────────────
+  function setPanel(mode) {
+    $$(".mode-panel").forEach((p) => p.classList.add("hidden"));
+    const panel = $("#mode-" + mode);
+    if (panel) panel.classList.remove("hidden");
+    $$("#mode-switch button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    const labels = { chat: "Panggung", vtuber: "VTuber", assistant: "Assistant", pet: "Pet" };
+    const lbl = $("#mode-label");
+    if (lbl) lbl.textContent = labels[mode] || mode;
+  }
+
+  async function switchMode(mode) {
+    if (mode === active) { setPanel(mode); return; }
+    // 1) hancurkan runtime client lama
+    try { if (destroyFn) destroyFn(); } catch (e) { console.warn("[mode] teardown lama gagal:", e); }
+    destroyFn = null;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    // 2) hancurkan runtime server lama (memori/timer server ikut lepas)
+    try { await post("/api/mode", { mode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
+    active = mode;
+    setPanel(mode);
+    // 3) nyalakan runtime client baru
+    if (mode === "vtuber") destroyFn = startVtuberClient();
+    else if (mode === "assistant") destroyFn = startAssistantClient();
+    else if (mode === "pet") destroyFn = startPetClient();
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // VTUBER — feed live + balasan AI + alert donasi
+  // ═════════════════════════════════════════════════════════════
+  function startVtuberClient() {
+    const feed = $("#vt-feed");
+    const status = $("#vt-status");
+    const alertBox = $("#vt-alert");
+    let cursor = 0;
+    let stopped = false;
+    let lastSpeakAt = 0;
+    let speakQueue = [];
+
+    function line(ev) {
+      const cls = ev.type === "donation" ? "donation" : ev.type === "system" ? "system" : ev.type === "agent" ? "agent" : "";
+      const row = el("div", "vt-line " + cls);
+      if (ev.type === "donation") row.appendChild(el("span", "vt-amount", "💸 " + (ev.amount || "")));
+      row.appendChild(el("span", "vt-user", ev.user));
+      row.appendChild(document.createTextNode(ev.text || ""));
+      feed.appendChild(row);
+      while (feed.children.length > 120) feed.removeChild(feed.firstChild);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    function alert(ev) {
+      alertBox.textContent = "🎉 " + ev.user + " donasi " + (ev.amount || "") + "!";
+      alertBox.classList.remove("hidden");
+      setTimeout(() => alertBox.classList.add("hidden"), 6000);
+    }
+
+    // suara + bubble via app utama kalau ada
+    function speak(text) {
+      try {
+        if (window.__debugSpeak) window.__debugSpeak(text);
+        else if (window.__addChat) window.__addChat("agent", text);
+      } catch (e) {}
+    }
+
+    async function maybeRespond(ev) {
+      const respond = $("#vt-respond") && $("#vt-respond").checked;
+      if (!respond) return;
+      const cooldown = Math.max(5, Number(($("#vt-cooldown") || {}).value) || 12) * 1000;
+      if (Date.now() - lastSpeakAt < cooldown) return; // antrean sederhana: skip
+      lastSpeakAt = Date.now();
+      const persona = ($("#vt-persona") || {}).value || "ceria dan ramah";
+      const isDono = ev.type === "donation";
+      const prompt = isDono
+        ? `Penonton bernama ${ev.user} baru saja donasi ${ev.amount || ""} dengan pesan: "${ev.text}". Ucapkan terima kasih hangat yang khas (1-2 kalimat).`
+        : `Penonton bernama ${ev.user} bilang di live chat: "${ev.text}". Balas singkat (1 kalimat) yang fun dan personal.`;
+      try {
+        const reply = await askLLM(
+          [{ role: "user", content: prompt }],
+          "Kamu adalah VTuber Live2D yang sedang streaming. Gaya bicara: " + persona + ". Jawab HANYA kalimat yang akan diucapkan, tanpa awalan nama.",
+        );
+        if (reply && !stopped) {
+          vtuberAgentSay(reply);
+          speak(reply);
+        }
+      } catch (e) {
+        line({ type: "system", user: "system", text: "AI gagal balas: " + e.message });
+      }
+    }
+
+    async function poll() {
+      if (stopped) return;
+      try {
+        const r = await fetch(API + "/api/vtuber/events?since=" + cursor);
+        const d = await r.json();
+        cursor = d.cursor || cursor;
+        for (const ev of d.events || []) {
+          line(ev);
+          if (ev.type === "donation") alert(ev);
+          if (ev.type === "chat" || ev.type === "donation") maybeRespond(ev);
+        }
+      } catch (e) { /* server restart dsb — coba lagi */ }
+    }
+
+    // wiring tombol start/stop
+    const onStart = async () => {
+      const provider = ($("#vt-provider") || {}).value || "mock";
+      const body = { provider };
+      if (provider === "twitch") body.channel = ($("#vt-channel") || {}).value || "";
+      if (provider === "youtube") {
+        body.videoId = ($("#vt-video-id") || {}).value || "";
+        body.apiKey = ($("#vt-yt-key") || {}).value || "";
+      }
+      try {
+        await post("/api/vtuber/start", body);
+        status.textContent = "AKTIF (" + provider + ")";
+        status.style.color = "var(--mint)";
+        cursor = 0;
+        feed.textContent = "";
+      } catch (e) {
+        status.textContent = "gagal: " + e.message;
+        status.style.color = "var(--coral)";
+      }
+    };
+    const onStop = async () => {
+      stopped = true;
+      try { await post("/api/vtuber/stop"); } catch (e) {}
+      status.textContent = "tidak aktif";
+      status.style.color = "";
+    };
+    const onProviderChange = () => {
+      const v = ($("#vt-provider") || {}).value;
+      $("#vt-row-channel").classList.toggle("hidden", v !== "twitch");
+      $("#vt-row-ytid").classList.toggle("hidden", v !== "youtube");
+      $("#vt-row-ytkey").classList.toggle("hidden", v !== "youtube");
+    };
+    $("#vt-start").addEventListener("click", onStart);
+    $("#vt-stop").addEventListener("click", onStop);
+    $("#vt-provider").addEventListener("change", onProviderChange);
+    onProviderChange();
+    pollTimer = setInterval(poll, 2500);
+
+    return function destroy() {
+      stopped = true;
+      $("#vt-start").removeEventListener("click", onStart);
+      $("#vt-stop").removeEventListener("click", onStop);
+      $("#vt-provider").removeEventListener("change", onProviderChange);
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      post("/api/vtuber/stop").catch(() => {});
+      feed.textContent = "";
+    };
+  }
+
+  // Helper dipanggil dari vtuber client untuk mencatat balasan AI di feed
+  function vtuberAgentSay(text) {
+    fetch(API + "/api/vtuber/mock-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "agent", user: "AI", text }),
+    }).catch(() => {});
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ASSISTANT — chat + log tools + approval
+  // ═════════════════════════════════════════════════════════════
+  function startAssistantClient() {
+    const log = $("#as-log");
+    const approvalsBox = $("#as-approvals");
+    const input = $("#as-input");
+    let stopped = false;
+
+    // runtime server langsung menyala saat mode dibuka — tanpa tombol
+    post("/api/assistant/start", { workDir: ($("#as-workdir") || {}).value || undefined })
+      .then(() => line("tool", "Assistant aktif. Folder kerja: project ini. Minta apa saja…"))
+      .catch((e) => line("tool", "gagal start: " + e.message));
+
+    function line(role, text) {
+      const row = el("div", "as-line " + role, text);
+      log.appendChild(row);
+      while (log.children.length > 150) log.removeChild(log.firstChild);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function refresh() {
+      if (stopped) return;
+      try {
+        const st = await fetch(API + "/api/mode").then((r) => r.json());
+        // render approval pending
+        approvalsBox.textContent = "";
+        for (const ap of st.assistant?.pendingApprovals || []) {
+          const box = el("div", "as-approval");
+          box.appendChild(el("div", "", "⚠️ Izinkan " + ap.tool + "?"));
+          box.appendChild(el("div", "as-line tool", JSON.stringify(ap.args).slice(0, 220)));
+          const row = el("div", "as-ap-row");
+          const ok = el("button", "mini-btn", "✅ Izinkan");
+          const no = el("button", "mini-btn", "✋ Tolak");
+          ok.addEventListener("click", async () => {
+            try {
+              const d = await post("/api/assistant/approve", { id: ap.id, approve: true });
+              if (d.reply) line("assistant", d.reply);
+            } catch (e) { line("tool", "gagal: " + e.message); }
+            refresh();
+          });
+          no.addEventListener("click", async () => {
+            try { await post("/api/assistant/approve", { id: ap.id, approve: false }); } catch (e) {}
+            line("tool", "Ditolak user.");
+            refresh();
+          });
+          row.appendChild(ok); row.appendChild(no);
+          box.appendChild(row);
+          approvalsBox.appendChild(box);
+        }
+      } catch (e) {}
+    }
+
+    async function send() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      line("user", text);
+      line("tool", "…memproses (tools bisa beberapa langkah)…");
+      try {
+        // set workdir sekali di awal
+        const wd = ($("#as-workdir") || {}).value;
+        const d = await post("/api/assistant/ask", { text, workDir: wd || undefined });
+        // tarik riwayat terbaru dari server (sumber kebenaran)
+        const hist = await fetch(API + "/api/assistant/history").then((r) => r.json());
+        log.textContent = "";
+        for (const m of hist.slice(-40)) line(m.role === "tool" ? "tool" : m.role, m.content);
+      } catch (e) {
+        log.removeChild(log.lastChild);
+        line("assistant", "⚠️ " + e.message);
+      }
+      refresh();
+    }
+
+    const onSend = () => send();
+    const onKey = (e) => { if (e.key === "Enter") send(); };
+    $("#btn-as-send").addEventListener("click", onSend);
+    input.addEventListener("keydown", onKey);
+    const iv = setInterval(refresh, 4000);
+    refresh();
+
+    return function destroy() {
+      stopped = true;
+      $("#btn-as-send").removeEventListener("click", onSend);
+      input.removeEventListener("keydown", onKey);
+      clearInterval(iv);
+      post("/api/assistant/stop").catch(() => {});
+      log.textContent = "";
+      approvalsBox.textContent = "";
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PET — jendela overlay terpisah
+  // ═════════════════════════════════════════════════════════════
+  function startPetClient() {
+    const status = $("#pet-status");
+    async function checkStatus() {
+      try {
+        const st = await fetch(API + "/api/mode").then((r) => r.json());
+        status.textContent = st.pet?.running ? "jendela pet terbuka ✅" : "belum terbuka";
+      } catch (e) { status.textContent = ""; }
+    }
+    const onLaunch = async () => {
+      status.textContent = "membuka jendela…";
+      try {
+        const d = await post("/api/pet/launch");
+        status.textContent = d.how ? "jendela pet dibuka (" + d.how + ")" : "terbuka";
+      } catch (e) { status.textContent = "gagal: " + e.message; }
+    };
+    const onClose = async () => {
+      try { await post("/api/pet/close"); } catch (e) {}
+      status.textContent = "ditutup";
+    };
+    $("#pet-launch").addEventListener("click", onLaunch);
+    $("#pet-close").addEventListener("click", onClose);
+    checkStatus();
+    const iv = setInterval(checkStatus, 5000);
+    // otomatis buka saat mode pet dipilih
+    onLaunch();
+
+    return function destroy() {
+      $("#pet-launch").removeEventListener("click", onLaunch);
+      $("#pet-close").removeEventListener("click", onClose);
+      clearInterval(iv);
+      post("/api/pet/close").catch(() => {});
+    };
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────
+  $$("#mode-switch button").forEach((b) => b.addEventListener("click", () => switchMode(b.dataset.mode)));
+  fetch(API + "/api/mode").then((r) => r.json()).then((st) => {
+    // mode tersimpan di server hanya berlaku sesi runtime; UI selalu mulai chat
+    setPanel("chat");
+  }).catch(() => setPanel("chat"));
+
+  // ekspor untuk debug
+  window.__modeRuntime = { switchMode, get active() { return active; } };
+})();

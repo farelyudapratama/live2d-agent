@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>Desktop Pet — Live2D Agent</title>
+<style>
+  /* Latar transparan dijendela --app Chrome: chroma key tak perlu,
+     body transparan sudah cukup karena --app tanpa kiosk tetap punya
+     background default OS. Untuk kesan overlay: semua elemen mengambang. */
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
+  #stage {
+    position: fixed; inset: 0;
+    background: transparent;
+  }
+  #live2d-canvas { position: absolute; top: 0; left: 0; }
+  #pet-ui {
+    position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 6px; opacity: 0.25; transition: opacity .2s;
+  }
+  #pet-ui:hover { opacity: 1; }
+  .btn {
+    border: 1px solid rgba(255,255,255,.18); background: rgba(20,20,26,.82);
+    color: #eee; border-radius: 10px; padding: 5px 10px; font: 12px system-ui; cursor: pointer;
+  }
+  .btn:hover { background: rgba(60,60,74,.9); }
+  #bubble {
+    position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%);
+    max-width: 320px; background: rgba(18,16,28,.92); color: #fff;
+    border: 1px solid rgba(255,255,255,.14); border-radius: 12px;
+    padding: 8px 12px; font: 13px/1.5 system-ui; display: none;
+  }
+  #status {
+    position: fixed; top: 6px; left: 8px; font: 10px monospace; color: rgba(255,255,255,.4);
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="live2d-canvas"></canvas></div>
+<div id="status">pet</div>
+<div id="bubble"><span id="bubble-text"></span></div>
+<div id="pet-ui">
+  <button class="btn" id="b-wave">👋 Sapa</button>
+  <button class="btn" id="b-talk">💬 Bicara</button>
+  <button class="btn" id="b-close">✕ Tutup</button>
+</div>
+<script src="js/pixi.6.5.10.min.js"></script>
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/pixi-live2d-0.4.0.js"></script>
+<script>
+(function () {
+  const API = location.origin;
+  const qs = new URLSearchParams(location.search);
+  const state = { model: null, app: null, bubbleTimer: null, idleTimer: null, dir: 1 };
+
+  function bubble(text, ms) {
+    const b = document.getElementById("bubble");
+    document.getElementById("bubble-text").textContent = text;
+    b.style.display = "block";
+    clearTimeout(state.bubbleTimer);
+    state.bubbleTimer = setTimeout(() => (b.style.display = "none"), ms || 3500);
+  }
+
+  async function boot() {
+    document.getElementById("status").textContent = "memuat model…";
+    let path = qs.get("model");
+    if (!path) {
+      try {
+        const r = await fetch(API + "/api/models");
+        const d = await r.json();
+        const first = (d.models || [])[0];
+        if (first) {
+          const rp = await fetch(API + "/api/model/path?name=" + encodeURIComponent(first));
+          const dp = await rp.json();
+          path = dp.path;
+        }
+      } catch (e) {}
+    }
+    if (!path) { document.getElementById("status").textContent = "tidak ada model"; return; }
+    await PIXI.live2d.registerTicker(PIXI);
+    const app = new PIXI.Application({
+      view: document.getElementById("live2d-canvas"),
+      width: window.innerWidth, height: window.innerHeight,
+      backgroundAlpha: 0, autoDensity: true, resolution: Math.min(devicePixelRatio || 1, 2),
+    });
+    state.app = app;
+    const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
+    state.model = model;
+    app.stage.addChild(model);
+    // skala pas jendela
+    const b = model.getBounds();
+    const s = Math.min((window.innerWidth * 0.9) / (b.width / model.scale.x), (window.innerHeight * 0.92) / (b.height / model.scale.y));
+    model.scale.set(s);
+    model.x = (window.innerWidth - (b.width / model.scale.x) * s) / 2;
+    model.y = (window.innerHeight - (b.height / model.scale.y) * s) / 2 - window.innerHeight * 0.03;
+    document.getElementById("status").textContent = "pet aktif";
+    startIdleLife();
+  }
+
+  // ── "hidup" sebagai pet: goyang pelan + tatapan acak + sapa berkala ──
+  function startIdleLife() {
+    let t = 0;
+    setInterval(() => {
+      const m = state.model;
+      if (!m) return;
+      t += 0.016;
+      // goyang halus seperti bernapas
+      const sway = Math.sin(t * 1.2) * 4;
+      m.position.x = m.position.x; // anchor tetap
+      m.rotation = Math.sin(t * 0.9) * 0.012;
+      // tatapan ke arah kursor
+    }, 16);
+    window.addEventListener("mousemove", (e) => {
+      const m = state.model;
+      if (!m || !m.internalModel) return;
+      try {
+        const core = m.internalModel.coreModel;
+        const set = (id, v) => { try { core.setParameterValueById(id, v); } catch {} };
+        const rect = { w: window.innerWidth, h: window.innerHeight };
+        const nx = (e.clientX / rect.w) * 2 - 1;
+        const ny = (e.clientY / rect.h) * 2 - 1;
+        set("ParamAngleX", nx * 18); set("ParamAngleY", -ny * 14);
+        set("ParamEyeBallX", nx); set("ParamEyeBallY", -ny);
+      } catch (err) {}
+    });
+    // sapa berkala kecil
+    const lines = [
+      "Jangan lupa istirahat ya~ 👀", "Kamu kelihatan sibuk banget…",
+      "Halo! Aku di sini kalau butuh 💫", "*menyaksikanmu bekerja*",
+      "Sebentar lagi jam makan siang?", "Semangat! 💪",
+    ];
+    state.idleTimer = setInterval(() => {
+      if (Math.random() < 0.5) bubble(lines[Math.floor(Math.random() * lines.length)]);
+    }, 90000);
+  }
+
+  function motionOrExpression(kind) {
+    const m = state.model;
+    if (!m) return;
+    try {
+      if (kind === "wave" && m.motion) m.motion("TapBody", Math.floor(Math.random() * 2));
+    } catch (e) {}
+  }
+
+  document.getElementById("b-wave").addEventListener("click", () => {
+    motionOrExpression("wave");
+    bubble("Halo juga! 👋");
+  });
+  document.getElementById("b-talk").addEventListener("click", () => {
+    const lines = ["Hari ini mau ngapain?", "Butuh bantuan? Buka mode Assistant di app utama ya.", "Aku cuma pet kecil, tapi aku setia 🐾"];
+    bubble(lines[Math.floor(Math.random() * lines.length)]);
+  });
+  document.getElementById("b-close").addEventListener("click", async () => {
+    try { await fetch(API + "/api/pet/close", { method: "POST" }); } catch (e) {}
+    window.close();
+  });
+
+  boot().catch((e) => { document.getElementById("status").textContent = "gagal: " + e.message; });
+})();
+</script>
+</body>
+</html>

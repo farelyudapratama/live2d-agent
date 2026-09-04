@@ -15,6 +15,9 @@ import { execSync } from "child_process";
 // @ts-ignore — modul TS client, dipakai bareng oleh server & bundle browser
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
+import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay } from "./vtuber";
+import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset } from "./assistant";
+import { petLaunch, petClose, petStatus } from "./pet";
 
 const PORT = Number(process.env.PORT) || 8310;
 const ROOT = import.meta.dir;
@@ -206,6 +209,28 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="GET" && path==="/api/tts/options") return handleTTSOptions(req);
   if(method==="GET" && path==="/api/model/avatar") return handleModelAvatar(req);
 
+  // ── Mode manager (vtuber / assistant / pet) — satu mode aktif ──
+  if(method==="GET" && path==="/api/mode") return json(modeStatus());
+  if(method==="POST" && path==="/api/mode") return handleModePost(req);
+
+  // VTuber runtime
+  if(method==="POST" && path==="/api/vtuber/start") return handleVtuberStart(req);
+  if(method==="POST" && path==="/api/vtuber/stop") { vtuberStop(); return json({ok:true}); }
+  if(method==="GET" && path==="/api/vtuber/events") return handleVtuberEvents(req);
+  if(method==="POST" && path==="/api/vtuber/mock-event") return handleVtuberMockEvent(req);
+
+  // Assistant runtime
+  if(method==="POST" && path==="/api/assistant/start") return handleAssistantStart(req);
+  if(method==="POST" && path==="/api/assistant/stop") { assistantStop(); return json({ok:true}); }
+  if(method==="GET" && path==="/api/assistant/history") return json(assistantHistory());
+  if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);
+  if(method==="POST" && path==="/api/assistant/approve") return handleAssistantApprove(req);
+  if(method==="POST" && path==="/api/assistant/reset") { assistantReset(); return json({ok:true}); }
+
+  // Pet overlay window
+  if(method==="POST" && path==="/api/pet/launch") { return json(petLaunch()); }
+  if(method==="POST" && path==="/api/pet/close") { petClose(); return json({ok:true}); }
+
   // classify-params / analyze-sheet / animate-text
   if(method==="POST" && path==="/api/model/classify-params") return handleClassifyParams(req);
   if(method==="POST" && path==="/api/model/analyze-sheet") return handleAnalyzeSheet(req);
@@ -239,6 +264,74 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="DELETE" && path.startsWith("/api/motions/")) return handleMotionsDelete(req);
 
   return null;
+}
+
+// ── Mode manager — satu mode aktif, pindah mode = teardown memori ──
+// mode "stage"    : default (panggung + chat seperti biasa)
+// mode "vtuber"   : runtime streaming aktif (konektor chat/donasi)
+// mode "assistant": runtime agent lokal aktif
+// mode "pet"      : overlay desktop (jendela terpisah)
+let activeMode = "stage";
+function teardownMode(mode: string) {
+  if (mode === "vtuber") vtuberStop();
+  if (mode === "assistant") assistantStop();
+  if (mode === "pet") petClose();
+}
+function modeStatus() {
+  return {
+    active: activeMode,
+    vtuber: vtuberStatus(),
+    assistant: assistantStatus(),
+    pet: petStatus(),
+  };
+}
+async function handleModePost(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const want = String(body?.mode || "stage");
+  if (!["stage", "vtuber", "assistant", "pet"].includes(want)) return json({ error: "mode tidak dikenal: " + want }, 400);
+  if (want === activeMode) return json(modeStatus());
+  // teardown mode lama SEBELUM mengaktifkan yang baru — memori & timer dilepas
+  teardownMode(activeMode);
+  activeMode = want;
+  console.log("[mode] aktif ->", want);
+  return json(modeStatus());
+}
+async function handleVtuberStart(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  if (activeMode !== "vtuber") { teardownMode(activeMode); activeMode = "vtuber"; }
+  const r = vtuberStart(body || {});
+  return json(r, r.ok ? 200 : 400);
+}
+async function handleVtuberEvents(req: Request): Promise<Response> {
+  const since = Number(new URL(req.url).searchParams.get("since") || 0);
+  return json(vtuberEvents(since));
+}
+function vtuberInject(body: any) {
+  // dipakai UI untuk mensimulasikan chat/donasi saat runtime aktif
+  const { vtuberInjectEvent } = require("./vtuber") as any;
+  return vtuberInjectEvent(body);
+}
+async function handleVtuberMockEvent(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const ev = vtuberInject(body || {});
+  if (!ev) return json({ error: "runtime tidak aktif" }, 400);
+  return json(ev);
+}
+async function handleAssistantStart(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  if (activeMode !== "assistant") { teardownMode(activeMode); activeMode = "assistant"; }
+  const r = assistantStart(body || {});
+  return json(r, r.ok ? 200 : 400);
+}
+async function handleAssistantAsk(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const r = await assistantAsk(String(body?.text || ""), config);
+  return json(r, r.ok ? 200 : 400);
+}
+async function handleAssistantApprove(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const r = await assistantResolveApproval(String(body?.id || ""), !!body?.approve, config);
+  return json(r, r.ok ? 200 : 400);
 }
 
 // ── handlers ────────────────────────────────────────────────────

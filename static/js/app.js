@@ -28,10 +28,13 @@
     };
   })();
 
-  const API =
-    typeof location !== "undefined" && /^https?:$/.test(location.protocol)
-      ? location.origin
-      : "http://127.0.0.1:8310";
+  // server.js honours process.env.PORT, so a hardcoded :8310 silently breaks every
+  // fetch the moment the server runs on any other port. The page is always served
+  // BY that same server, so location.origin is correct by construction.
+  // The literal survives only as a file:// fallback (opening index.html directly).
+  const API = (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
+    ? location.origin
+    : 'http://127.0.0.1:8310';
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
   const state = {
@@ -298,7 +301,9 @@
       fitStageBgImage(state.modelConfig && state.modelConfig.bgDim);
     } catch (e) {}
     if (state.model) {
-      state.stageArea = { width: Math.max(280, app.screen.width - 380) };
+      // Panel kontrol kini drawer kanan — panggung tidak pernah dipotong,
+      // framing selalu pakai lebar penuh stage.
+      state.stageArea = { width: app.screen.width };
       frameModel(state.fullBody ? "full" : "upper");
     }
   });
@@ -491,6 +496,9 @@
       state.stageArea = { width: app.screen.width };
 
       applyModelConfig(loadModelConfigLocal());
+      // Panel terbuka saat model selesai dimuat → framing lama memakai
+      // stageArea sempit. Hitung ulang dengan lebar penuh.
+      applyCharacterIdentity();
 
       console.log("[Live2D] Model loaded:", state.model);
       rememberModel(modelPath);
@@ -1034,7 +1042,8 @@
     const m = state.model;
     const W = app.screen.width,
       H = app.screen.height;
-    const stageW = (state.stageArea && state.stageArea.width) || W * 0.55;
+    // Panel kontrol kini drawer kanan — panggung selalu lebar penuh.
+    const stageW = W;
 
     const validSize = (w, h) =>
       Number.isFinite(w) && Number.isFinite(h) && w > 1 && h > 1;
@@ -1752,7 +1761,7 @@
   let overlayGateModelPath = null;
 
   function overlayGateExpBindings() {
-    if (overlayGateModelPath !== (state.modelPath || "")) {
+    if (overlayGateModelPath !== (state.modelPath || '')) {
       overlayGateExprs = undefined;
       overlayGateModelPath = state.modelPath || "";
     }
@@ -1830,7 +1839,7 @@
       })
       .filter(Boolean);
     return named.length
-      ? "Rig: " + named[0] + (named.length > 1 ? " +" + (named.length - 1) : "")
+      ? 'Rig: ' + named[0] + (named.length > 1 ? ' +' + (named.length - 1) : '')
       : gid;
   }
 
@@ -1871,10 +1880,7 @@
           for (const p of sheet.params) {
             const info = byId.get(p && p.id);
             if (!info) continue;
-            if (info.label && p.label !== info.label) {
-              p.label = info.label;
-              changed = true;
-            }
+            if (info.label && p.label !== info.label) { p.label = info.label; changed = true; }
             if (info.group && p.group !== cdiGroupTitle(info.group)) {
               p.group = cdiGroupTitle(info.group);
               changed = true;
@@ -2013,7 +2019,7 @@
       } else {
         const preset = state.supportedEmotions[name];
         setEmotionTargets(preset, intensity);
-        playEmotionClip(name);
+        playEmotionClip(name);   // body follows the face (see native branch)
         fireOverlay(name);
       }
       $$(".expr-btn").forEach((b) =>
@@ -2061,7 +2067,9 @@
     bubble.classList.add("hidden");
   }
 
-  let TTS_ENDPOINT = "";
+  // Mesin suara global (dari /api/config). provider "browser" = speechSynthesis;
+  // selain itu bicara lewat /api/tts yang meneruskan ke provider remote.
+  let TTS_CFG = { provider: "browser", endpoint: "", apiKey: "", voice: "", model: "" };
 
   let EVENTS = {
     idleSpeak: true,
@@ -2074,6 +2082,15 @@
   };
 
   window.__appEvents = EVENTS;
+
+  // Provider remote aktif bila provider bukan "browser" dan prerequisitnya ada
+  // (endpoint untuk gradio/openai/custom, apiKey untuk elevenlabs/gemini).
+  function ttsRemoteActive() {
+    const p = String(TTS_CFG.provider || "browser");
+    if (p === "browser" || !p) return false;
+    if (p === "elevenlabs" || p === "gemini") return !!TTS_CFG.apiKey;
+    return true; // gradio/openai/custom — kekurangan config ditanggapi server, client fallback browser
+  }
   let CAMERA = {
     enabled: false,
     fps: 0.4,
@@ -2086,8 +2103,15 @@
     try {
       const r = await fetch(API + "/api/config");
       const d = await r.json();
-      TTS_ENDPOINT = (d.tts && d.tts.endpoint) || "";
-      window.__ttsEndpoint = TTS_ENDPOINT;
+      TTS_CFG = Object.assign(
+        { provider: "browser", endpoint: "", apiKey: "", voice: "", model: "" },
+        d.tts || {},
+      );
+      // Config lama: hanya ada endpoint Gradio tanpa provider.
+      if (!d.tts?.provider && TTS_CFG.endpoint) TTS_CFG.provider = "gradio";
+      window.__ttsCfg = TTS_CFG;
+      // Form TTS mungkin sudah ter-init sebelum config tiba — paint ulang.
+      if (window.__paintTTSForm) window.__paintTTSForm(TTS_CFG);
       if (d.events) Object.assign(EVENTS, d.events);
       if (d.camera) Object.assign(CAMERA, d.camera);
       if (d.motion) {
@@ -2095,12 +2119,7 @@
         if (typeof d.motion.gain === "number") MOTION.gain = d.motion.gain;
       }
 
-      if (d.overlay)
-        window.__overlayCfg = Object.assign(
-          {},
-          window.__overlayCfg || {},
-          d.overlay,
-        );
+      if (d.overlay) window.__overlayCfg = Object.assign({}, window.__overlayCfg || {}, d.overlay);
     } catch (e) {
       /* pakai default */
     }
@@ -2207,58 +2226,220 @@
     }
   }
 
+  // ── Pipeline TTS per-kalimat (remote) ─────────────────────────
+  // Teks panjang dipecah per kalimat. Segmen pertama diputar secepatnya;
+  // SEWAKTU diputar, kalimat berikutnya sudah diminta (prefetch) sehingga
+  // jeda antar kalimat ≈ nol. Bubble mengikuti kalimat yang sedang dibacakan.
+  function splitSpeechSegments(text) {
+    const t = String(text || "").trim();
+    if (!t) return [];
+    // Pecah setelah . ! ? … plus tanda kutip/braket penutup di belakangnya.
+    const parts = t.split(/(?<=[.!?…]["”»')\]]?)\s+/);
+    const out = [];
+    for (const p of parts) {
+      const s = p.trim();
+      if (!s) continue;
+      if (s.length <= 220) {
+        out.push(s);
+        continue;
+      }
+      // Kalimat super panjang → potong di koma/spasi terdekat.
+      let rest = s;
+      while (rest.length > 220) {
+        let cut = rest.lastIndexOf(",", 220);
+        const sp = rest.lastIndexOf(" ", 220);
+        if (cut < 120) cut = sp;
+        if (cut < 120) cut = 220;
+        out.push(rest.slice(0, cut + 1).trim());
+        rest = rest.slice(cut + 1);
+      }
+      if (rest.trim()) out.push(rest.trim());
+    }
+    return out.length ? out : [t];
+  }
+
+  async function fetchTTSAudio(text) {
+    // Timeout + retry: kadang koneksi request pertama (dari handler klik)
+    // menggantung di server tanpa jawaban. Abort menutup socket beku; retry
+    // memakai koneksi segar — dan teks yang sama biasanya sudah ter-cache
+    // di server sehingga nyaris instan.
+    for (let attempt = 0; ; attempt++) {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const resp = await fetch(API + "/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+          signal: ctrl.signal,
+        });
+        if (!resp.ok) {
+          const msg = await resp.text().catch(() => "");
+          // 429/kuota dll — jangan diulang, langsung dilempar
+          throw new Error("HTTP " + resp.status + (msg ? ": " + msg.slice(0, 140) : ""));
+        }
+        const blob = await resp.blob();
+        clearTimeout(to);
+        return blob;
+      } catch (e) {
+        clearTimeout(to);
+        if (attempt >= 1 || (e && e.name !== "AbortError")) throw e;
+        console.warn("[TTS] request menggantung (timeout 20 dtk), coba ulang…");
+      }
+    }
+  }
+
+  function playTTSAudio(blob, onDone) {
+    const url = URL.createObjectURL(blob);
+    const audio = (state.ttsAudio = state.ttsAudio || new Audio());
+    audio.src = url;
+    // Pace untuk suara remote — slider "Kecepatan bicara" per-model
+    // berlaku juga di sini (browserTTS memakai rate yang sama).
+    audio.playbackRate = clamp(
+      Number((currentModelConfig() || {}).ttsRate) || 1,
+      0.5,
+      2,
+    );
+
+    let lip = null;
+    if (window.LipSync && window.LipSync.AudioLipSync) {
+      lip = state.audioLipSync =
+        state.audioLipSync || new window.LipSync.AudioLipSync();
+      lip.reset();
+      if (!lip.attach(audio)) lip = null;
+    }
+    state.activeLip = lip;
+
+    audio.onplaying = () => {
+      if (lip && !lip.active) lip.attach(audio);
+    };
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      onDone();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      onDone();
+    };
+    audio.play().catch(onDone);
+    return audio;
+  }
+
+  // Kelompokkan potongan kalimat jadi segmen yang panjang teksnya mendekati
+  // target (durasi audio ≈ latensi fetch) — jeda antar segmen minimum.
+  function regroupByTarget(pieces, target) {
+    const out = [];
+    let cur = "";
+    for (const p of pieces) {
+      if (cur && (cur + " " + p).length > target) {
+        out.push(cur);
+        cur = p;
+      } else {
+        cur = cur ? cur + " " + p : p;
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
   async function doRemoteTTS(text, markDone, fallbackTimer, reveal) {
-    if (!TTS_ENDPOINT) {
+    if (!ttsRemoteActive()) {
       reveal && reveal();
       browserTTS(text, markDone, fallbackTimer);
       return;
     }
-    try {
-      const resp = await fetch(API + "/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-
-      const audio = (state.ttsAudio = state.ttsAudio || new Audio());
-      audio.src = url;
-
-      let lip = null;
-      if (window.LipSync && window.LipSync.AudioLipSync) {
-        lip = state.audioLipSync =
-          state.audioLipSync || new window.LipSync.AudioLipSync();
-        lip.reset();
-        if (!lip.attach(audio)) lip = null;
+    clearTimeout(fallbackTimer);
+    // `let` — regroup adaptif mengganti isi segments setelah latensi diukur
+    let segments = splitSpeechSegments(text);
+    // Teks pendek → jalur lama (satu request), tanpa overhead pipeline.
+    if (segments.length <= 1) {
+      try {
+        const blob = await fetchTTSAudio(text);
+        reveal && reveal();
+        const fallbackTimer2 = setTimeout(markDone, 45000);
+        playTTSAudio(blob, () => {
+          clearTimeout(fallbackTimer2);
+          markDone();
+        });
+      } catch (e) {
+        console.warn("[TTS] remote gagal, fallback ke browser:", e && e.message);
+        reveal && reveal();
+        browserTTS(text, markDone, null);
       }
-      state.activeLip = lip;
-
-      audio.oncanplay = () => {
-        reveal && reveal();
-      };
-      audio.onplaying = () => {
-        reveal && reveal();
-        if (lip && !lip.active) lip.attach(audio);
-      };
-      audio.onended = () => {
-        clearTimeout(fallbackTimer);
-        markDone();
-      };
-      audio.onerror = () => {
-        reveal && reveal();
-        browserTTS(text, markDone, fallbackTimer);
-      };
-      audio.play().catch(() => {
-        reveal && reveal();
-        browserTTS(text, markDone, fallbackTimer);
-      });
-    } catch (e) {
-      console.warn("[TTS] remote gagal, fallback ke browser:", e && e.message);
-      reveal && reveal();
-      browserTTS(text, markDone, fallbackTimer);
+      return;
     }
+
+    // Pipeline: latensi request pertama diukur nyata, lalu sisa kalimat
+    // dikelompokkan ulang sehingga durasi audio per segmen ≥ waktu fetch
+    // (prefetch selesai pas sebelum giliran putarnya → jeda ≈ nol).
+    let aborted = false;
+    const guard = () => {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = setTimeout(() => {
+        aborted = true;
+        markDone();
+      }, 60000);
+    };
+    guard();
+
+    const pending = new Map(); // i -> Promise<blob>
+    const prefetch = (i) => {
+      if (aborted || i >= segments.length || pending.has(i)) return;
+      pending.set(
+        i,
+        fetchTTSAudio(segments[i]).catch((e) => {
+          pending.delete(i);
+          throw e;
+        }),
+      );
+    };
+    prefetch(0);
+    const t0 = performance.now();
+
+    for (let i = 0; i < segments.length && !aborted; i++) {
+      let blob;
+      try {
+        blob = await pending.get(i);
+      } catch (e) {
+        // Segmen gagal → jatuh ke suara browser untuk sisa kalimat, tanpa
+        // mengulang API (hemat billing).
+        console.warn("[TTS] segmen " + i + " gagal:", e && e.message);
+        if (i === 0) reveal && reveal();
+        const remaining = segments.slice(i).join(" ");
+        browserTTS(remaining, markDone, null);
+        return;
+      }
+      if (aborted) return;
+      if (i === 0) {
+        // Latensi nyata Gemini dkk besar (terukur 10–16 dtk). Kalau segmen
+        // per-kalimat (audio ±3 dtk), prefetch tak akan pernah kejar →
+        // gabung kalimat berikutnya sampai durasi audionya ≥ latensi.
+        const latencySec = (performance.now() - t0) / 1000;
+        if (latencySec > 4 && segments.length > 1) {
+          // ~13 char/dtk bicara Indonesia, 1.35 margin keamanan.
+          const target = clamp(
+            Math.round(latencySec * 13 * 1.35),
+            120,
+            420,
+          );
+          const rest = splitSpeechSegments(segments.slice(1).join(" "));
+          segments = [segments[0]].concat(regroupByTarget(rest, target));
+        }
+      }
+      // Mulai request kalimat berikutnya SEBELUM audio ini diputar.
+      prefetch(i + 1);
+      prefetch(i + 2);
+      const segText = segments[i];
+      reveal && reveal();
+      // Bubble menampilkan kalimat yang sedang dibacakan.
+      showBubble(segText, 1e9);
+      await new Promise((resolve) => {
+        playTTSAudio(blob, resolve);
+        guard();
+      });
+      // state.talking & mulut dikelola reveal(); antar segmen tetap "talking".
+    }
+    if (!aborted) markDone();
   }
 
   function speak(text, onDone) {
@@ -2314,9 +2495,10 @@
     showBubble("…", 1e9);
     const fallbackTimer = setTimeout(
       markDone,
-      TTS_ENDPOINT ? 45000 : Math.max(1400, text.length * 75) + 800,
+      ttsRemoteActive() ? 45000 : Math.max(1400, text.length * 75) + 800,
     );
-    if (TTS_ENDPOINT) {
+    if (ttsRemoteActive()) {
+      window.__debugSpeak = (t) => speak(String(t || ""));
       doRemoteTTS(text, markDone, fallbackTimer, reveal);
     } else {
       reveal();
@@ -2421,6 +2603,26 @@
 
     state._showFullBtn = showFullBtn;
 
+    window.showToast = function(msg, type = "info") {
+      let container = document.getElementById("toast-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.id = "toast-container";
+        container.className = "toast-container";
+        document.body.appendChild(container);
+      }
+      const toast = document.createElement("div");
+      toast.className = "toast " + type;
+      const icon = type === "success" ? "✓ " : type === "error" ? "✕ " : "ℹ ";
+      toast.textContent = icon + msg;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(14px) scale(0.95)";
+        setTimeout(() => toast.remove(), 300);
+      }, 2800);
+    };
+
     function addChat(role, text) {
       const log = $("#chat-log");
       if (!log) return;
@@ -2429,13 +2631,44 @@
       const av = document.createElement("div");
       av.className = "msg-avatar";
       av.textContent = role === "user" ? "🙂" : characterInitial();
+      if (role === "agent") paintAvatarEl(av, characterInitial());
       const bb = document.createElement("div");
       bb.className = "msg-bubble";
       bb.textContent = text;
+      bb.title = "Klik untuk menyalin teks";
+      bb.style.cursor = "pointer";
+      bb.addEventListener("click", () => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => {
+            window.showToast?.("Pesan disalin ke clipboard 📋", "info");
+          }).catch(() => {});
+        }
+      });
       msg.appendChild(av);
       msg.appendChild(bb);
       log.appendChild(msg);
       log.scrollTop = log.scrollHeight;
+    }
+
+    const clearChatBtn = $("#btn-clear-chat");
+    if (clearChatBtn) {
+      clearChatBtn.addEventListener("click", () => {
+        const log = $("#chat-log");
+        if (!log) return;
+        const name = characterName();
+        log.innerHTML = `
+          <div class="msg agent">
+            <div class="msg-avatar">${characterInitial()}</div>
+            <div class="msg-bubble" id="greeting-bubble">Halo! Aku ${name}~ Ada yang bisa kubantu? 😊</div>
+          </div>
+        `;
+        const av = log.querySelector(".msg-avatar");
+        if (av) paintAvatarEl(av, characterInitial());
+        if (window.__agent) {
+          window.__agent.history = [];
+        }
+        window.showToast?.("Riwayat obrolan dibersihkan", "info");
+      });
     }
 
     window.__addChat = addChat;
@@ -3074,6 +3307,8 @@
       if (!noteStatus) return;
       noteStatus.textContent = msg;
       noteStatus.className = "note-status" + (kind ? " " + kind : "");
+      if (kind === "ok") window.showToast?.("Catatan karakter tersimpan", "success");
+      else if (kind === "err") window.showToast?.(msg, "error");
     }
     if (noteBtn && noteBox) {
       noteBtn.addEventListener("click", async () => {
@@ -3124,6 +3359,15 @@
       rate: $("#cfg-tts-rate"),
       rateOut: $("#cfg-tts-rate-out"),
       lang: $("#cfg-tts-lang"),
+      ttsProvider: $("#cfg-tts-provider"),
+      ttsEndpoint: $("#cfg-tts-endpoint"),
+      ttsKey: $("#cfg-tts-key"),
+      ttsVoice: $("#cfg-tts-voice"),
+      ttsVoiceFree: $("#cfg-tts-voice-free"),
+      ttsModel: $("#cfg-tts-model"),
+      ttsModelFree: $("#cfg-tts-model-free"),
+      ttsStyle: $("#cfg-tts-style"),
+      ttsStylePick: $("#cfg-tts-style-pick"),
       btn: $("#btn-save-cfg"),
       test: $("#btn-test-voice"),
       status: $("#cfg-status"),
@@ -3141,6 +3385,8 @@
       if (!cfgEls.status) return;
       cfgEls.status.textContent = msg;
       cfgEls.status.className = "note-status" + (kind ? " " + kind : "");
+      if (kind === "ok") window.showToast?.("Pengaturan model tersimpan", "success");
+      else if (kind === "err") window.showToast?.(msg, "error");
     }
 
     function paintConfigForm(cfg) {
@@ -3312,6 +3558,44 @@
         try {
           const saved = await saveModelConfig(readConfigForm());
 
+          // TTS global (config.json) ikut disimpan — apiKey kosong berarti
+          // tetap pakai yang tersimpan; hanya dikirim saat bagian TTS diisi.
+          if (cfgEls.ttsProvider) {
+            const draft = readTTSForm();
+            const remoteTouched =
+              draft.endpoint ||
+              draft.apiKey ||
+              draft.voice ||
+              draft.model ||
+              draft.style ||
+              draft.provider !== (TTS_CFG.provider || "browser");
+            if (remoteTouched) {
+              if (!draft.apiKey) delete draft.apiKey;
+              const r = await fetch(API + "/api/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "saveTTS", tts: draft }),
+              });
+              const d = await r.json();
+              if (!r.ok || d.error)
+                throw new Error("TTS: " + (d.error || r.status));
+              TTS_CFG = Object.assign(
+                {
+                  provider: "browser",
+                  endpoint: "",
+                  apiKey: "",
+                  voice: "",
+                  model: "",
+                },
+                d.tts || {},
+              );
+              if (!d.tts?.provider && TTS_CFG.endpoint)
+                TTS_CFG.provider = "gradio";
+              window.__ttsCfg = TTS_CFG;
+              paintTTSForm(TTS_CFG);
+            }
+          }
+
           paintConfigForm(saved);
           setCfgStatus("tersimpan", "ok");
         } catch (e) {
@@ -3329,6 +3613,15 @@
         state.modelConfig = normalizeModelConfig(
           Object.assign({}, prev, readConfigForm()),
         );
+        // Provider remote → tes lewat server dengan nilai form yang belum
+        // disimpan; provider browser → tes speechSynthesis seperti dulu.
+        if (ttsFormRemoteActive()) {
+          setCfgStatus("mengetes suara…");
+          ttsTestRemote(readTTSForm())
+            .then(() => setCfgStatus("tes suara ok", "ok"))
+            .catch((e) => setCfgStatus("tes suara gagal: " + e.message, "err"));
+          return;
+        }
         try {
           browserTTS(
             "Halo, ini suara aku sekarang.",
@@ -3342,6 +3635,273 @@
           setCfgStatus("tes suara gagal: " + e.message, "err");
         }
       });
+    }
+
+    // ── Mesin Suara (TTS) — global, disimpan di config.json ──────
+    const TTS_PROVIDERS = [
+      "browser",
+      "gradio",
+      "openai",
+      "elevenlabs",
+      "gemini",
+      "custom",
+    ];
+    // Provider yang butuh endpoint (gradio/openai/custom) vs cukup apiKey
+    // (elevenlabs/gemini — endpoint bawaan). browser tak butuh apa pun.
+    const TTS_NEEDS_ENDPOINT = { gradio: 1, openai: 1, custom: 1 };
+    const TTS_NEEDS_KEY = { elevenlabs: 1, gemini: 1 };
+
+    function readTTSForm() {
+      return {
+        provider: cfgEls.ttsProvider ? cfgEls.ttsProvider.value : "browser",
+        endpoint: cfgEls.ttsEndpoint ? cfgEls.ttsEndpoint.value.trim() : "",
+        apiKey: cfgEls.ttsKey ? cfgEls.ttsKey.value : "",
+        voice: ttsVoiceValue(),
+        model: ttsModelValue(),
+        style: cfgEls.ttsStyle ? cfgEls.ttsStyle.value.trim() : "",
+      };
+    }
+
+    // Voice/model bisa berupa dropdown (katalog tersedia) atau input bebas
+    // (server tak menyediakan daftar, mis. OpenAI-compat tanpa /v1/audio/voices).
+    function ttsVoiceValue() {
+      if (!cfgEls.ttsVoice) return "";
+      if (cfgEls.ttsVoiceFree && !cfgEls.ttsVoiceFree.hidden)
+        return cfgEls.ttsVoiceFree.value.trim();
+      return cfgEls.ttsVoice.value === "__free__"
+        ? ""
+        : cfgEls.ttsVoice.value;
+    }
+    function ttsModelValue() {
+      if (!cfgEls.ttsModel) return "";
+      if (cfgEls.ttsModelFree && !cfgEls.ttsModelFree.hidden)
+        return cfgEls.ttsModelFree.value.trim();
+      return cfgEls.ttsModel.value === "__free__"
+        ? ""
+        : cfgEls.ttsModel.value;
+    }
+
+    function ttsFormRemoteActive() {
+      const p = cfgEls.ttsProvider ? cfgEls.ttsProvider.value : "browser";
+      if (!p || p === "browser") return false;
+      if (TTS_NEEDS_ENDPOINT[p]) return !!cfgEls.ttsEndpoint?.value.trim();
+      if (TTS_NEEDS_KEY[p]) return !!cfgEls.ttsKey?.value.trim() || !!(TTS_CFG && TTS_CFG.apiKey);
+      return false;
+    }
+
+    // ── Katalog voice/model dinamis dari /api/tts/options ────────
+    let ttsOptionsSeq = 0;
+    async function refreshTTSOptions() {
+      const p = cfgEls.ttsProvider ? cfgEls.ttsProvider.value : "browser";
+      const seq = ++ttsOptionsSeq;
+      const remote = p !== "browser" && p !== "gradio" && p !== "custom";
+      const needKey = !!TTS_NEEDS_KEY[p];
+      // key yang dimask dipertahankan: kirim tanda supaya server pakai
+      // yang tersimpan.
+      const keyDraft = cfgEls.ttsKey ? cfgEls.ttsKey.value.trim() : "";
+      const q = new URLSearchParams({ provider: p });
+      if (needKey && keyDraft) q.set("apiKey", keyDraft);
+      if (p === "openai" && cfgEls.ttsEndpoint)
+        q.set("endpoint", cfgEls.ttsEndpoint.value.trim());
+      let d = { voices: [], models: [], styles: [] };
+      try {
+        const r = await fetch(API + "/api/tts/options?" + q.toString());
+        if (r.ok) d = await r.json();
+      } catch (e) {}
+      if (seq !== ttsOptionsSeq) return; // provider ganti lagi — buang hasil lama
+
+      fillTTSSelect(
+        cfgEls.ttsVoice,
+        cfgEls.ttsVoiceFree,
+        d.voices || [],
+        (TTS_CFG && TTS_CFG.voice) || "",
+        "voice bawaan provider",
+      );
+      fillTTSSelect(
+        cfgEls.ttsModel,
+        cfgEls.ttsModelFree,
+        d.models || [],
+        (TTS_CFG && TTS_CFG.model) || "",
+        "model bawaan provider",
+      );
+      fillTTSStyleSelect(d.styles || []);
+    }
+
+    function fillTTSSelect(sel, freeInput, list, savedVal, freeLabel) {
+      if (!sel) return;
+      sel.textContent = "";
+      if (list.length) {
+        const def = document.createElement("option");
+        def.value = "";
+        def.textContent = "(pilih — " + freeLabel + ")";
+        sel.appendChild(def);
+        let savedListed = !savedVal;
+        for (const it of list) {
+          const o = document.createElement("option");
+          o.value = it.id;
+          o.textContent = it.name || it.id;
+          if (savedVal && it.id === savedVal) savedListed = true;
+          sel.appendChild(o);
+        }
+        if (savedVal && !savedListed) {
+          const o = document.createElement("option");
+          o.value = savedVal;
+          o.textContent = savedVal + " (tersimpan)";
+          sel.appendChild(o);
+        }
+        sel.value = savedVal || "";
+        if (freeInput) freeInput.hidden = true;
+      } else {
+        // Tanpa katalog → mode input bebas (tetap fleksibel seperti dulu)
+        const o = document.createElement("option");
+        o.value = "__free__";
+        o.textContent = "(isi manual →)";
+        sel.appendChild(o);
+        sel.value = "__free__";
+        if (freeInput) {
+          freeInput.hidden = false;
+          if (savedVal) freeInput.value = savedVal;
+        }
+      }
+    }
+
+    function fillTTSStyleSelect(styles) {
+      if (!cfgEls.ttsStylePick) return;
+      const current = cfgEls.ttsStyle ? cfgEls.ttsStyle.value.trim() : "";
+      const sel = cfgEls.ttsStylePick;
+      sel.textContent = "";
+      const def = document.createElement("option");
+      def.value = "";
+      def.textContent = "(default / netral)";
+      sel.appendChild(def);
+      const preset = styles || [];
+      let curListed = !current;
+      for (const s of preset) {
+        const o = document.createElement("option");
+        o.value = s;
+        o.textContent = s.length > 52 ? s.slice(0, 52) + "…" : s;
+        if (current && s === current) curListed = true;
+        sel.appendChild(o);
+      }
+      if (current && !curListed) {
+        const o = document.createElement("option");
+        o.value = current;
+        o.textContent = "Gaya tersimpan: " + current;
+        sel.appendChild(o);
+      }
+      // Pilihan "tulis sendiri" selalu ada di bawah
+      const free = document.createElement("option");
+      free.value = "__free__";
+      free.textContent = "Tulis gaya sendiri…";
+      sel.appendChild(free);
+      sel.value = current ? (curListed ? current : "__free__") : "";
+      updateStyleFreeVisibility();
+    }
+
+    function updateStyleFreeVisibility() {
+      if (!cfgEls.ttsStylePick || !cfgEls.ttsStyle) return;
+      const freeMode = cfgEls.ttsStylePick.value === "__free__";
+      cfgEls.ttsStyle.hidden = !freeMode;
+      if (freeMode && !cfgEls.ttsStyle.value) cfgEls.ttsStyle.focus();
+    }
+
+    function paintTTSForm(cfg) {
+      if (!cfgEls.ttsProvider) return;
+      const p = TTS_PROVIDERS.indexOf(cfg.provider) >= 0 ? cfg.provider : "browser";
+      cfgEls.ttsProvider.value = p;
+      if (cfgEls.ttsEndpoint) cfgEls.ttsEndpoint.value = cfg.endpoint || "";
+      if (cfgEls.ttsKey) {
+        // apiKey dari server sudah dimask; placeholder menandakan "tersimpan, tidak berubah"
+        cfgEls.ttsKey.value = "";
+        cfgEls.ttsKey.placeholder = cfg.apiKey
+          ? "tersimpan (" + cfg.apiKey + ") — kosongkan bila tetap"
+          : "kosongkan bila tidak perlu";
+      }
+      if (cfgEls.ttsStyle) cfgEls.ttsStyle.value = cfg.style || "";
+      paintTTSVisibility();
+      refreshTTSOptions();
+    }
+
+    function paintTTSVisibility() {
+      const p = cfgEls.ttsProvider ? cfgEls.ttsProvider.value : "browser";
+      const remote = p !== "browser";
+      const needKey = !!TTS_NEEDS_KEY[p];
+      $$(".tts-remote-row").forEach((el) =>
+        el.classList.toggle("hidden", !remote),
+      );
+      $$(".tts-key-row").forEach((el) =>
+        el.classList.toggle("hidden", !needKey),
+      );
+      // Gemini & ElevenLabs pakai alamat resmi masing-masing — endpoint
+      // disembunyikan supaya tidak membingungkan.
+      $$(".tts-endpoint-row").forEach((el) =>
+        el.classList.toggle("hidden", needKey),
+      );
+      // Gaya bicara hanya bermakna untuk Gemini & OpenAI gpt-4o-mini-tts
+      $$(".tts-style-row").forEach((el) =>
+        el.classList.toggle("hidden", p !== "gemini" && p !== "openai"),
+      );
+      if (cfgEls.ttsEndpoint) {
+        cfgEls.ttsEndpoint.placeholder =
+          p === "gradio"
+            ? "mis. http://127.0.0.1:7860 (Gradio Space)"
+            : p === "openai"
+              ? "mis. http://127.0.0.1:8880 (base endpoint, tanpa /v1)"
+              : p === "custom"
+                ? "URL lengkap POST {text} → audio"
+                : "opsional (default bawaan provider)";
+      }
+    }
+
+    function ttsTestRemote(ttsDraft) {
+      // apiKey kosong di form = tetap pakai yang tersimpan (sama seperti
+      // pola connection update).
+      const saved = TTS_CFG || {};
+      const payload = Object.assign({}, ttsDraft);
+      if (!payload.apiKey && saved.apiKey) payload.apiKey = saved.apiKey;
+      return fetch(API + "/api/tts/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tts: payload }),
+      }).then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error(d.error || "HTTP " + r.status);
+      });
+    }
+
+    if (cfgEls.ttsProvider) {
+      cfgEls.ttsProvider.addEventListener("change", () => {
+        paintTTSVisibility();
+        refreshTTSOptions();
+      });
+      if (cfgEls.ttsVoice)
+        cfgEls.ttsVoice.addEventListener("change", () => {
+          if (
+            cfgEls.ttsVoiceFree &&
+            cfgEls.ttsVoice.value !== "__free__"
+          )
+            cfgEls.ttsVoiceFree.hidden = true;
+        });
+      if (cfgEls.ttsModel)
+        cfgEls.ttsModel.addEventListener("change", () => {
+          if (
+            cfgEls.ttsModelFree &&
+            cfgEls.ttsModel.value !== "__free__"
+          )
+            cfgEls.ttsModelFree.hidden = true;
+        });
+      if (cfgEls.ttsStylePick)
+        cfgEls.ttsStylePick.addEventListener("change", () => {
+          updateStyleFreeVisibility();
+          const v = cfgEls.ttsStylePick.value;
+          // pilih preset → isi langsung ke input gaya; "__free__" biarkan user mengetik
+          if (v && v !== "__free__" && cfgEls.ttsStyle)
+            cfgEls.ttsStyle.value = v;
+        });
+      // Paint awal; loadAppConfig memanggil ulang lewat __paintTTSForm
+      // begitu config dari server tiba.
+      paintTTSForm(TTS_CFG);
+      window.__paintTTSForm = paintTTSForm;
     }
 
     refreshConfigForm();
@@ -3471,6 +4031,8 @@
         if (!els.saveStatus) return;
         els.saveStatus.textContent = msg;
         els.saveStatus.className = "note-status" + (kind ? " " + kind : "");
+        if (kind === "ok") window.showToast?.("Pengaturan kelakuan tersimpan", "success");
+        else if (kind === "err") window.showToast?.(msg, "error");
       }
 
       [
@@ -3766,7 +4328,7 @@
       resetBtn.type = "button";
       resetBtn.className = "mini-btn";
       resetBtn.style.cssText = "width:auto;padding:4px 12px;font-size:11px";
-      resetBtn.textContent = "🔄 Reset Pose";
+      resetBtn.textContent = '🔄 Reset Pose';
       resetBtn.title =
         "Lepas semua pose preset yang sedang menempel (param, part, ekspresi) dan kembalikan kendali ke animasi idle.";
       resetBtn.addEventListener("click", () => {
@@ -3939,7 +4501,7 @@
     const pnCountdown = $("#pn-countdown");
     const pnSaveAll = $("#pn-save-all");
     const pnSaveStatus = $("#pn-save-status");
-    const pnSearch = $("#pn-search");
+    const pnSearch = $('#pn-search');
     let pnTimer = null;
     const pnStuckIds = new Set();
 
@@ -4112,7 +4674,7 @@
         }
       }
       if (parts.length) {
-        appendGroupHeader(pnList, "Bagian (Parts)", parts.length);
+        appendGroupHeader(pnList, 'Bagian (Parts)', parts.length);
         for (const p of parts) {
           if (!p || !p.id) continue;
           appendNoteRow(
@@ -4149,15 +4711,15 @@
       let header = null,
         anyInGroup = false;
       for (const el of pnList.children) {
-        if (el.classList.contains("pn-group-header")) {
-          if (header) header.classList.toggle("pn-hidden", !anyInGroup);
+        if (el.classList.contains('pn-group-header')) {
+          if (header) header.classList.toggle('pn-hidden', !anyInGroup);
           header = el;
           anyInGroup = false;
         } else if (!el.classList.contains("pn-hidden")) {
           anyInGroup = true;
         }
       }
-      if (header) header.classList.toggle("pn-hidden", !anyInGroup);
+      if (header) header.classList.toggle('pn-hidden', !anyInGroup);
       let empty = pnList.querySelector(".pn-empty-search");
       if (q && !visible) {
         if (!empty) {
@@ -4171,13 +4733,13 @@
 
     function appendGroupHeader(list, title, count) {
       const h = document.createElement("div");
-      h.className = "pn-group-header";
+      h.className = 'pn-group-header';
       const t = document.createElement("span");
       t.className = "t";
       t.textContent = title;
       const c = document.createElement("span");
       c.className = "c";
-      c.textContent = count + " param";
+      c.textContent = count + ' param';
       h.appendChild(t);
       h.appendChild(c);
       list.appendChild(h);
@@ -4420,7 +4982,7 @@
     }
 
     if (pnOpenBtn) pnOpenBtn.addEventListener("click", openParamNotesPopup);
-    if (pnSearch) pnSearch.addEventListener("input", applyPnFilter);
+    if (pnSearch) pnSearch.addEventListener('input', applyPnFilter);
 
     window.__pnRefreshIfOpen = () => {
       if (pnPopup && !pnPopup.classList.contains("hidden") && state.lastSheet) {
@@ -4845,7 +5407,7 @@
           const testBtn = document.createElement("button");
           testBtn.type = "button";
           testBtn.className = "p-act";
-          testBtn.textContent = "👁 tes";
+          testBtn.textContent = '👁 tes';
           testBtn.title =
             "Pasang ekspresi ini di model untuk melihat efeknya (ekspresi berikutnya otomatis menggantikan).";
           testBtn.addEventListener("click", () => {
@@ -4939,10 +5501,16 @@
 
   const SHEET_SCHEMA_VERSION = 4;
 
-  const USER_AUTHORED_FIELDS = ["userNote", "config", "paramGroups", "presets"];
+  const USER_AUTHORED_FIELDS = ['userNote', 'config', 'paramGroups', 'presets'];
 
   const PRESET_CATEGORIES = ["emosi", "properti", "aksesoris", "gerak"];
 
+  // Bounds for the SEMANTIC pose fields used by a 'gerak' preset's steps.
+  //
+  // ±30 for bodyX/bodyY/bodyZ is DELIBERATE and matches applyActions() in
+  // agent.js — see the long comment there. Do not narrow either one to ±20
+  // without changing both: the whole point is that a preset the user designed
+  // and a directive the LLM emitted obey the same limit.
   const STEP_FIELD_BOUNDS = {
     ax: 30,
     ay: 30,
@@ -5302,7 +5870,7 @@
     const sheet = state.lastSheet;
     if (!sheet || !sheet.presets) return null;
     const want = name.trim().toLowerCase();
-    for (const branch of ["user", "ai"]) {
+    for (const branch of ['user', 'ai']) {
       const list = sheet.presets[branch] || [];
       for (const p of list) {
         if (category && p.category !== category) continue;
@@ -5316,6 +5884,31 @@
     return findPreset(name, "gerak");
   }
 
+  // ── Gesture namespace: collision prevention at the point of CREATION ────
+  //
+  // playGesture() resolves in the order: native motion group → user 'gerak'
+  // preset → GESTURE_LIBRARY. That order is deliberate and stays: a model's own
+  // .motion3.json groups are INTRINSIC data, the same class as .exp3 native
+  // expressions — not an "AI suggestion" that a user preset is allowed to beat.
+  // The user must never lose access to the model's real motions.
+  //
+  // The user > ai precedence rule does NOT apply here: that rule is for two
+  // sources competing for the SAME slot (presets.user vs presets.ai). Native
+  // motion is a different namespace entirely.
+  //
+  // So instead of letting either side win a name fight, we make the fight
+  // impossible: a 'gerak' preset may not be SAVED under a name that already
+  // resolves to something else. Then both remain callable, under distinct names,
+  // and no lookup is ever silently shadowed.
+  //
+  // Both spellings of a motion group are reserved because playGesture() strips
+  // the prefix — a preset called "motion_Idle" would be swallowed by the group
+  // "Idle" just as surely as one called "Idle".
+  //
+  // GESTURE_LIBRARY names are reserved for the same reason in the opposite
+  // direction: a preset IS checked before the builtin table, so allowing the
+  // name "nod" would shadow the builtin verb that agent.js advertises to the
+  // LLM in every prompt. Same silent-shadowing bug, mirrored.
   function reservedGestureNames(sheet) {
     const s = sheet || state.lastSheet || {};
     const out = new Map();
@@ -5536,35 +6129,19 @@
     if (!state.model) return 0;
     let released = 0;
     for (const id of presetPoseParams) {
-      if (id in state.overrides) {
-        try {
-          delete state.overrides[id];
-          released++;
-        } catch (e) {}
-      }
+      if (id in state.overrides) { try { delete state.overrides[id]; released++; } catch (e) {} }
     }
     presetPoseParams.clear();
     if (presetPoseParts.size) {
       try {
         const cm = state.model.internalModel.coreModel;
-        const gm = cm && cm.getModel ? cm.getModel() : null;
-        const partDefs = new Map(
-          ((state.lastSheet && state.lastSheet.parts) || []).map((p) => [
-            (p && p.id) || p,
-            typeof p.def === "number" ? p.def : 1,
-          ]),
-        );
+        const gm = (cm && cm.getModel) ? cm.getModel() : null;
+        const partDefs = new Map(((state.lastSheet && state.lastSheet.parts) || [])
+          .map((p) => [(p && p.id) || p, typeof p.def === "number" ? p.def : 1]));
         for (const [id, prev] of presetPoseParts) {
-          const v =
-            prev != null && Number.isFinite(prev)
-              ? prev
-              : partDefs.has(id)
-                ? partDefs.get(id)
-                : 1;
-          try {
-            cm.setPartOpacityById(id, Math.max(0, Math.min(1, v)));
-            released++;
-          } catch (e) {}
+          const v = (prev != null && Number.isFinite(prev)) ? prev
+            : (partDefs.has(id) ? partDefs.get(id) : 1);
+          try { cm.setPartOpacityById(id, Math.max(0, Math.min(1, v))); released++; } catch (e) {}
         }
       } catch (e) {}
       presetPoseParts.clear();
@@ -5582,10 +6159,7 @@
         : nameOrPreset;
     if (!preset) return false;
 
-    if (preset.category === "gerak") {
-      playGesture(preset.name);
-      return true;
-    }
+    if (preset.category === 'gerak') { playGesture(preset.name); return true; }
 
     const sheet = state.lastSheet || {};
     const byId = new Map(
@@ -5656,7 +6230,7 @@
         delete state.supportedEmotions[name];
     }
     for (const name in builtin) sheet.supportedEmotions[name] = builtin[name];
-    for (const p of sheet.presets.user || []) {
+    for (const p of (sheet.presets.user || [])) {
       if (p.category !== "emosi") continue;
       sheet.supportedEmotions[p.name] = p.values || {};
     }
@@ -5683,11 +6257,7 @@
 
     if (typeof name === "string") {
       const g = name.replace(/^motion_/, "");
-      if (
-        state.caps &&
-        state.caps.motionGroups &&
-        state.caps.motionGroups.includes(g)
-      ) {
+      if (state.caps && state.caps.motionGroups && state.caps.motionGroups.includes(g)) {
         playNativeGroup(g);
         return;
       }
@@ -5799,7 +6369,7 @@
             min: Number(P.minimumValues[i]),
             max: Number(P.maximumValues[i]),
             def: Number(P.defaultValues[i]),
-            userNote: "",
+            userNote: '',
             estimated: false,
           });
         }
@@ -5821,7 +6391,7 @@
             min: Number(mins[i]),
             max: Number(maxs[i]),
             def: Number(defs[i]),
-            userNote: "",
+            userNote: '',
             estimated: false,
           });
         }
@@ -5837,7 +6407,7 @@
     setExpression: applyExpression,
 
     setAccessory: (paramIdOrName, val) => {
-      const preset = findPreset(paramIdOrName, "aksesoris");
+      const preset = findPreset(paramIdOrName, 'aksesoris');
       if (preset) return applyPreset(preset);
       return toggleAccessory(paramIdOrName, val);
     },
@@ -6416,6 +6986,57 @@
     return Array.from(n)[0] || "?";
   }
 
+  // Folder model = segmen pertama di bawah data/model/ — tempat file avatar
+  // (mis. avatar.png / png lain di root folder) dicari oleh /api/model/avatar.
+  function characterFolderName() {
+    const m = /^model\/([^/]+)/.exec(state.modelPath || "");
+    if (!m) return "";
+    try {
+      return decodeURIComponent(m[1]);
+    } catch (e) {
+      return m[1];
+    }
+  }
+
+  function characterAvatarURL() {
+    const f = characterFolderName();
+    return f
+      ? API + "/api/model/avatar?name=" + encodeURIComponent(f)
+      : "";
+  }
+
+  // Isi satu elemen avatar: <img> dari /api/model/avatar kalau model punya
+  // file gambar, kalau tidak → inisial huruf seperti biasa.
+  function paintAvatarEl(el, initial) {
+    if (!el) return;
+    const url = characterAvatarURL();
+    if (!url) {
+      const img = el.querySelector("img");
+      if (img) img.remove();
+      el.classList.remove("has-image");
+      el.textContent = initial;
+      return;
+    }
+    const want =
+      url + "&v=" + encodeURIComponent(state.modelPath || "");
+    el.textContent = "";
+    let img = el.querySelector("img");
+    if (!img) {
+      img = document.createElement("img");
+      img.alt = initial;
+      img.draggable = false;
+      img.onerror = () => {
+        // Model ternyata tanpa gambar — kembali ke inisial.
+        img.remove();
+        el.classList.remove("has-image");
+        if (!el.textContent) el.textContent = initial;
+      };
+      el.appendChild(img);
+    }
+    if (img.getAttribute("src") !== want) img.src = want;
+    el.classList.add("has-image");
+  }
+
   function applyCharacterIdentity() {
     const name = characterName();
     const initial = characterInitial();
@@ -6427,7 +7048,7 @@
       Array.from($$(".msg.agent .msg-avatar")),
     );
     for (const el of avatars) {
-      if (el) el.textContent = initial;
+      if (el) paintAvatarEl(el, initial);
     }
     const greet = $("#greeting-bubble");
     if (greet)
@@ -6872,8 +7493,7 @@
     const classified = [];
     const used = new Set();
     for (const rp of rawParams) {
-      const label =
-        (cdiById && cdiById.get(rp.id) && cdiById.get(rp.id).label) || rp.id;
+      const label = (cdiById && cdiById.get(rp.id) && cdiById.get(rp.id).label) || rp.id;
       let group;
       if (cdiById && cdiById.get(rp.id) && cdiById.get(rp.id).group) {
         group = cdiGroupTitle(cdiById.get(rp.id).group);
@@ -6975,7 +7595,7 @@
       nativeExpressions: nativeExprs,
       motionGroups: motionGroups,
 
-      userNote: "",
+      userNote: '',
 
       config: Object.assign({}, MODEL_CONFIG_DEFAULTS),
 
@@ -7065,6 +7685,9 @@
     try {
       if (!sheet.paramGroups) sheet.paramGroups = { user: {}, ai: {} };
 
+      // The .ai branch is a suggestion cache, so it is rebuilt from scratch on
+      // every run rather than accumulating stale labels from older classifies.
+      // .user is never touched here.
       sheet.paramGroups.ai = {};
       const mappedParamIds = new Set(Object.values(roleIds || {}));
       const unmapped = classified.filter(
@@ -7093,6 +7716,11 @@
 
       let changed = false;
 
+      // The LLM may only add SEMANTIC meaning (role / group / label / accessory
+      // flag). The numeric truth of a parameter — min, max, def — comes from
+      // Cubism Core and is never touched here, even if the response contains
+      // those fields. We copy field-by-field instead of merging objects so a
+      // rogue payload physically cannot reach the range values.
       for (const item of items) {
         if (!item || !item.id) continue;
         const pObj = sheet.params.find((p) => p.id === item.id);
@@ -7158,14 +7786,8 @@
       .filter(
         (p) => p && p.id && Number.isFinite(p.min) && Number.isFinite(p.max),
       )
-      .map((p) => ({
-        id: p.id,
-        min: p.min,
-        max: p.max,
-        def: p.def,
-        label: p.label || "",
-        group: resolveParamGroup(sheet, p.id, p.group),
-      }));
+      .map(p => ({ id: p.id, min: p.min, max: p.max, def: p.def, label: p.label || '',
+        group: resolveParamGroup(sheet, p.id, p.group) }));
     const params = allParams;
     if (!params.length) return { count: 0 };
 
@@ -7349,8 +7971,7 @@
 
   function capabilityPropertyNames(sheet) {
     const out = [];
-    const list = (sheet && sheet.presets && sheet.presets.user) || [];
-    for (const p of list) {
+    for (const p of (sheet.presets.user || [])) {
       if (
         p &&
         p.category === "properti" &&
@@ -7379,6 +8000,10 @@
 
     projectEmotionPresets(sheet);
 
+    // Only USER presets are promoted to capabilities. An .ai suggestion echoed
+    // back into the LLM's own prompt would read as a capability the user had
+    // already approved, blurring exactly the user/AI boundary this precedence
+    // rule exists to keep sharp. AI entries stay UI suggestions until saved.
     const userPresets = (sheet.presets && sheet.presets.user) || [];
     const presetNames = (cat) =>
       userPresets.filter((p) => p.category === cat).map((p) => p.name);
@@ -7396,7 +8021,7 @@
       emotions: Object.keys(sheet.supportedEmotions),
       nativeExpressions: sheet.nativeExpressions,
 
-      accessories: sheet.accessories.concat(presetNames("aksesoris")),
+      accessories: sheet.accessories.concat(presetNames('aksesoris')),
 
       properties: capabilityPropertyNames(sheet),
 
@@ -7409,7 +8034,7 @@
               ? sheet.motionGroups.map((g) => "motion_" + g)
               : [],
           )
-          .concat(presetNames("gerak"));
+          .concat(presetNames('gerak'));
         if (haveMotionSystem) {
           for (const a of motionRegistry.list()) {
             if (

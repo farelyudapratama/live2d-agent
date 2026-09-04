@@ -194,12 +194,17 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="GET" && path==="/api/config"){
     const cfg=config.load(); const conns=cfg.connections.map(c=>{ const o={...c} as any; if(o.apiKey && !o.apiKey.startsWith("MASUKKAN")) o.apiKey=config.maskKey(o.apiKey); o.roles=normalizeRoles(o.roles);   // selalu array — UI tak perlu cek undefined
     return o; });
-    return json({ activeId:cfg.activeId, connections:conns, tts:cfg.tts||{}, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{}, overlay:cfg.overlay||{} });
+    // apiKey TTS dimask untuk UI; server menyimpan yang asli di config.json
+    const ttsOut={...(cfg.tts||{})} as any; if(ttsOut.apiKey) ttsOut.apiKey=config.maskKey(ttsOut.apiKey);
+    return json({ activeId:cfg.activeId, connections:conns, tts:ttsOut, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{}, overlay:cfg.overlay||{} });
   }
   if(method==="POST" && path==="/api/config") return handleConfigPost(req);
   if(method==="POST" && path==="/api/test") return handleTestConnection(req);
   if(method==="POST" && path==="/api/chat") return handleChat(req);
   if(method==="POST" && path==="/api/tts") return handleTTS(req);
+  if(method==="POST" && path==="/api/tts/test") return handleTTSTest(req);
+  if(method==="GET" && path==="/api/tts/options") return handleTTSOptions(req);
+  if(method==="GET" && path==="/api/model/avatar") return handleModelAvatar(req);
 
   // classify-params / analyze-sheet / animate-text
   if(method==="POST" && path==="/api/model/classify-params") return handleClassifyParams(req);
@@ -248,6 +253,7 @@ async function handleConfigPost(req:Request):Promise<Response>{
     else if(action==="delete"){ conns=conns.filter(c=>c.id!==body.id); if(cfg.activeId===body.id) cfg.activeId=conns[0]?.id||null; }
     else if(action==="setActive"){ if(!conns.find(c=>c.id===body.id)) return json({error:"connection tidak ada"},404); cfg.activeId=body.id; }
     else if(action==="saveEvents"){ config.saveEvents(body.events||{}); return json({ok:true, events: config.load().events}); }
+    else if(action==="saveTTS"){ config.saveTTS(body.tts||{}); const t=config.load().tts||{}; return json({ok:true, tts:Object.assign({},t,{apiKey:t.apiKey?config.maskKey(t.apiKey):""})}); }
     else if(action==="save"){ if(Array.isArray(body.connections)) conns=body.connections; if(body.activeId) cfg.activeId=body.activeId; }
     else return json({error:"action tidak dikenal: "+action},400);
     for(const c of conns) if(c.apiKey) c.apiKey=cleanStr(c.apiKey);
@@ -287,12 +293,105 @@ async function handleTestConnection(req:Request):Promise<Response>{
   }
 }
 
-async function handleTTS(req:Request):Promise<Response>{
-  const body=await readBody(req); if(!body?.text) return json({error:"no text"},400);
-  const cfg=config.load(); const gradio=cfg.tts?.endpoint; if(!gradio) return json({error:"tts endpoint belum diisi"},400);
-  try{
-    const base=gradio.replace(/\/$/,"");
-    const r1=await fetch(base+"/gradio_api/call/generate_api",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:[body.text]})});
+// ── TTS multi-provider ──────────────────────────────────────────
+// cfg.tts = { provider, endpoint, apiKey, voice, model }
+//   provider "gradio"   : endpoint Gradio Space (comportamen lama, endpoint saja)
+//   provider "openai"   : API kompatibel OpenAI /v1/audio/speech (ElevenLabs proxy,
+//                         openai-edge-tts, Kokoro-FastAPI, dsb.)
+//   provider "elevenlabs": API ElevenLabs v1/text-to-speech/{voice}
+//   provider "gemini"   : Google Gemini TTS (gemini-2.5-flash-preview-tts)
+//   provider "custom"   : POST JSON {text} → respons audio biner ATAU JSON {audio:base64|url}
+type TTSConfig = { provider?:string; endpoint?:string; apiKey?:string; voice?:string; model?:string; style?:string };
+function b64ToBuf(b64:string):Buffer{ return Buffer.from(b64.replace(/^data:[^,]+,/,""), "base64"); }
+// Bungkus PCM mentah (L16 mono, mis. 24kHz dari Gemini TTS) jadi WAV —
+// elemen <audio> browser tidak bisa memutar PCM tanpa header RIFF.
+function pcmToWav(pcm:Buffer, sampleRate:number, channels=1, bits=16):Buffer{
+  const blockAlign=channels*bits/8;
+  const h=Buffer.alloc(44);
+  h.write("RIFF",0); h.writeUInt32LE(36+pcm.length,4); h.write("WAVE",8);
+  h.write("fmt ",12); h.writeUInt32LE(16,16); h.writeUInt16LE(1,20);
+  h.writeUInt16LE(channels,22); h.writeUInt32LE(sampleRate,24); h.writeUInt32LE(sampleRate*blockAlign,28);
+  h.writeUInt16LE(blockAlign,32); h.writeUInt16LE(bits,34);
+  h.write("data",36); h.writeUInt32LE(pcm.length,40);
+  return Buffer.concat([h,pcm]);
+}
+async function firstOkAudio(url:string, init?:RequestInit):Promise<Response>{
+  const r = await fetch(url, init);
+  if(!r.ok){ let detail=""; try{ detail=(await r.text()).slice(0,300);}catch{} throw new Error("HTTP "+r.status+(detail?": "+detail:"")); }
+  return r;
+}
+// ── Gemini TTS (docs: ai.google.dev/gemini-api/docs/speech-generation) ──
+// API resmi: POST /v1beta/interactions — {model, input, response_format:
+// {type:"audio"}, generation_config.speech_config:[{voice}]}. Respons PCM
+// L16 mono (rate dibaca dari mimeType). Catatan docs:
+//  - 3.1 kadang mengembalikan teks → HTTP 500 acak: WAJIB retry otomatis.
+//  - Prompt gaya yang kabur bisa membuat model MEMBACAKAN catatan gaya →
+//    wajib preamble "TTS" + label transkrip jelas.
+function geminiPrompt(text:string, style:string):string{
+  const s=style.trim();
+  if(!s) return text;
+  // Preamble eksplisit + label transkrip — anti "membacakan director's notes".
+  const note=s.endsWith(":") ? s.slice(0,-1) : s;
+  return "TTS the following. Direction for the performance: "+note+
+    "\n\nTranscript (speak ONLY this text verbatim, do not read the direction):\n"+text;
+}
+function parseGeminiAudio(j:any):{pcm:Buffer; rate:number}{
+  // Interactions API: interaction.output_audio {data, mimeType}
+  const out=j?.output_audio ?? j?.interaction?.output_audio;
+  // generateContent (fallback lama): candidates[].content.parts[].inlineData
+  const inline=j?.candidates?.[0]?.content?.parts?.find((p:any)=>p?.inlineData?.data)?.inlineData;
+  const part=out && out.data ? out : inline;
+  if(!part?.data){
+    const detail=j?.error?.message ? ": "+j.error.message : "";
+    throw new Error("respons Gemini tanpa audio"+detail);
+  }
+  const mime=String(part.mimeType||part.mime_type||"audio/L16;codec=pcm;rate=24000");
+  const rate=Number(/rate=(\d+)/.exec(mime)?.[1])||24000;
+  return { pcm:b64ToBuf(part.data), rate };
+}
+async function geminiTTS(model:string, voiceName:string, prompt:string, apiKey:string):Promise<{pcm:Buffer; rate:number}>{
+  // Urutan percobaan: Interactions API (docs utama) → generateContent
+  // (struktur lama yang masih sah untuk model 2.5).
+  const attempts:{url:string; body:any}[]=[
+    {
+      url:"https://generativelanguage.googleapis.com/v1beta/interactions",
+      body:{model, input:prompt, response_format:{type:"audio"}, generation_config:{speech_config:[{voice:voiceName}]}},
+    },
+    {
+      url:"https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",
+      body:{contents:[{parts:[{text:prompt}]}], generationConfig:{responseModalities:["AUDIO"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName}}}}},
+    },
+  ];
+  // Retry: docs — 3.1 kadang mengembalikan text token → 500 acak;
+  // "implement automated retry logic in your application".
+  let lastErr:Error=new Error("Gemini TTS gagal");
+  for(let round=0;round<3;round++){
+    if(round>0) await new Promise(r=>setTimeout(r,700*round));
+    for(const a of attempts){
+      try{
+        const r=await fetch(a.url,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":apiKey},body:JSON.stringify(a.body)});
+        if(!r.ok){
+          let detail=""; try{ detail=(await r.text()).slice(0,300);}catch{}
+          lastErr=new Error("Gemini HTTP "+r.status+(detail?": "+detail:""));
+          // 400/404 di endpoint ini → langsung coba endpoint berikutnya;
+          // 500/503 (error acak menurut docs) → ulangi putaran berikutnya.
+          if(r.status===400||r.status===404) continue;
+          break;
+        }
+        return parseGeminiAudio(await r.json());
+      }catch(e:any){ lastErr=e; }
+    }
+  }
+  throw lastErr;
+}
+async function ttsAudioFor(cfg:TTSConfig, text:string):Promise<{buf:Buffer; type:string}>{
+  const provider=String(cfg.provider||"gradio").toLowerCase();
+  const endpoint=String(cfg.endpoint||"").trim();
+  const apiKey=String(cfg.apiKey||"").trim();
+  if(provider==="gradio"){
+    if(!endpoint) throw new Error("tts endpoint belum diisi");
+    const base=endpoint.replace(/\/$/,"");
+    const r1=await fetch(base+"/gradio_api/call/generate_api",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:[text]})});
     if(!r1.ok) throw new Error("gradio call HTTP "+r1.status);
     const ev=(await r1.json() as any).event_id;
     const r2=await fetch(base+"/gradio_api/call/generate_api/"+ev);
@@ -300,9 +399,234 @@ async function handleTTS(req:Request):Promise<Response>{
     for(const line of sse.split("\n").reverse()){ const ln=line.trim(); if(ln.startsWith("data:")){ const j=JSON.parse(ln.slice(5).trim()); const fd=Array.isArray(j)?j[0]:j; audioUrl=fd?.url ?? (fd?.path? base+"/gradio_api/file"+fd.path:null); break; } }
     if(!audioUrl) throw new Error("no audio url from gradio");
     if(!/^https?:/.test(audioUrl)) audioUrl=base+audioUrl;
-    const audioResp=await fetch(audioUrl); const buf=Buffer.from(await audioResp.arrayBuffer());
-    return new Response(buf,{headers:{"Content-Type": audioResp.headers.get("content-type")||"audio/wav"}});
+    const audioResp=await fetch(audioUrl);
+    return { buf:Buffer.from(await audioResp.arrayBuffer()), type:audioResp.headers.get("content-type")||"audio/wav" };
+  }
+  if(provider==="openai"){
+    if(!endpoint) throw new Error("endpoint belum diisi");
+    const base=endpoint.replace(/\/$/,"").replace(/\/audio\/speech$/,"").replace(/\/v1$/,"");
+    const headers:Record<string,string>={"Content-Type":"application/json"};
+    if(apiKey) headers.Authorization="Bearer "+apiKey;
+    // Gaya/cara bicara (aksen, nada, tempo) — docs OpenAI: "instructions"
+    // HANYA didukung gpt-4o-mini-tts; tts-1/tts-1-hd bisa menolak field
+    // asing, jadi hanya dilampirkan untuk model tersebut.
+    const style=String(cfg.style||"").trim();
+    const model=String(cfg.model||"tts-1");
+    const payload:any={model,voice:cfg.voice||"alloy",input:text,response_format:"mp3"};
+    if(style && /gpt-4o-mini-tts|gpt-4[oi].*tts/i.test(model)) payload.instructions=style;
+    const r=await firstOkAudio(base+"/v1/audio/speech",{method:"POST",headers,body:JSON.stringify(payload)});
+    return { buf:Buffer.from(await r.arrayBuffer()), type:r.headers.get("content-type")||"audio/mpeg" };
+  }
+  if(provider==="elevenlabs"){
+    if(!apiKey) throw new Error("apiKey ElevenLabs belum diisi");
+    const voice=cfg.voice||"21m00Tcm4TlvDq8ikWAM";
+    const model=cfg.model||"eleven_multilingual_v2";
+    const url=endpoint&&endpoint.trim()? endpoint.replace(/\/$/,"") : "https://api.elevenlabs.io/v1/text-to-speech/"+encodeURIComponent(voice)+"?output_format=mp3_44100_128";
+    const r=await firstOkAudio(url,{method:"POST",headers:{"Content-Type":"application/json","xi-api-key":apiKey},body:JSON.stringify({text,model_id:model})});
+    return { buf:Buffer.from(await r.arrayBuffer()), type:r.headers.get("content-type")||"audio/mpeg" };
+  }
+  if(provider==="gemini"){
+    if(!apiKey) throw new Error("apiKey Gemini belum diisi");
+    const model=cfg.model||"gemini-2.5-flash-preview-tts";
+    const voiceName=cfg.voice||"Kore";
+    // Gemini TTS tak punya parameter gaya — semuanya via prompt natural
+    // (Director's Notes) + tag audio inline di teks, mis. [whispers].
+    const {pcm,rate}=await geminiTTS(model,voiceName,geminiPrompt(text,String(cfg.style||"")),apiKey);
+    return { buf:pcmToWav(pcm,rate), type:"audio/wav" };
+  }
+  // custom — POST {text} (+apiKey bila diisi) → audio biner / JSON {audio|audioBase64|url}
+  if(!endpoint) throw new Error("endpoint belum diisi");
+  const payload:any={text}; if(apiKey) payload.apiKey=apiKey;
+  const headers:Record<string,string>={"Content-Type":"application/json"};
+  if(apiKey){ headers.Authorization="Bearer "+apiKey; headers["x-api-key"]=apiKey; headers["xi-api-key"]=apiKey; }
+  const r=await firstOkAudio(endpoint,{method:"POST",headers,body:JSON.stringify(payload)});
+  const ctype=(r.headers.get("content-type")||"").toLowerCase();
+  if(ctype.includes("json")){
+    const j:any=await r.json();
+    if(typeof j.audio==="string" && /^data:audio/.test(j.audio)) return { buf:b64ToBuf(j.audio), type:"audio/mpeg" };
+    if(typeof j.audio==="string" || typeof j.audioBase64==="string") return { buf:b64ToBuf(String(j.audio||j.audioBase64)), type:"audio/wav" };
+    if(typeof j.url==="string" || typeof j.audioUrl==="string"){ const a=await fetch(String(j.url||j.audioUrl)); if(!a.ok) throw new Error("HTTP "+a.status+" saat unduh audio"); return { buf:Buffer.from(await a.arrayBuffer()), type:a.headers.get("content-type")||"audio/wav" }; }
+    throw new Error("JSON respons tidak berisi audio (audio/audioBase64/url)");
+  }
+  return { buf:Buffer.from(await r.arrayBuffer()), type:r.headers.get("content-type")||"audio/wav" };
+}
+// ── Cache audio TTS (in-memory) ────────────────────────────────
+// Kunci = hash(config TTS + teks). Segmen per-kalimat yang di-prefetch
+// client tidak memanggil API berbayar dua kali; entri dihapus via TTL
+// sederhana supaya memori tidak tumbuh tanpa batas.
+const TTS_CACHE_TTL_MS=30*60*1000, TTS_CACHE_MAX=200;
+const ttsCache=new Map<string,{buf:Buffer; type:string; at:number}>();
+function ttsCacheKey(cfg:TTSConfig, text:string):string{
+  const s=JSON.stringify([cfg.provider,cfg.endpoint,cfg.apiKey,cfg.voice,cfg.model,cfg.style,text]);
+  let h=0x811c9dc5; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
+  return (h>>>0).toString(36)+"_"+text.length.toString(36);
+}
+function ttsCacheGet(key:string){ const e=ttsCache.get(key); if(!e) return null; if(Date.now()-e.at>TTS_CACHE_TTL_MS){ ttsCache.delete(key); return null; } e.at=Date.now(); return e; }
+function ttsCachePut(key:string, v:{buf:Buffer; type:string}){
+  ttsCache.set(key,{...v,at:Date.now()});
+  if(ttsCache.size>TTS_CACHE_MAX){
+    let oldest:string|null=null, t=Infinity;
+    for(const [k,e] of ttsCache){ if(e.at<t){ t=e.at; oldest=k; } }
+    if(oldest) ttsCache.delete(oldest);
+  }
+}
+async function ttsAudioCached(cfg:TTSConfig, text:string):Promise<{buf:Buffer; type:string; cacheHit:boolean}>{
+  const key=ttsCacheKey(cfg,text);
+  const hit=ttsCacheGet(key);
+  if(hit) return {buf:hit.buf, type:hit.type, cacheHit:true};
+  const out=await ttsAudioFor(cfg,text);
+  ttsCachePut(key,out);
+  return {...out, cacheHit:false};
+}
+async function handleTTS(req:Request):Promise<Response>{
+  const body=await readBody(req); if(!body?.text) return json({error:"no text"},400);
+  try{
+    // body.tts opsional — dipakai tombol Tes Suara untuk mencoba nilai form
+    // yang BELUM disimpan; tanpa itu, pakai config tersimpan.
+    const cfgTTS:TTSConfig = (body.tts && typeof body.tts==="object") ? body.tts : (config.load().tts||{});
+    const {buf,type}=await ttsAudioCached(cfgTTS, String(body.text));
+    return new Response(new Uint8Array(buf),{headers:{"Content-Type":type}});
   }catch(e:any){ return json({error:"TTS error: "+e.message},502); }
+}
+// apiKey dari UI bisa (a) kosong → pakai yang tersimpan, atau (b) di-mask
+// ("abcd••••wxyz") → tetap pakai yang tersimpan. Yang dulu dipakai langsung.
+function resolveTTSKey(draft:TTSConfig):TTSConfig{
+  const merged:TTSConfig=Object.assign({}, config.load().tts||{}, draft);
+  const key=String(draft.apiKey||"").trim();
+  if(!key || key.indexOf("•")!==-1) merged.apiKey=String((config.load().tts||{}).apiKey||"");
+  else merged.apiKey=key;
+  return merged;
+}
+async function handleTTSTest(req:Request):Promise<Response>{
+  const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
+  try{
+    const cfgTTS:TTSConfig=resolveTTSKey(body.tts||{});
+    const {type}=await ttsAudioCached(cfgTTS,"Tes suara. Halo!");
+    return json({ok:true, contentType:type});
+  }catch(e:any){ return json({ok:false, error:e.message},502); }
+}
+
+// ── Daftar voice & model per provider ──────────────────────────
+// Gemini & OpenAI: katalog statis resmi. ElevenLabs: ditarik live dari
+// akun (butuh apiKey). OpenAI-compatible: GET <endpoint>/v1/audio/voices
+// bila server mendukung (Kokoro-FastAPI dkk), gagal = daftar kosong.
+const GEMINI_TTS_VOICES=[
+  {id:"Zephyr",name:"Zephyr — Bright"},{id:"Puck",name:"Puck — Upbeat"},{id:"Charon",name:"Charon — Informative"},
+  {id:"Kore",name:"Kore — Firm"},{id:"Fenrir",name:"Fenrir — Excitable"},{id:"Leda",name:"Leda — Youthful"},
+  {id:"Orus",name:"Orus — Firm"},{id:"Aoede",name:"Aoede — Breezy"},{id:"Callirrhoe",name:"Callirrhoe — Easy-going"},
+  {id:"Autonoe",name:"Autonoe — Bright"},{id:"Enceladus",name:"Enceladus — Breathy"},{id:"Iapetus",name:"Iapetus — Clear"},
+  {id:"Umbriel",name:"Umbriel — Easy-going"},{id:"Algieba",name:"Algieba — Smooth"},{id:"Despina",name:"Despina — Smooth"},
+  {id:"Erinome",name:"Erinome — Clear"},{id:"Algenib",name:"Algenib — Gravelly"},{id:"Rasalgethi",name:"Rasalgethi — Informative"},
+  {id:"Laomedeia",name:"Laomedeia — Upbeat"},{id:"Achernar",name:"Achernar — Soft"},{id:"Alnilam",name:"Alnilam — Firm"},
+  {id:"Schedar",name:"Schedar — Even"},{id:"Gacrux",name:"Gacrux — Mature"},{id:"Pulcherrima",name:"Pulcherrima — Forward"},
+  {id:"Achird",name:"Achird — Friendly"},{id:"Zubenelgenubi",name:"Zubenelgenubi — Casual"},{id:"Vindemiatrix",name:"Vindemiatrix — Gentle"},
+  {id:"Sadachbia",name:"Sadachbia — Lively"},{id:"Sadaltager",name:"Sadaltager — Knowledgeable"},{id:"Sulafat",name:"Sulafat — Warm"},
+];
+const GEMINI_TTS_MODELS=[
+  {id:"gemini-3.1-flash-tts-preview",name:"Gemini 3.1 Flash TTS (terbaru, dukung tag audio)"},
+  {id:"gemini-2.5-flash-preview-tts",name:"Gemini 2.5 Flash TTS (cepat)"},
+  {id:"gemini-2.5-pro-preview-tts",name:"Gemini 2.5 Pro TTS (kualitas)"},
+];
+const OPENAI_TTS_VOICES=[
+  {id:"marin",name:"marin — rekomendasi kualitas"},{id:"cedar",name:"cedar — rekomendasi kualitas"},
+  {id:"alloy",name:"alloy — netral"},{id:"ash",name:"ash — netral"},{id:"ballad",name:"ballad — lembut"},
+  {id:"coral",name:"coral — hangat"},{id:"echo",name:"echo — maskulin"},{id:"fable",name:"fable — naratif (Inggris)"},
+  {id:"nova",name:"nova — feminin energik"},{id:"onyx",name:"onyx — dalam"},{id:"sage",name:"sage — tenang"},
+  {id:"shimmer",name:"shimmer — lembut"},{id:"verse",name:"verse — fleksibel"},
+];
+const OPENAI_TTS_MODELS=[
+  {id:"gpt-4o-mini-tts",name:"gpt-4o-mini-tts (paling ekspresif + gaya)"},
+  {id:"tts-1",name:"tts-1 (cepat)"},
+  {id:"tts-1-hd",name:"tts-1-hd (kualitas)"},
+];
+const OPENAI_TTS_STYLES=[
+  "Bicara santai dan ramah seperti teman ngobrol.",
+  "Bicara ceria dan penuh semangat.",
+  "Bicara tenang dan menenangkan.",
+  "Bicara dengan aksen Indonesia yang natural.",
+  "Bicara seperti karakter anime perempuan yang genit.",
+  "Bicara pelan-pelan seperti dongeng sebelum tidur.",
+];
+// Preset gaya khusus Gemini — pola resmi docs: Director's Notes singkat +
+// tag audio inline ([whispers], [laughs], dst). Tag ditulis Inggris walau
+// transkrip Indonesia (rekomendasi docs).
+const GEMINI_TTS_STYLES=[
+  "Bicara ceria dan penuh senyum, tempo santai [excitedly].",
+  "Bicara pelan dan hangat seperti berbisik [whispers].",
+  "Bicara cepat dan penuh semangat seperti presenter radio [excitedly].",
+  "Bicara santai seperti teman ngobrol, aksen Indonesia natural.",
+  "Bicara malu-malu dan lembut, sedikit gemetar [trembling].",
+  "Bicara tegas dan serius, tempo sedang [serious].",
+];
+async function handleTTSOptions(req:Request):Promise<Response>{
+  const url=new URL(req.url);
+  const provider=String(url.searchParams.get("provider")||"").toLowerCase();
+  const apiKey=cleanStr(url.searchParams.get("apiKey")||"");
+  const endpoint=cleanStr(url.searchParams.get("endpoint")||"");
+  // API key yang dimask dari UI ("abcd•••••••wxyz") → pakai yang tersimpan
+  let realKey=apiKey;
+  if(apiKey && apiKey.indexOf("•")!==-1){ const stored=config.load().tts||{}; if(stored.apiKey) realKey=stored.apiKey; }
+  try{
+    if(provider==="gemini"){
+      let models:any[]=GEMINI_TTS_MODELS;
+      // Key tersedia → tarik daftar model live, hanya yang -tts- yang aktif
+      // untuk akun ini (docs: GET /v1beta/models).
+      if(realKey){
+        try{
+          const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":realKey}});
+          if(r.ok){
+            const j:any=await r.json();
+            const ids=(j.models||[])
+              .map((m:any)=>String(m.name||"").replace(/^models\//,""))
+              .filter((id:string)=>/tts/i.test(id));
+            if(ids.length){
+              models=ids.map((id:string)=>({id, name:(GEMINI_TTS_MODELS.find((m:any)=>m.id===id)||{} as any).name || id}));
+            }
+          }
+        }catch{}
+      }
+      return json({voices:GEMINI_TTS_VOICES, models, styles:GEMINI_TTS_STYLES});
+    }
+    if(provider==="openai"){
+      // Endpoint bukan resmi OpenAI (Kokoro dkk) → coba tarik daftarnya
+      if(endpoint && !/api\.openai\.com/i.test(endpoint)){
+        try{
+          const base=endpoint.replace(/\/$/,"").replace(/\/audio\/speech$/,"").replace(/\/v1$/,"");
+          const h:Record<string,string>={};
+          if(realKey) h.Authorization="Bearer "+realKey;
+          const r=await fetch(base+"/v1/audio/voices",{headers:h});
+          if(r.ok){
+            const j:any=await r.json();
+            const list=(Array.isArray(j)?j:j.voices||[]).map((v:any)=>typeof v==="string"?{id:v,name:v}:{id:String(v.id||v.name),name:String(v.name||v.id)}).filter((v:any)=>v.id);
+            if(list.length) return json({voices:list, models:[]});
+          }
+        }catch{}
+        return json({voices:[], models:[]}); // server tak dukung — UI pakai input bebas
+      }
+      return json({voices:OPENAI_TTS_VOICES, models:OPENAI_TTS_MODELS, styles:OPENAI_TTS_STYLES});
+    }
+    if(provider==="elevenlabs"){
+      if(!realKey) return json({voices:[], models:[
+        {id:"eleven_multilingual_v2",name:"Multilingual v2 (29 bahasa, paling stabil)"},
+        {id:"eleven_turbo_v2_5",name:"Turbo v2.5 (cepat, murah)"},
+        {id:"eleven_flash_v2_5",name:"Flash v2.5 (tercepat)"},
+      ]});
+      const r=await fetch("https://api.elevenlabs.io/v1/voices",{headers:{"xi-api-key":realKey}});
+      if(!r.ok) return json({voices:[], models:[
+        {id:"eleven_multilingual_v2",name:"Multilingual v2 (29 bahasa, paling stabil)"},
+        {id:"eleven_turbo_v2_5",name:"Turbo v2.5 (cepat, murah)"},
+        {id:"eleven_flash_v2_5",name:"Flash v2.5 (tercepat)"},
+      ], error:"HTTP "+r.status});
+      const j:any=await r.json();
+      const voices=(j.voices||[]).map((v:any)=>({id:v.voice_id,name:v.name + (v.labels && v.labels.accent ? " — "+v.labels.accent : "")}));
+      return json({voices, models:[
+        {id:"eleven_multilingual_v2",name:"Multilingual v2 (29 bahasa, paling stabil)"},
+        {id:"eleven_turbo_v2_5",name:"Turbo v2.5 (cepat, murah)"},
+        {id:"eleven_flash_v2_5",name:"Flash v2.5 (tercepat)"},
+      ]});
+    }
+    return json({voices:[], models:[]});
+  }catch(e:any){ return json({voices:[], models:[], error:e.message}); }
 }
 
 async function handleClassifyParams(req:Request):Promise<Response>{
@@ -668,6 +992,28 @@ function handleModelFiles(req:Request):Response{
     return json({name:name||"", files:out});
   }catch(e:any){ return json({error:e.message},500); }
 }
+// Avatar per-model: file gambar di folder model (utamakan avatar.png /
+// avatar.jpg / icon.png di root folder, lalu gambar pertama yang ketemu —
+// subfolder model3 dibuang supaya bukan potongan sprite karakter). Tidak ada
+// → 404, client jatuh ke inisial huruf.
+const AVATAR_PREFERRED=["avatar.png","avatar.jpg","avatar.jpeg","avatar.webp","icon.png","thumbnail.png","preview.png"];
+function findModelAvatar(name:string):string|null{
+  const dir=join(MODEL_DIR,name||""); if(!dir.startsWith(MODEL_DIR)||!existsSync(dir)) return null;
+  for(const f of AVATAR_PREFERRED){ if(existsSync(join(dir,f))) return join(dir,f); }
+  let best:string|null=null;
+  (function walk(d:string,rel:string){ if(best) return; for(const e of readdirSync(d,{withFileTypes:true})){ if(best) return; const r=rel?rel+"/"+e.name:e.name; if(e.isDirectory()){ if(r.split("/").length>2) continue; walk(join(d,e.name),r); } else if(/\.(png|jpe?g|webp|gif)$/i.test(e.name) && !/model3|cdi3|physics|moc3/i.test(r)){ if(r.split("/").length<=2){ best=join(d,e.name); return; } } } })(dir,"");
+  return best;
+}
+function handleModelAvatar(req:Request):Response{
+  try{
+    const name=new URL(req.url).searchParams.get("name")||"";
+    const fp=findModelAvatar(name);
+    if(!fp) return json({error:"no avatar"},404);
+    const ext=extname(fp).toLowerCase();
+    const type=ext===".png"?"image/png":ext===".webp"?"image/webp":ext===".gif"?"image/gif":"image/jpeg";
+    return new Response(readFileSync(fp),{headers:{"Content-Type":type,"Cache-Control":"no-cache","Access-Control-Allow-Origin":"*"}});
+  }catch(e:any){ return json({error:e.message},500); }
+}
 function handleMotionTaxonomy(req:Request):Response{
   try{
     const q=new URL(req.url).searchParams; const name=q.get("name")||""; const force=q.get("force")==="1";
@@ -825,8 +1171,8 @@ server = Bun.serve({
 
 console.log(`
 ╔══════════════════════════════════════════════╗
-║  🎭 Live2D Agent v2 — Bun Server            ║
-║  http://127.0.0.1:${PORT}                    ║
+║      Live2D Agent v2 - Bun Server            ║
+║       http://127.0.0.1:${PORT}               ║
 ╚══════════════════════════════════════════════╝
 `);
 } // end if import.meta.main

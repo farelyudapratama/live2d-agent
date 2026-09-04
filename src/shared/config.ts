@@ -9,7 +9,7 @@ const DEFAULT_CONFIG: Config = {
   activeId: null,
   overlay: { enabled: true, alpha: 0.9, size: 1 },
   connections: [],
-  tts: { endpoint: "" },
+  tts: { provider: "browser", endpoint: "" },
   events: {
     idleSpeak: true,
     idleMs: 1_800_000,
@@ -171,6 +171,16 @@ export class ConfigManager {
     try { prev = JSON.parse(readFileSync(this.path, "utf8")); } catch {}
     const data = mergeEventsIntoConfig(prev, events);
     try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan events:", e.message); }
+  }
+
+  // TTS section utuh milik user; merge agar field lama (apiKey/voice/model)
+  // tidak hilang saat UI lama cuma mengirim {endpoint}.
+  saveTTS(tts: any): void {
+    let prev: any = {};
+    try { prev = JSON.parse(readFileSync(this.path, "utf8")); } catch {}
+    const merged = Object.assign({}, prev.tts || {}, tts || {});
+    const data = Object.assign({}, prev, { tts: merged });
+    try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan tts:", e.message); }
   }
 
   atomicWriteRaw(file: string, obj: unknown): Promise<void> { return queueJsonWrite(file, obj); }

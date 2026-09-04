@@ -2836,10 +2836,21 @@
               .map((r) => `<span class="conn-role-tag">${esc(r)}</span>`)
               .join("")
           : '<span class="conn-role-tag wild">semua peran</span>';
+        const enabled = c.enabled !== false;
+        card.classList.toggle("disabled", !enabled);
+        const badgeTextFinal = !enabled
+          ? c.id === activeId
+            ? "⏸ off — dilewati"
+            : "⏸ off"
+          : badgeText;
         card.innerHTML = `
           <div class="conn-head">
+            <label class="conn-switch" title="Aktif / nonaktifkan koneksi (nonaktif = dilewati semua role)">
+              <input type="checkbox" ${enabled ? "checked" : ""} data-act="toggle" />
+              <span class="slider"></span>
+            </label>
             <span class="conn-name">${esc(c.name || c.id)}</span>
-            <span class="conn-badge ${cooling ? "default" : badgeClass(status)}">${badgeText}</span>
+            <span class="conn-badge ${!enabled ? "default" : cooling ? "default" : badgeClass(status)}">${badgeTextFinal}</span>
           </div>
           <div class="conn-meta">${esc(c.provider || "")} · ${esc(c.model || "")}</div>
           <div class="conn-role-tags">${roleTags}</div>
@@ -2850,6 +2861,9 @@
             <button data-act="test">Test</button>
             <button data-act="delete">Delete</button>
           </div>`;
+        card
+          .querySelector('[data-act="toggle"]')
+          .addEventListener("change", (e) => setEnabled(c.id, e.target.checked));
         card
           .querySelector('[data-act="active"]')
           .addEventListener("click", () => setActive(c.id));
@@ -2942,6 +2956,29 @@
       closeModal();
       loadConns();
     });
+
+    // Toggle aktif/nonaktif per koneksi: nonaktif = dilewati semua pemilihan
+    // (fallback & role routing) tanpa menghapus konfigurasinya. Koneksi aktif
+    // yang dimatikan tidak memindahkan activeId — cuma jadi tak terpakai.
+    async function setEnabled(id, enabled) {
+      try {
+        const r = await fetch(API + "/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update",
+            id,
+            connection: { enabled },
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || "HTTP " + r.status);
+        loadConns();
+      } catch (e) {
+        console.error("[conn] toggle enabled", e);
+        loadConns(); // kembalikan posisi switch sesuai state server
+      }
+    }
 
     async function setActive(id) {
       await fetch(API + "/api/config", {

@@ -2533,3 +2533,25 @@ input[type="range"]::-moz-range-thumb {
 .as-approval .as-ap-row { display: flex; gap: 6px; margin-top: 6px; }
 .as-workdir { display: flex; flex-direction: column; gap: 4px; }
 .as-workdir input { width: 100%; }
+
+/* ── Toggle switch aktif/nonaktif per koneksi LLM ─────────────── */
+.conn-card { transition: opacity .15s; }
+.conn-card.disabled { opacity: .55; }
+.conn-card.disabled .conn-name { text-decoration: line-through; opacity: .7; }
+.conn-switch {
+  position: relative; display: inline-block; flex-shrink: 0;
+  width: 30px; height: 17px; cursor: pointer; margin-right: 2px;
+}
+.conn-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.conn-switch .slider {
+  position: absolute; inset: 0; border-radius: 99px;
+  background: rgba(255,255,255,.14); border: 1px solid var(--line-soft);
+  transition: background .15s;
+}
+.conn-switch .slider::before {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--muted); transition: transform .15s, background .15s;
+}
+.conn-switch input:checked + .slider { background: rgba(143,220,195,.35); border-color: rgba(143,220,195,.5); }
+.conn-switch input:checked + .slider::before { transform: translateX(13px); background: var(--mint, #8fdcc3); }

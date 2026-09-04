@@ -4,3 +4,9 @@
 ║       http://127.0.0.1:8310               ║
 ╚══════════════════════════════════════════════╝
 
+[server] character sheet saved -> F:\backup\live2d-agent\data\sheets\model_lumine_lumine_lumine_model3_json.json
+[roles] tidak ada connection untuk role "sheet" — pakai semua connection
+[roles] tidak ada connection untuk role "sheet" — pakai semua connection
+[classify-params] LLM error [bai]: timeout: LLM tidak merespon dalam 60s
+[analyze-sheet] LLM error [bai]: timeout: LLM tidak merespon dalam 60s
+[roles] tidak ada connection untuk role "chat" — pakai semua connection

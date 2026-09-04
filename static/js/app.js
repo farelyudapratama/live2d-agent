@@ -6212,6 +6212,17 @@
       startIdleMotion();
     } catch (e) {}
 
+    // 3b) aiPose — pose buatan directive AI ([HEAD:] [EYES:] [MOUTH:] [BODY:])
+    //     DITULIS ULANG tiap frame oleh tick loop, jadi kalau tidak di-nol-kan
+    //     di sini wajah/badan kembali "marah" seketika setelah reset.
+    try {
+      state.aiPose = {
+        ax: 0, ay: 0, ex: 0, ey: 0,
+        bodyX: 0, bodyY: 0, bodyZ: 0,
+        mouthForm: 0, breath: 0.45,
+      };
+    } catch (e) {}
+
     // 4) Nada/gaya dari gesture terakhir + kecepatan animasi kembali normal.
     try {
       state.impulse = 0;
@@ -6221,17 +6232,46 @@
     // 5) Ekspresi (.exp3) & target emosi → netral.
     resetEmotion();
 
-    // 6) Tulis nilai default semua parameter yang punya rentang tercatat —
-    //    frame ini langsung netral (tidak menunggu idle melunak).
+    // 6) Tulis nilai default semua parameter model — frame ini langsung
+    //    netral (tidak menunggu idle melunak). paramRange mungkin kosong
+    //    (API enumerasi berbeda antar versi Cubism core) → fallback baca
+    //    langsung dari core model: parameters.{ids,defaultValues,...}.
     try {
       const cm = state.model.internalModel.coreModel;
-      if (cm && state.paramRange) {
+      const gm = cm && cm.getModel ? cm.getModel() : cm;
+      if (gm && gm.parameters && gm.parameters.ids) {
+        const P = gm.parameters;
+        const ids = P.ids || [];
+        const mins = P.minimumValues || [];
+        const maxs = P.maximumValues || [];
+        const defs = P.defaultValues || [];
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i];
+          if (!id) continue;
+          // pastikan paramRange terisi (sekali ini juga memperbaiki reset
+          // emosi berikutnya yang bergantung pada range/def)
+          if (state.paramRange && !state.paramRange[id]) {
+            const lo = mins[i], hi = maxs[i];
+            if (typeof lo === "number" && typeof hi === "number") {
+              state.paramRange[id] = {
+                min: lo, max: hi,
+                def: typeof defs[i] === "number" ? defs[i] : (lo + hi) / 2,
+              };
+            }
+          }
+          const def =
+            state.paramRange && state.paramRange[id] && typeof state.paramRange[id].def === "number"
+              ? state.paramRange[id].def
+              : typeof defs[i] === "number"
+                ? defs[i]
+                : 0;
+          try { cm.setParameterValueById(id, def, 1); } catch (e) {}
+        }
+      } else if (cm && state.paramRange) {
         for (const id in state.paramRange) {
           const r = state.paramRange[id];
           if (r && typeof r.def === "number") {
-            try {
-              cm.setParameterValueById(id, r.def, 1);
-            } catch (e) {}
+            try { cm.setParameterValueById(id, r.def, 1); } catch (e) {}
           }
         }
       }

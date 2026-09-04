@@ -952,6 +952,64 @@
   }
 
   // ── Buka / tutup ─────────────────────────────────────────────────
+  // ── Popup bisa digeser (drag lewat headernya) ──────────────────
+  // Dipasang via onpointerdown/onpointermove (bukan addEventListener) supaya
+  // tidak bisa dilepas oleh wiring lain. Posisi memakai custom property
+  // --ms-x/--ms-y + rule #motion-studio-popup.dragged (!important).
+  // Tersimpan di localStorage; dobel-klik header = kembali ke posisi bawaan.
+  function makePopupDraggable() {
+    const pop = $('#motion-studio-popup');
+    const head = pop ? pop.querySelector('.pn-popup-head') : null;
+    if (!pop || !head) return;
+    head.classList.add('drag-handle');
+    head.title = 'Tahan & geser untuk memindahkan — dobel-klik: posisi awal';
+    head.onpointerdown = (e) => {
+      if (e.target.closest('button, input, select, a, details')) return;
+      const r = pop.getBoundingClientRect();
+      window.__msDrag = {
+        sx: e.clientX, sy: e.clientY,
+        baseRight: window.innerWidth - (r.left + r.width) - 16,
+        baseBottom: window.innerHeight - (r.top + r.height) - 16,
+      };
+      pop.classList.add('dragged');
+      try { head.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    };
+    head.onpointermove = (e) => {
+      const d = window.__msDrag;
+      if (!d) return;
+      const x = Math.max(-(window.innerWidth - 120), Math.min(40, d.baseRight - (e.clientX - d.sx)));
+      const y = Math.max(-(window.innerHeight - 60), Math.min(200, d.baseBottom + (e.clientY - d.sy)));
+      pop.style.setProperty('--ms-x', Math.round(x) + 'px');
+      pop.style.setProperty('--ms-y', Math.round(y) + 'px');
+      try { localStorage.setItem('ms-popup-shift', JSON.stringify({ dx: Math.round(x), dy: Math.round(y) })); } catch (err) {}
+    };
+    const end = (e) => { window.__msDrag = null; try { head.releasePointerCapture(e.pointerId); } catch (err) {} };
+    head.onpointerup = end;
+    head.onpointercancel = end;
+    head.ondblclick = (e) => {
+      if (e.target.closest('button, input, select, a')) return;
+      pop.classList.remove('dragged');
+      pop.style.removeProperty('--ms-x');
+      pop.style.removeProperty('--ms-y');
+      try { localStorage.removeItem('ms-popup-shift'); } catch (err) {}
+    };
+    restorePopupPos();
+  }
+
+  function restorePopupPos() {
+    const pop = $('#motion-studio-popup');
+    if (!pop) return;
+    try {
+      const sh = JSON.parse(localStorage.getItem('ms-popup-shift') || 'null');
+      if (sh && (sh.dx || sh.dy)) {
+        pop.classList.add('dragged');
+        pop.style.setProperty('--ms-x', sh.dx + 'px');
+        pop.style.setProperty('--ms-y', sh.dy + 'px');
+      }
+    } catch (e) {}
+  }
+
   async function openStudio() {
     const pop = $('#motion-studio-popup');
     if (!pop) return;
@@ -964,6 +1022,7 @@
     pop.classList.remove('hidden');
     pop.setAttribute('aria-hidden', 'false');
     state.open = true;
+    makePopupDraggable();
     // Freeze yang SAMA dengan editor preset (persistent): tanpa ini idle/blink/
     // napas ikut menulis parameter dan pose hasil edit tak terlihat apa adanya.
     if (l2d.freezeForEdit) l2d.freezeForEdit($('#ms-status'), true);

@@ -2574,3 +2574,23 @@ input[type="range"]::-moz-range-thumb {
   color: var(--muted); cursor: pointer; transition: all .12s;
 }
 .ms-gen-chip:hover { color: var(--text); border-color: var(--lamp); background: rgba(245,184,92,.1); }
+
+/* ── Motion Studio: popup bisa digeser ────────────────────────── */
+/* .dragged memutus penempatan kanan/bawah bawaan — posisi dipenuhi
+   left/top inline hasil drag (disimpan di localStorage). */
+.pn-popup.dragged { right: auto; bottom: auto; }
+.pn-popup-head.drag-handle { cursor: grab; user-select: none; }
+.pn-popup-head.drag-handle.grabbing { cursor: grabbing; }
+.pn-popup-head.drag-handle:hover { background: rgba(255, 255, 255, 0.04); border-radius: var(--r-xl) var(--r-xl) 0 0; }
+
+/* Posisi hasil drag Motion Studio — custom property dari JS.
+   !important supaya deterministik di atas rule penempatan mana pun. */
+#motion-studio-popup.dragged {
+  right: calc(16px - var(--ms-x, 0px)) !important;
+  bottom: calc(16px - var(--ms-y, 0px)) !important;
+  top: auto !important;
+  left: auto !important;
+  height: auto !important;
+  max-height: calc(100vh - 32px) !important;
+  animation: none !important;
+}

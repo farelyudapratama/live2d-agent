@@ -39,7 +39,11 @@ export type LLMProvider =
 export interface Config {
   activeId: string | null;
   connections: Connection[];
-  tts: { endpoint: string };
+  // Mesin suara karakter. provider: "browser" (speechSynthesis, default) |
+  // "gradio" | "openai" | "elevenlabs" | "gemini" | "custom". endpoint/apiKey
+  // hanya untuk provider remote; apiKey disimpan plaintext di config.json
+  // (sama seperti connections) dan DIMASK saat dikirim ke UI.
+  tts: { provider?: string; endpoint: string; apiKey?: string; voice?: string; model?: string; style?: string };
   events: EventConfig;
   camera: CameraConfig;
   motion: MotionConfig;

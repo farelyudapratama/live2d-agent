@@ -74,6 +74,7 @@
           <div class="sb-name">Live2D Agent</div>
           <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
         </div>
+        <button id="btn-clear-chat" title="Bersihkan riwayat obrolan" style="width:34px;height:34px;display:grid;place-items:center;border-radius:11px;font-size:14px;background:rgba(255,255,255,0.04);border:1px solid var(--line-soft)">🧹</button>
         <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
       </div>
 
@@ -93,18 +94,20 @@
       <div class="chat-input">
         <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">🎤</button>
         <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
-        <button id="btn-bubble">➤</button>
+        <button id="btn-bubble" title="Kirim pesan (Enter)">➤</button>
       </div>
       <div class="quick-phrases">
-        <button class="phrase-btn" data-phrase="Halo~">Halo~</button>
-        <button class="phrase-btn" data-phrase="Apa kabar?">Apa kabar?</button>
-        <button class="phrase-btn" data-phrase="Yay~!">Yay~!</button>
-        <button class="phrase-btn" data-phrase="Hmmm...">Hmmm...</button>
-        <button class="phrase-btn" data-phrase="Maaf ya...">Maaf ya...</button>
+        <button class="phrase-btn" data-phrase="Halo~">👋 Halo~</button>
+        <button class="phrase-btn" data-phrase="Apa kabar?">✨ Apa kabar?</button>
+        <button class="phrase-btn" data-phrase="Ceritakan tentang dirimu">💬 Cerita dong</button>
+        <button class="phrase-btn" data-phrase="Yay~!">🎉 Yay~!</button>
+        <button class="phrase-btn" data-phrase="Semangat ya!">💪 Semangat!</button>
+        <button class="phrase-btn" data-phrase="Hmmm...">🤔 Hmmm...</button>
+        <button class="phrase-btn" data-phrase="Maaf ya...">🙏 Maaf ya...</button>
       </div>
       <label class="brain-toggle">
         <input type="checkbox" id="toggle-brain" checked />
-        Mode Otak (LLM mikir & balas sendiri)
+        <span>Mode Otak (LLM mikir & balas sendiri)</span>
       </label>
 
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
@@ -113,10 +116,10 @@
       <div id="controls-panel" class="hidden">
         <div class="drawer-head">
           <div class="tabs">
-            <button class="tab active" data-tab="model">Model</button>
-            <button class="tab" data-tab="sheet">Sheet</button>
-            <button class="tab" data-tab="motion">Motion</button>
-            <button class="tab" data-tab="ai">AI</button>
+            <button class="tab active" data-tab="model">📁 Model</button>
+            <button class="tab" data-tab="sheet">📋 Sheet</button>
+            <button class="tab" data-tab="motion">🎬 Motion</button>
+            <button class="tab" data-tab="ai">⚡ AI</button>
           </div>
           <button id="btn-close-controls" class="drawer-close" title="Tutup panel (Esc)">✕</button>
         </div>
@@ -203,6 +206,64 @@
                 <option value="zh-CN">Mandarin (zh-CN)</option>
               </select>
             </label>
+
+            <!-- Mesin suara (TTS): browser / API eksternal. Global (config.json), bukan per-model -->
+            <div class="section-title" style="margin-top:12px">Mesin Suara (TTS)</div>
+            <label class="cfg-row" for="cfg-tts-provider">
+              <span class="cfg-label">Provider</span>
+              <select id="cfg-tts-provider">
+                <option value="browser">Browser (Web Speech)</option>
+                <option value="gradio">Gradio Space</option>
+                <option value="openai">OpenAI-compatible (/v1/audio/speech)</option>
+                <option value="elevenlabs">ElevenLabs</option>
+                <option value="gemini">Google Gemini TTS</option>
+                <option value="custom">API Kustom</option>
+              </select>
+            </label>
+            <label class="cfg-row tts-remote-row tts-endpoint-row" for="cfg-tts-endpoint">
+              <span class="cfg-label">Endpoint</span>
+              <input id="cfg-tts-endpoint" type="text" maxlength="300"
+                placeholder="mis. http://127.0.0.1:7860" aria-describedby="cfg-tts-hint" />
+            </label>
+            <label class="cfg-row tts-key-row" for="cfg-tts-key">
+              <span class="cfg-label">API Key</span>
+              <input id="cfg-tts-key" type="password" maxlength="200"
+                placeholder="kosongkan bila tidak perlu" aria-describedby="cfg-tts-hint" />
+            </label>
+            <label class="cfg-row tts-remote-row" for="cfg-tts-voice">
+              <span class="cfg-label">Voice</span>
+              <span style="display:flex;gap:6px;align-items:center">
+                <select id="cfg-tts-voice" aria-describedby="cfg-tts-hint"></select>
+                <input id="cfg-tts-voice-free" type="text" maxlength="120" hidden
+                  placeholder="id voice / nama bebas" aria-describedby="cfg-tts-hint" />
+              </span>
+            </label>
+            <label class="cfg-row tts-remote-row" for="cfg-tts-model">
+              <span class="cfg-label">Model</span>
+              <span style="display:flex;gap:6px;align-items:center">
+                <select id="cfg-tts-model" aria-describedby="cfg-tts-hint"></select>
+                <input id="cfg-tts-model-free" type="text" maxlength="120" hidden
+                  placeholder="id model / nama bebas" aria-describedby="cfg-tts-hint" />
+              </span>
+            </label>
+            <label class="cfg-row tts-style-row" for="cfg-tts-style">
+              <span class="cfg-label">Gaya bicara</span>
+              <span style="display:flex;gap:6px;align-items:center">
+                <select id="cfg-tts-style-pick" aria-describedby="cfg-tts-hint">
+                  <option value="">(default / netral)</option>
+                </select>
+                <input id="cfg-tts-style" type="text" maxlength="300" hidden
+                  placeholder="mis. Bicara ceria dengan aksen Jawa" aria-describedby="cfg-tts-hint" />
+              </span>
+            </label>
+            <p class="hint" id="cfg-tts-hint">
+              Browser = suara bawaan sistem. Gradio = perilaku lama (endpoint space).
+              OpenAI-compatible = endpoint base, dipanggil di &lt;endpoint&gt;/v1/audio/speech — voice/model
+              otomatis ditarik dari server bila mendukung. Gemini &amp; ElevenLabs = cukup API key;
+              daftar voice &amp; model muncul otomatis. "Gaya bicara" = aksen/emosi/tempo
+              (Gemini via prompt gaya, [OI] gpt-4o-mini-tts via instructions). Kecepatan bicara
+              di atas = tempo suara remote. Kustom = POST JSON {text} → audio biner atau JSON {audio|url}.
+            </p>
 
             <div class="note-row">
               <button id="btn-save-cfg" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Pengaturan</button>
@@ -674,6 +735,9 @@
       <span id="ms-status" class="note-status" role="status" aria-live="polite"></span>
     </div>
   </div>
+
+  <!-- Floating Toast Notification Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>

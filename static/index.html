@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/app.css?v=drag5" />
   <!-- Cubism Core HARUS dimuat duluan sebelum pixi-live2d -->
   <script src="js/live2dcubismcore.min.js"></script>
 </head>
@@ -36,10 +36,10 @@
           <div class="se-title">Belum ada model Live2D</div>
           <p>Repo ini tidak menyertakan model (aset berlisensi). Impor model Cubism 4 milikmu lewat sini, atau copy folder model ke <code>data/model/</code> lalu muat ulang.</p>
           <div class="se-actions">
-            <button id="btn-empty-folder" class="mini-btn">📂 Pilih Folder Model</button>
-            <button id="btn-empty-zip" class="mini-btn">🗜️ Impor .zip</button>
+            <button id="btn-empty-folder" class="mini-btn">Pilih Folder Model</button>
+            <button id="btn-empty-zip" class="mini-btn">Impor .zip</button>
           </div>
-          <p class="hint">Model juga bisa ditambah kapan saja lewat ⚙️ → 📁 Model. Model terakhir yang dibuka diingat otomatis.</p>
+          <p class="hint">Model juga bisa ditambah kapan saja lewat Pengaturan → Model. Model terakhir yang dibuka diingat otomatis.</p>
         </div>
       </div>
 
@@ -51,15 +51,15 @@
 
       <!-- Lower-third siaran: keadaan karakter di atas panggung (dipindah dari sidebar, redesign 2026-09-02). -->
       <div id="live-state" aria-live="polite">
-        <span class="ls-item" id="ls-presence">👤 presence: —</span>
-        <span class="ls-item" id="ls-mood">😶 mood: —</span>
-        <span class="ls-item" id="ls-quiet">⏳ masa tenang: —</span>
+        <span class="ls-item" id="ls-presence">presence: —</span>
+        <span class="ls-item" id="ls-mood">mood: —</span>
+        <span class="ls-item" id="ls-quiet">masa tenang: —</span>
       </div>
 
       <!-- Full Body button: only shows after the user manually zooms/drags -->
-      <button id="btn-fullbody" class="hidden" title="Tampilkan full body">⤢ Full Body</button>
+      <button id="btn-fullbody" class="hidden" title="Tampilkan full body">Full Body</button>
 
-      <div id="hint">💡 Drag · Scroll = zoom · Double-click = reset</div>
+      <div id="hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
     </div>
 
     <!-- ===================== RAIL OBROLAN (kanan) ===================== -->
@@ -74,16 +74,16 @@
           <div class="sb-name">Live2D Agent</div>
           <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
         </div>
-        <button id="btn-clear-chat" title="Bersihkan riwayat obrolan" style="width:34px;height:34px;display:grid;place-items:center;border-radius:11px;font-size:14px;background:rgba(255,255,255,0.04);border:1px solid var(--line-soft)">🧹</button>
-        <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙️</button>
+        <button id="btn-clear-chat" title="Bersihkan riwayat obrolan">Clear</button>
+        <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙</button>
       </div>
 
       <!-- Mode switcher: satu mode aktif; pindah mode = runtime lama dihancurkan -->
       <div class="mode-switch" id="mode-switch" role="tablist">
-        <button data-mode="chat" class="active" title="Panggung + Chat">💬</button>
-        <button data-mode="vtuber" title="AI VTuber — Live Streaming">🎥</button>
-        <button data-mode="assistant" title="AI Assistant — Agent Lokal">🧠</button>
-        <button data-mode="pet" title="Desktop Pet">🐾</button>
+        <button data-mode="chat" class="active" title="Panggung + Chat">Chat</button>
+        <button data-mode="vtuber" title="AI VTuber — Live Streaming">VTuber</button>
+        <button data-mode="assistant" title="AI Assistant — Agent Lokal">Assistant</button>
+        <button data-mode="pet" title="Desktop Pet">Pet</button>
         <span id="mode-label" class="mode-label">Panggung</span>
       </div>
 
@@ -92,27 +92,27 @@
       <div id="chat-log">
         <div class="msg agent">
           <div class="msg-avatar">?</div>
-          <div class="msg-bubble" id="greeting-bubble">Halo! Ada yang bisa kubantu? 😊</div>
+          <div class="msg-bubble" id="greeting-bubble">Halo! Ada yang bisa kubantu?</div>
         </div>
       </div>
 
       <!-- Thinking indicator -->
-      <div id="thinking" class="thinking hidden">🧠 lagi mikir...</div>
+      <div id="thinking" class="thinking hidden">Mikir...</div>
 
       <!-- Input -->
       <div class="chat-input">
-        <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">🎤</button>
+        <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">Mic</button>
         <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
-        <button id="btn-bubble" title="Kirim pesan (Enter)">➤</button>
+        <button id="btn-bubble" title="Kirim pesan (Enter)">Kirim</button>
       </div>
       <div class="quick-phrases">
-        <button class="phrase-btn" data-phrase="Halo~">👋 Halo~</button>
-        <button class="phrase-btn" data-phrase="Apa kabar?">✨ Apa kabar?</button>
-        <button class="phrase-btn" data-phrase="Ceritakan tentang dirimu">💬 Cerita dong</button>
-        <button class="phrase-btn" data-phrase="Yay~!">🎉 Yay~!</button>
-        <button class="phrase-btn" data-phrase="Semangat ya!">💪 Semangat!</button>
-        <button class="phrase-btn" data-phrase="Hmmm...">🤔 Hmmm...</button>
-        <button class="phrase-btn" data-phrase="Maaf ya...">🙏 Maaf ya...</button>
+        <button class="phrase-btn" data-phrase="Halo~">Halo~</button>
+        <button class="phrase-btn" data-phrase="Apa kabar?">Apa kabar?</button>
+        <button class="phrase-btn" data-phrase="Ceritakan tentang dirimu">Cerita dong</button>
+        <button class="phrase-btn" data-phrase="Yay~!">Yay~!</button>
+        <button class="phrase-btn" data-phrase="Semangat ya!">Semangat!</button>
+        <button class="phrase-btn" data-phrase="Hmmm...">Hmmm...</button>
+        <button class="phrase-btn" data-phrase="Maaf ya...">Maaf ya...</button>
       </div>
       <label class="brain-toggle">
         <input type="checkbox" id="toggle-brain" checked />
@@ -158,8 +158,8 @@
           <input id="vt-cooldown" type="number" min="5" max="120" value="12" />
         </label>
         <div class="note-row">
-          <button id="vt-start" class="mini-btn">▶ Mulai</button>
-          <button id="vt-stop" class="mini-btn">■ Berhenti</button>
+          <button id="vt-start" class="mini-btn">Mulai</button>
+          <button id="vt-stop" class="mini-btn">Berhenti</button>
           <span id="vt-status" class="note-status">tidak aktif</span>
         </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
@@ -179,7 +179,7 @@
         <div id="as-approvals"></div>
         <div class="chat-input">
           <input type="text" id="as-input" placeholder="Minta apa? mis. baca struktur folder…" />
-          <button id="btn-as-send" title="Kirim">➤</button>
+          <button id="btn-as-send" title="Kirim">Kirim</button>
         </div>
         <p class="hint">Tools aman (lihat folder, baca file) jalan otomatis. Menulis file &amp; menjalankan perintah butuh persetujuanmu di panel ini.</p>
       </div>
@@ -189,8 +189,8 @@
         <div class="section-title">Desktop Pet</div>
         <p class="hint">Karakter berjalan sebagai jendela kecil selalu di atas (always-on-top) mengikuti panggung model yang sama. Jendela pet terpisah — app utama boleh diminimalkan.</p>
         <div class="note-row">
-          <button id="pet-launch" class="mini-btn">🐾 Buka Jendela Pet</button>
-          <button id="pet-close" class="mini-btn">✕ Tutup Pet</button>
+          <button id="pet-launch" class="mini-btn">Buka Jendela Pet</button>
+          <button id="pet-close" class="mini-btn">Tutup Pet</button>
         </div>
         <div id="pet-status" class="note-status"></div>
         <p class="hint">Jendela pet memakai Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
@@ -202,10 +202,10 @@
       <div id="controls-panel" class="hidden">
         <div class="drawer-head">
           <div class="tabs">
-            <button class="tab active" data-tab="model">📁 Model</button>
-            <button class="tab" data-tab="sheet">📋 Sheet</button>
-            <button class="tab" data-tab="motion">🎬 Motion</button>
-            <button class="tab" data-tab="ai">⚡ AI</button>
+            <button class="tab active" data-tab="model">Model</button>
+            <button class="tab" data-tab="sheet">Sheet</button>
+            <button class="tab" data-tab="motion">Motion</button>
+            <button class="tab" data-tab="ai">AI</button>
           </div>
           <button id="btn-close-controls" class="drawer-close" title="Tutup panel (Esc)">✕</button>
         </div>
@@ -216,10 +216,10 @@
           <div class="section-title">Model</div>
           <div id="model-drop" class="model-drop">
             <p>Drag &amp; drop folder model ke sini,<br />atau</p>
-            <button id="btn-pick-model" class="mini-btn">📂 Pilih Folder Model</button>
+            <button id="btn-pick-model" class="mini-btn">Pilih Folder Model</button>
             <input id="input-model-folder" type="file" webkitdirectory directory multiple hidden />
             <p style="margin:8px 0 2px">Atau upload <b>.zip</b> model:</p>
-            <button id="btn-pick-zip" class="mini-btn">🗜️ Pilih File .zip</button>
+            <button id="btn-pick-zip" class="mini-btn">Pilih File .zip</button>
             <input id="input-model-zip" type="file" accept=".zip,application/zip" hidden />
             <p class="hint">Folder <i>atau</i> .zip; nama model diambil dari nama folder/zip.</p>
           </div>
@@ -228,7 +228,7 @@
           </div>
           <div id="model-list" class="model-list"></div>
           <div style="margin-top:10px">
-            <button id="btn-inspect" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">🔍 Inspeksi Model (Generate Character Sheet)</button>
+            <button id="btn-inspect" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">Inspeksi Model (Generate Sheet)</button>
             <p class="hint" style="margin-top:4px">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
           </div>
 
@@ -239,7 +239,7 @@
               placeholder="Siapa dia? Sifat, gaya bicara, kebiasaan… mis. &quot;Dia pemalu, panggil aku Senpai, suka kucing.&quot;"
               aria-describedby="note-hint"></textarea>
             <div class="note-row">
-              <button id="btn-save-note" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Catatan</button>
+              <button id="btn-save-note" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Catatan</button>
               <span id="note-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
             <p class="hint" id="note-hint">Catatan ini dikirim ke AI sebagai konteks karakter, disimpan per-model, dan <b>tidak hilang</b> saat kamu inspeksi ulang.</p>
@@ -352,8 +352,8 @@
             </p>
 
             <div class="note-row">
-              <button id="btn-save-cfg" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Pengaturan</button>
-              <button id="btn-test-voice" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">🔊 Tes Suara</button>
+              <button id="btn-save-cfg" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Pengaturan</button>
+              <button id="btn-test-voice" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Tes Suara</button>
               <span id="cfg-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
             <p class="hint" id="cfg-hint">Disimpan per-model di dalam character sheet. Pitch &amp; kecepatan langsung terasa saat karakter bicara.</p>
@@ -373,7 +373,7 @@
               <span class="cfg-label">Gambar</span>
               <span style="display:flex;gap:8px;align-items:center">
                 <input id="cfg-bg-file" type="file" accept="image/*" hidden />
-                <button id="btn-bg-pick" class="mini-btn" style="width:auto;padding:4px 12px;font-size:11px">🖼️ Pilih Gambar…</button>
+                <button id="btn-bg-pick" class="mini-btn" style="width:auto;padding:4px 12px;font-size:11px">Pilih Gambar…</button>
                 <button id="btn-bg-clear" class="mini-btn" style="width:auto;padding:4px 10px;font-size:11px" title="Hapus gambar latar">Hapus</button>
               </span>
             </label>
@@ -393,7 +393,7 @@
         <div class="tab-pane" data-pane="sheet">
           <div class="section-title">Character Sheet</div>
           <div id="sheet-summary" class="sheet-summary">
-            <p class="hint">Belum ada sheet. Buka tab 📁 Model → <b>Inspeksi Model</b> dulu.</p>
+            <p class="hint">Belum ada sheet. Buka tab Model → <b>Inspeksi Model</b> dulu.</p>
           </div>
 
             <!-- Penjelasan per-parameter (user-authored). Field params[i].userNote.
@@ -402,29 +402,29 @@
                param + part dengan slider live + textarea deskripsi. -->
           <div class="section-title" style="margin-top:14px">Penjelasan Parameter</div>
           <div class="note-row">
-            <button id="btn-open-paramnotes" class="mini-btn" style="width:auto;padding:5px 12px;font-size:12px">📝 Jelaskan Parameter</button>
+            <button id="btn-open-paramnotes" class="mini-btn" style="width:auto;padding:5px 12px;font-size:12px">Jelaskan Parameter</button>
             <span id="paramnotes-open-status" class="note-status"></span>
           </div>
 
           <!-- Daftar preset per kategori. Entri user dan saran AI tampil
-               berdampingan; yang AI diberi badge 🤖 supaya asalnya jelas. -->
+               berdampingan; yang AI diberi badge supaya asalnya jelas. -->
           <div class="section-title" style="margin-top:14px">Preset</div>
           <div class="sheet-cats" id="sheet-cats" role="tablist" aria-label="Kategori preset"></div>
           <div id="sheet-preset-list" class="preset-list"></div>
           <div class="note-row">
-            <button id="btn-sheet-analyze" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">🤖 Analisa AI</button>
+            <button id="btn-sheet-analyze" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Analisa AI</button>
             <span id="sheet-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <div class="note-row">
-            <button id="btn-sheet-reload-file" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">🔄 Muat Ulang dari File</button>
+            <button id="btn-sheet-reload-file" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Muat Ulang dari File</button>
             <span id="reload-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
-          <p class="hint">Saran AI (🤖) aktif setelah kamu tekan <b>Pakai</b>; preset milikmu selalu menang.</p>
+          <p class="hint">Saran AI aktif setelah kamu tekan <b>Pakai</b>; preset milikmu selalu menang.</p>
 
           <!-- Editor preset dipindah ke popup mengambang (#preset-editor-popup)
-               supaya tampilannya seragam dengan 📝 Jelaskan Parameter. -->
+               supaya tampilannya seragam dengan Jelaskan Parameter. -->
           <div class="note-row">
-            <button id="btn-open-preset-editor" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">✏️ Editor Preset</button>
+            <button id="btn-open-preset-editor" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">Editor Preset</button>
           </div>
 
           <!-- Ekspresi teradopsi (opt-out).
@@ -435,7 +435,7 @@
             <p class="hint">File .exp3 di folder model yang lupa didaftarkan di model3.json diadopsi otomatis agar tidak mati. Matikan yang tak perlu.</p>
             <div id="adoption-list" class="preset-list"></div>
             <div class="note-row">
-              <button id="btn-adoption-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Pilihan</button>
+              <button id="btn-adoption-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Pilihan</button>
               <span id="adoption-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
           </div>
@@ -444,8 +444,8 @@
         <!-- ===== Motion: pintu masuk Motion Studio ===== -->
         <!-- Pane ini SENGAJA tipis: editornya sendiri hidup di popup mengambang
              (#motion-studio-popup) memakai pola .pn-popup yang sudah ada, supaya
-             tidak menutupi model di stage kiri — sama seperti 📝 Jelaskan
-             Parameter & ✏️ Editor Preset. -->
+             tidak menutupi model di stage kiri — sama seperti
+             Jelaskan Parameter & Editor Preset. -->
         <div class="tab-pane" data-pane="motion">
           <div class="section-title">Motion Studio</div>
           <p class="hint">Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b>
@@ -453,7 +453,7 @@
             deskripsi &amp; tag, lalu AI bisa memakainya saat ngobrol. Gerakan bawaan
             dan motion milik model tetap jalan seperti biasa.</p>
           <div class="note-row">
-            <button id="btn-open-motion-studio" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">🎬 Buka Motion Studio</button>
+            <button id="btn-open-motion-studio" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">Buka Motion Studio</button>
             <span id="motion-open-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
 
@@ -496,9 +496,9 @@
           <p class="hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
             Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.</p>
           <div class="behaviour-profiles">
-            <button class="mini-btn profil" data-profil="hidup">⚡ Hidup</button>
-            <button class="mini-btn profil" data-profil="sedang">🌤️ Sedang</button>
-            <button class="mini-btn profil" data-profil="tenang">😴 Tenang</button>
+            <button class="mini-btn profil" data-profil="hidup">Hidup</button>
+            <button class="mini-btn profil" data-profil="sedang">Sedang</button>
+            <button class="mini-btn profil" data-profil="tenang">Tenang</button>
           </div>
           <div class="note-row">
             <span id="behaviour-profil-status" class="note-status" role="status" aria-live="polite"></span>
@@ -511,7 +511,7 @@
           </div>
 
           <details class="beh-advanced">
-            <summary>⚙️ Mode lanjutan (angka mentah)</summary>
+            <summary>Mode lanjutan (angka mentah)</summary>
             <label class="cfg-row" for="beh-quietMs">
               <span class="cfg-label">Masa tenang awal</span>
               <input type="range" id="beh-quietMs" min="0" max="600000" step="1000" />
@@ -530,7 +530,7 @@
           </details>
 
           <div class="note-row">
-            <button id="btn-beh-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Kelakuan</button>
+            <button id="btn-beh-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Kelakuan</button>
             <span id="beh-save-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <p class="hint" id="beh-quiet-countdown">Masa tenang: —</p>
@@ -579,19 +579,19 @@
           </span>
         </label>
         <label class="conn-roles">
-          <input type="checkbox" id="m-stream" /> 🌊 Stream mode — untuk gateway yang memotong generasi lambat
+          <input type="checkbox" id="m-stream" /> Stream mode — untuk gateway yang memotong generasi lambat
         </label>
         <label>Peran (roles)
           <span class="form-hint">Kosongkan semua = connection ini boleh dipakai untuk semua peran.</span>
         </label>
         <div class="conn-roles" id="m-roles">
-          <label><input type="checkbox" value="chat" /> 💬 chat (teks balasan)</label>
-          <label><input type="checkbox" value="motion" /> 🎭 motion (gerak &amp; ekspresi)</label>
-          <label><input type="checkbox" value="sheet" /> 📋 sheet (analisa parameter)</label>
+          <label><input type="checkbox" value="chat" /> chat (teks balasan)</label>
+          <label><input type="checkbox" value="motion" /> motion (gerak &amp; ekspresi)</label>
+          <label><input type="checkbox" value="sheet" /> sheet (analisa parameter)</label>
         </div>
       </div>
       <div class="modal-actions">
-        <button id="m-save">💾 Simpan</button>
+        <button id="m-save">Simpan</button>
         <button id="m-cancel">Batal</button>
       </div>
     </div>
@@ -608,7 +608,7 @@
   <!-- § Popup Penjelasan Parameter (mengambang di sisi kanan, tidak menutupi model) -->
   <div id="paramnotes-popup" class="pn-popup hidden" aria-hidden="true">
     <div class="pn-popup-head">
-      <span class="pn-popup-title">📝 Penjelasan Parameter</span>
+      <span class="pn-popup-title">Penjelasan Parameter</span>
       <button id="pn-popup-close" class="pn-popup-x" title="Tutup">✕</button>
     </div>
     <div class="pn-popup-sub">
@@ -617,7 +617,7 @@
       idle kembali mulus.
     </div>
     <div class="pn-popup-actions">
-      <button id="pn-save-all" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Catatan</button>
+      <button id="pn-save-all" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Catatan</button>
       <span id="pn-save-status" class="note-status" role="status" aria-live="polite"></span>
     </div>
     <input id="pn-search" class="pn-search" type="search" placeholder="Cari param / label / catatan…" autocomplete="off">
@@ -625,10 +625,10 @@
     <div id="paramnotes-popup-list" class="paramnotes-list"></div>
   </div>
 
-  <!-- § Popup Editor Preset (mengambang di sisi kanan, serupa dengan 📝 Jelaskan Parameter) -->
+  <!-- § Popup Editor Preset (mengambang di sisi kanan, serupa dengan Jelaskan Parameter) -->
   <div id="preset-editor-popup" class="pn-popup hidden" aria-hidden="true">
     <div class="pn-popup-head">
-      <span class="pn-popup-title">✏️ Editor Preset</span>
+      <span class="pn-popup-title">Editor Preset</span>
       <button id="preset-editor-close" class="pn-popup-x" title="Tutup">✕</button>
     </div>
     <div class="pn-popup-sub">
@@ -651,12 +651,12 @@
           </select>
         </label>
         <div class="note-row">
-          <button id="btn-preset-capture" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">📸 Ambil Pose Sekarang</button>
+          <button id="btn-preset-capture" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Ambil Pose Sekarang</button>
           <span id="preset-capture-info" class="note-status"></span>
         </div>
         <div class="preset-sliders-wrap">
           <div class="note-row">
-            <span class="cfg-label">🎛 Atur Parameter</span>
+            <span class="cfg-label">Atur Parameter</span>
             <span id="preset-freeze-info" class="note-status"></span>
           </div>
           <p class="hint">Geser slider untuk menyusun pose preset secara bebas — muka, tubuh, maupun bagian. Perubahan langsung terlihat di model &amp; tersimpan ke draft. "Ambil Pose Sekarang" bisa dipakai untuk mulai dari pose live, lalu disempurnakan di sini.</p>
@@ -664,8 +664,8 @@
         </div>
         <div id="preset-values" class="preset-values"></div>
         <div class="note-row">
-          <button id="btn-preset-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">💾 Simpan Preset</button>
-          <button id="btn-preset-clear" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">✖ Kosongkan</button>
+          <button id="btn-preset-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Preset</button>
+          <button id="btn-preset-clear" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Kosongkan</button>
           <span id="preset-status" class="note-status" role="status" aria-live="polite"></span>
         </div>
         <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
@@ -679,7 +679,7 @@
        kedua, jadi apa yang kamu lihat saat edit persis yang dilihat AI. -->
   <div id="motion-studio-popup" class="pn-popup ms-popup hidden" aria-hidden="true">
     <div class="pn-popup-head">
-      <span class="pn-popup-title">🎬 Motion Studio</span>
+      <span class="pn-popup-title">Motion Studio</span>
       <button id="motion-studio-close" class="pn-popup-x" title="Tutup">✕</button>
     </div>
     <div class="pn-popup-sub">
@@ -693,7 +693,7 @@
         <select id="ms-lib" aria-label="Daftar gerakan milikmu"></select>
         <button id="ms-new" class="mini-btn ms-icon" title="Gerakan baru">＋</button>
         <button id="ms-dup" class="mini-btn ms-icon" title="Duplikat">⧉</button>
-        <button id="ms-del" class="mini-btn ms-icon" title="Hapus">🗑</button>
+        <button id="ms-del" class="mini-btn ms-icon" title="Hapus">✕</button>
       </div>
 
       <!-- Transport -->
@@ -710,7 +710,7 @@
            kanan = timeline sebagai pusat kerja. -->
       <div class="ms-workspace">
         <aside class="ms-params-panel" aria-label="Tambah track parameter">
-          <div class="ms-panel-title">➕ Track Parameter</div>
+          <div class="ms-panel-title">Track Parameter</div>
           <div class="ms-param-search-row">
             <input type="search" id="ms-param-search" placeholder="cari parameter… (mis. hair, arm, brow)" aria-label="Cari parameter" />
             <select id="ms-param-group" aria-label="Filter kategori"><option value="">semua kategori</option></select>
@@ -724,7 +724,7 @@
           <div class="ms-timeline-wrap">
             <div class="ms-ruler" id="ms-ruler" title="Klik/seret untuk menggeser waktu"></div>
             <div id="ms-tracks" class="ms-tracks"></div>
-            <p class="hint" id="ms-tracks-empty">Belum ada track. Pilih parameter di panel <b>➕ Track Parameter</b> di kiri.</p>
+            <p class="hint" id="ms-tracks-empty">Belum ada track. Pilih parameter di panel <b>Track Parameter</b> di kiri.</p>
             <div class="ms-scrub-row">
               <input type="range" id="ms-scrub" min="0" max="1000" value="0" aria-label="Geser waktu" />
             </div>
@@ -757,11 +757,11 @@
                 </select>
               </label>
               <div class="ms-key-btns">
-                <button id="ms-key-add" class="mini-btn ms-small">＋ Key di sini</button>
-                <button id="ms-key-dupe" class="mini-btn ms-small">⧉ Duplikat</button>
-                <button id="ms-key-copy" class="mini-btn ms-small">📋 Copy</button>
-                <button id="ms-key-paste" class="mini-btn ms-small">📥 Paste</button>
-                <button id="ms-key-del" class="mini-btn ms-small">✖ Hapus</button>
+                <button id="ms-key-add" class="mini-btn ms-small">+ Key di Sini</button>
+                <button id="ms-key-dupe" class="mini-btn ms-small">Duplikat</button>
+                <button id="ms-key-copy" class="mini-btn ms-small">Copy</button>
+                <button id="ms-key-paste" class="mini-btn ms-small">Paste</button>
+                <button id="ms-key-del" class="mini-btn ms-small">Hapus</button>
               </div>
             </div>
             <p class="hint">Klik lane = geser playhead · <b>klik dua kali lane = tambah keyframe</b> · seret key = pindah waktu, naik/turun = ubah nilai (Shift = tanpa snap) · Space = putar · Delete = hapus key terpilih.</p>
@@ -769,7 +769,7 @@
 
           <!-- Metadata (Fase 4) — ditutup default: menyusun gerak dulu, Label belakangan -->
           <details class="ms-meta" id="ms-meta">
-            <summary>🏷️ Info &amp; Kecocokan Emosi</summary>
+            <summary>Info &amp; Kecocokan Emosi</summary>
         <div class="cfg-box">
           <label class="cfg-row" for="ms-name">
             <span class="cfg-label">Nama</span>
@@ -815,9 +815,9 @@
     </div>
 
     <div class="ms-footer">
-      <button id="ms-analyze" class="mini-btn ms-small">✨ Analisa AI</button>
-      <button id="ms-generate" class="mini-btn ms-small">🪄 Buat dari Teks</button>
-      <button id="ms-save" class="mini-btn ms-small">💾 Simpan</button>
+      <button id="ms-analyze" class="mini-btn ms-small">Analisa AI</button>
+      <button id="ms-generate" class="mini-btn ms-small">Buat dari Teks</button>
+      <button id="ms-save" class="mini-btn ms-small">Simpan</button>
       <span id="ms-status" class="note-status" role="status" aria-live="polite"></span>
       <div id="ms-gen-box" class="ms-gen-box hidden">
         <input id="ms-gen-input" type="text" maxlength="200"
@@ -829,7 +829,7 @@
           <button class="ms-gen-chip" data-q="Marah, kepala digeleng-geleng dan alis menyeringai">marah geleng</button>
           <button class="ms-gen-chip" data-q="Sedih, kepala turun pelan-pelan, mata turun">sedih turun</button>
         </div>
-        <button id="ms-gen-go" class="mini-btn ms-small">🪄 Buat</button>
+        <button id="ms-gen-go" class="mini-btn ms-small">Buat</button>
       </div>
     </div>
   </div>
@@ -848,7 +848,7 @@
   <script src="js/mode-runtime.js"></script>
   <!-- Motion Studio UI: terisolasi. Dimuat SETELAH app.js
        karena memakai window.__live2dAgent (registry, runtime, sheet). -->
-  <script src="js/motion-editor.js?v=drag2"></script>
+  <script src="js/motion-editor.js?v=drag5"></script>
   <script type="module" src="js/camera-presence.js"></script>
   <!-- STT dua arah (push-to-talk): Whisper lokal via transformers.js — audio
        tidak pernah di-upload. Self-wire ke #btn-mic; konfigurasi dari

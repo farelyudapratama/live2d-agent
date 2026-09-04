@@ -19,18 +19,20 @@
   }
   #pet-ui:hover { opacity: 1; }
   .btn {
-    border: 1px solid rgba(255,255,255,.18); background: rgba(20,20,26,.82);
-    color: #eee; border-radius: 10px; padding: 5px 10px; font: 12px system-ui; cursor: pointer;
+    border: 1px solid #262D3A; background: #13171F;
+    color: #F1F3F6; border-radius: 4px; padding: 5px 12px; font: 12px system-ui; cursor: pointer;
+    transition: all 0.14s ease;
   }
-  .btn:hover { background: rgba(60,60,74,.9); }
+  .btn:hover { background: #1A202A; border-color: #364052; }
   #bubble {
     position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%);
-    max-width: 320px; background: rgba(18,16,28,.92); color: #fff;
-    border: 1px solid rgba(255,255,255,.14); border-radius: 12px;
-    padding: 8px 12px; font: 13px/1.5 system-ui; display: none;
+    max-width: 320px; background: #13171F; color: #F1F3F6;
+    border: 1px solid #262D3A; border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    padding: 8px 14px; font: 13px/1.5 system-ui; display: none;
   }
   #status {
-    position: fixed; top: 6px; left: 8px; font: 10px monospace; color: rgba(255,255,255,.4);
+    position: fixed; top: 6px; left: 8px; font: 10px monospace; color: #667284;
   }
 </style>
 </head>
@@ -39,9 +41,9 @@
 <div id="status">pet</div>
 <div id="bubble"><span id="bubble-text"></span></div>
 <div id="pet-ui">
-  <button class="btn" id="b-wave">👋 Sapa</button>
-  <button class="btn" id="b-talk">💬 Bicara</button>
-  <button class="btn" id="b-close">✕ Tutup</button>
+  <button class="btn" id="b-wave">Sapa</button>
+  <button class="btn" id="b-talk">Bicara</button>
+  <button class="btn" id="b-close">Tutup</button>
 </div>
 <script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/live2dcubismcore.min.js"></script>

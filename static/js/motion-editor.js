@@ -954,37 +954,76 @@
   // ── Buka / tutup ─────────────────────────────────────────────────
   // ── Popup bisa digeser (drag lewat headernya) ──────────────────
   // Dipasang via onpointerdown/onpointermove (bukan addEventListener) supaya
-  // tidak bisa dilepas oleh wiring lain. Posisi memakai custom property
-  // --ms-x/--ms-y + rule #motion-studio-popup.dragged (!important).
-  // Tersimpan di localStorage; dobel-klik header = kembali ke posisi bawaan.
+  // tidak bisa dilepas oleh wiring lain. Posisi = left/top absolut via custom
+  // property --ms-x/--ms-y + rule #motion-studio-popup.dragged (!important).
+  // Saat pointerdown, rect popup di-snapshot dan width/height dikunci inline
+  // DULU sebelum .dragged dipasang — tanpa itu popup "melompat" (anchored
+  // right/bottom → left/top, dan stretch top+bottom → height auto) sehingga
+  // delta drag terhitung dari posisi yang salah. Delta kursor = delta popup,
+  // di-clamp supaya minimal 120px lebar / 48px tinggi tetap terlihat.
+  //
+  // Performa: selama drag popup digerakkan via transform (--ms-dx/--ms-dy,
+  // kelas .dragging) — murni kerja compositor, isi popup tidak di-layout
+  // ulang tiap frame. (backdrop-filter sudah dihapus dari semua CSS — blur
+  // di atas canvas WebGL dihitung ulang tiap frame saat popup bergerak.)
+  // localStorage TIDAK ditulis per pointermove (I/O sinkron di
+  // main thread = jank): di-throttle 250ms, dan dipaksa tersimpan saat
+  // lepas. Dobel-klik header = kembali ke posisi bawaan.
   function makePopupDraggable() {
     const pop = $('#motion-studio-popup');
     const head = pop ? pop.querySelector('.pn-popup-head') : null;
     if (!pop || !head) return;
     head.classList.add('drag-handle');
     head.title = 'Tahan & geser untuk memindahkan — dobel-klik: posisi awal';
+    let drag = null;
+    let lastSave = 0;
+    const savePos = (x, y, w, h, force) => {
+      const now = performance.now();
+      if (!force && now - lastSave < 250) return;
+      lastSave = now;
+      try { localStorage.setItem('ms-popup-pos', JSON.stringify({ left: Math.round(x), top: Math.round(y), w: Math.round(w), h: Math.round(h) })); } catch (err) {}
+    };
     head.onpointerdown = (e) => {
       if (e.target.closest('button, input, select, a, details')) return;
       const r = pop.getBoundingClientRect();
-      window.__msDrag = {
-        sx: e.clientX, sy: e.clientY,
-        baseRight: window.innerWidth - (r.left + r.width) - 16,
-        baseBottom: window.innerHeight - (r.top + r.height) - 16,
-      };
+      pop.style.width = Math.round(r.width) + 'px';
+      pop.style.height = Math.round(r.height) + 'px';
       pop.classList.add('dragged');
+      pop.style.setProperty('--ms-x', Math.round(r.left) + 'px');
+      pop.style.setProperty('--ms-y', Math.round(r.top) + 'px');
+      pop.style.setProperty('--ms-dx', '0px');
+      pop.style.setProperty('--ms-dy', '0px');
+      pop.classList.add('dragging');
+      drag = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, w: r.width, h: r.height, tx: r.left, ty: r.top };
+      head.classList.add('grabbing');
       try { head.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
     };
     head.onpointermove = (e) => {
-      const d = window.__msDrag;
-      if (!d) return;
-      const x = Math.max(-(window.innerWidth - 120), Math.min(40, d.baseRight - (e.clientX - d.sx)));
-      const y = Math.max(-(window.innerHeight - 60), Math.min(200, d.baseBottom + (e.clientY - d.sy)));
-      pop.style.setProperty('--ms-x', Math.round(x) + 'px');
-      pop.style.setProperty('--ms-y', Math.round(y) + 'px');
-      try { localStorage.setItem('ms-popup-shift', JSON.stringify({ dx: Math.round(x), dy: Math.round(y) })); } catch (err) {}
+      if (!drag) return;
+      const x = Math.max(120 - drag.w, Math.min(window.innerWidth - 120, drag.ox + (e.clientX - drag.sx)));
+      const y = Math.max(8, Math.min(window.innerHeight - 48, drag.oy + (e.clientY - drag.sy)));
+      drag.tx = x; drag.ty = y;
+      // Hanya transform yang berubah selama drag — murah untuk compositor.
+      pop.style.setProperty('--ms-dx', Math.round(x - drag.ox) + 'px');
+      pop.style.setProperty('--ms-dy', Math.round(y - drag.oy) + 'px');
+      savePos(x, y, drag.w, drag.h);
     };
-    const end = (e) => { window.__msDrag = null; try { head.releasePointerCapture(e.pointerId); } catch (err) {} };
+    const end = (e) => {
+      if (drag) {
+        // Commit posisi akhir ke left/top lalu reset transform — pikselnya
+        // identik, jadi tidak ada lompatan saat melepas tombol.
+        pop.style.setProperty('--ms-x', Math.round(drag.tx) + 'px');
+        pop.style.setProperty('--ms-y', Math.round(drag.ty) + 'px');
+        savePos(drag.tx, drag.ty, drag.w, drag.h, true);
+        drag = null;
+      }
+      pop.classList.remove('dragging');
+      pop.style.removeProperty('--ms-dx');
+      pop.style.removeProperty('--ms-dy');
+      head.classList.remove('grabbing');
+      try { head.releasePointerCapture(e.pointerId); } catch (err) {}
+    };
     head.onpointerup = end;
     head.onpointercancel = end;
     head.ondblclick = (e) => {
@@ -992,7 +1031,9 @@
       pop.classList.remove('dragged');
       pop.style.removeProperty('--ms-x');
       pop.style.removeProperty('--ms-y');
-      try { localStorage.removeItem('ms-popup-shift'); } catch (err) {}
+      pop.style.removeProperty('width');
+      pop.style.removeProperty('height');
+      try { localStorage.removeItem('ms-popup-pos'); } catch (err) {}
     };
     restorePopupPos();
   }
@@ -1000,14 +1041,22 @@
   function restorePopupPos() {
     const pop = $('#motion-studio-popup');
     if (!pop) return;
-    try {
-      const sh = JSON.parse(localStorage.getItem('ms-popup-shift') || 'null');
-      if (sh && (sh.dx || sh.dy)) {
-        pop.classList.add('dragged');
-        pop.style.setProperty('--ms-x', sh.dx + 'px');
-        pop.style.setProperty('--ms-y', sh.dy + 'px');
-      }
-    } catch (e) {}
+    // Key lama berisi offset skema right/bottom yang arah dragnya terbalik —
+    // dibuang agar posisi kacau dari sesi sebelumnya tidak dihidupkan lagi.
+    try { localStorage.removeItem('ms-popup-shift'); } catch (e) {}
+    let pos = null;
+    try { pos = JSON.parse(localStorage.getItem('ms-popup-pos') || 'null'); } catch (e) {}
+    if (!pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return;
+    // Di-clamp ke viewport sekarang (jendela bisa saja di-resize/di-pindah
+    // monitor sejak terakhir kali posisi disimpan).
+    const w = Math.min(Number.isFinite(pos.w) ? pos.w : 960, window.innerWidth - 16);
+    const x = Math.max(120 - w, Math.min(window.innerWidth - 120, pos.left));
+    const y = Math.max(8, Math.min(window.innerHeight - 48, pos.top));
+    pop.classList.add('dragged');
+    pop.style.width = Math.round(w) + 'px';
+    if (Number.isFinite(pos.h)) pop.style.height = Math.round(pos.h) + 'px';
+    pop.style.setProperty('--ms-x', Math.round(x) + 'px');
+    pop.style.setProperty('--ms-y', Math.round(y) + 'px');
   }
 
   async function openStudio() {

@@ -27,10 +27,11 @@ Satu aplikasi dengan dua lapisan yang saling menopang: **inti logika di TypeScri
 
 | Lapisan | Lokasi | Karakter |
 |---|---|---|
-| Server — 27 route API, LLM proxy, static, upload | `src/server/index.ts` + `src/shared/{config,llm-client,types}.ts` | TS penuh, teruji unit |
+| Server — 40+ route API, LLM proxy, static, upload | `src/server/index.ts` + `src/shared/{config,llm-client,types}.ts` | TS penuh, teruji unit |
 | Otak agent — prompt, directive, proaktif | `src/client/agent/{brain,directive-parser}.ts` | TS penuh, teruji unit |
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
 | Motion taxonomy — klasifikasi klip native | `src/client/engine/motion-taxonomy.ts` | TS — dipakai server & bundle |
+| Mode system — VTuber / Assistant / Pet + ModeManager | `src/server/{vtuber,assistant,pet}.ts` + `static/js/mode-runtime.js` | 1 mode aktif; pindah mode = runtime lama dihancurkan |
 | Engine/UI — render loop, chat, panel, sheet, role mapping | `static/js/app.js` (±6.300 baris) | **legacy** — dijaga guard |
 | Motion Studio UI | `static/js/motion-editor.js` | legacy — terisolasi |
 | Webcam presence | `static/js/camera-presence.js` | legacy — terisolasi |
@@ -39,13 +40,16 @@ Satu aplikasi dengan dua lapisan yang saling menopang: **inti logika di TypeScri
 **Aturan kontribusi — "port saat disentuh":** bagian legacy yang perlu diubah suatu hari di-port potongannya di commit yang sama dengan perubahannya, bersama guard-nya. Dua area logika yang paling bernilai di-port bila kelak disentuh: **sistem sheet** (`migrateSheet`/`resolvePresets` — guard 220 assertion siap di `test/legacy/`) dan **role mapping + inspect model** (`mapRoles`/`pokeRole*` — guard 84 assertion). Chat UI/panel DOM tidak direncanakan di-port.
 
 ```
-src/server/index.ts        # Bun.serve (loopback default) — 27 route API + static
+src/server/index.ts        # Bun.serve (loopback default) — 40+ route API + static
+src/server/{vtuber,assistant,pet}.ts   # runtime 3 mode (satu mode aktif)
 src/shared/{types,config,llm-client}.ts
 src/client/animation/{easing,motion-dsl,motion-registry,motion-runtime}.ts  # → bundle.js
 src/client/engine/motion-taxonomy.ts   # klasifikasi klip native — server & bundle
 src/client/agent/{directive-parser,brain}.ts   # otak agent → window.__agent
 src/build.ts               # bundle-entry.ts → static/js/bundle.js (IIFE, dimuat SEBELUM app.js)
 static/{index.html,css/app.css,js/app.js}      # engine/UI legacy (punya render loop)
+static/js/mode-runtime.js   # client runtime 3 mode + switcher sidebar
+static/pet.html             # halaman jendela Desktop Pet
 static/js/{bundle.js,motion-editor.js,camera-presence.js,voice-input.js}
 data/{config.json,sheets/,motions/,model/}     # data user — TIDAK disajikan sembarangan
 docs/                      # panduan mengikat (lihat bawah)
@@ -74,7 +78,9 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | Agent proaktif | ✅ | `idle/away/return/mood` + panel **🎚️ Kelakuan** — `quietMs` dibaca LIVE dari config |
 | Mood via webcam | ✅ | opt-in, inferensi lokal `transformers.js` — frame tidak di-upload |
 | Mouse-follow | ✅ | mata + kepala + badan |
-| TTS proxy | ✅ | `POST /api/tts` → Gradio |
+| TTS multi-provider | ✅ | Provider: **Browser / Gradio / OpenAI-compatible / ElevenLabs / Gemini TTS / API Kustom** — UI di ⚙️ Pengaturan Model → *Mesin Suara (TTS)*; voice & model auto-populated (Gemini & OpenAI katalog resmi, ElevenLabs & OpenAI-compat ditarik live), **Gaya bicara** (aksen/emosi/tempo via prompt), API key tersimpan di `config.json` (dimask di UI); fallback otomatis ke suara browser saat provider gagal/kuota habis |
+| Pipeline TTS per-kalimat | ✅ | Teks panjang dipecah per kalimat; segmen berikut di-**prefetch selagi yang sekarang diputar**; latensi request pertama diukur nyata → sisa kalimat digabung adaptif (durasi audio ≥ latensi) → jeda antar segmen ≈ nol; bubble mengikuti kalimat yang dibacakan; cache server 30 mnt per (config+teks) = kalimat sama tak mengulang API |
+| Avatar PNG per model | ✅ | `GET /api/model/avatar` — `avatar.png` diutamakan, lalu gambar pertama di folder model; tanpa gambar → inisial huruf |
 | Otak LLM (multi-provider + fallback) | ✅ | `openai-compatible/gemini/groq/openai/anthropic/mock` + **role routing** (`chat`/`motion`/`sheet` — kosongkan = semua peran; prompt pembicara bebas tabel parameter, deskripsi param pindah ke director) + 13 `ERROR_RULES` di `src/shared/llm-client.ts` |
 | Indikator hidup | ✅ | presence/mood/quiet |
 | Motion Studio (editor keyframe per param) | ✅ | `static/js/motion-editor.js` + `POST /api/motions` (sanitize via `motion-dsl`) — spec: [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) |
@@ -83,6 +89,9 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | ✨ Analisa AI motion | ✅ | `POST /api/motions/analyze` — butuh persetujuan user |
 | 🪄 Buat motion dari teks | ✅ | `POST /api/motions/generate` — draft, di-preview lalu disetujui |
 | 🎤 STT mic (ngobrol 2 arah) | ✅ | push-to-talk — Whisper lokal di browser (transformers.js); audio tidak pernah di-upload |
+| 🎥 Mode AI VTuber | ✅ | Konektor **Twitch** (IRC anonim, cukup nama channel) / **YouTube Live** (API key + video ID; superchat = donasi) / **Mock** (simulasi tanpa key). Feed live, AI balas chat otomatis dengan gaya atur-sendiri + jeda antar balas, banner & ucapan terima kasih donasi |
+| 🧠 Mode AI Assistant | ✅ | Agent lokal dengan tools `list_dir` / `read_file` (otomatis) + `write_file` / `run_shell` (wajib izin via kartu approval); multi-turn LLM + folder kerja bisa diganti |
+| 🐾 Mode Desktop Pet | ✅ | Jendela Chrome/Edge `--app` selalu di atas (Win32 SetWindowPos) berisi `static/pet.html` — model transparan, mata ikut kursor, sapaan berkala; pindah mode menutup jendela otomatis |
 | Lip-sync presisi (dari audio) | ✅ | amplitudo audio asli via Web Audio AnalyserNode → envelope → mulut (role space, model-agnostic); senyap antar kata benar-benar menutup mulut. speechSynthesis tanpa stream audio tetap osilasi; kalau AudioContext ditahan autoplay, audio tetap bunyi + osilasi fallback |
 
 ### Interaksi
@@ -92,6 +101,14 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 Klik **🎤** di panel chat → bicara → berhenti otomatis saat senyap (atau klik lagi) → teks masuk chat dan terkirim. Push-to-talk murni: **tidak ada perekaman latar**, dan memulai rekam **ditolak saat karakter sedang bicara TTS** (anti-echo — kalau tidak, dia mengobrol dengan dirinya sendiri). Inferensi 100% lokal di browser; audio tidak pernah di-upload. Model Whisper diunduh dari CDN **saat pertama dipakai** (butuh internet sekali, lalu ter-cache browser): default `Xenova/whisper-base` — untuk bahasa Indonesia yang lebih akurat ganti `stt.model` ke `Xenova/whisper-small` di `data/config.json` (lebih besar, ±250 MB). `stt.autoSend: false` bila mau review teks sebelum kirim. Bagian murni (RMS, resampler 16 kHz, auto-stop) diuji di `test/voice-input.test.ts`.
 
 Catatan arsitektur: fitur ini butuh **nol perubahan `app.js`** — semua hook yang dibutuhkan sudah disiapkan (`#btn-mic` yang dulu disabled, `window.__l2dDebug.state.talking`, kirim via klik `#btn-bubble`).
+
+### 🎛️ Sistem 3 Mode (VTuber / Assistant / Pet)
+
+Switcher 4 tombol di atas sidebar: **💬 Panggung** (default, semua fitur lama) · **🎥 VTuber** · **🧠 Assistant** · **🐾 Pet**. Kontrak ketat: **hanya satu mode aktif** — pindah mode menghancurkan runtime lama dulu (interval, WebSocket, feed, riwayat; client *dan* server) baru menyalakan yang baru. Runtime server: `src/server/vtuber.ts`, `src/server/assistant.ts`, `src/server/pet.ts`; runtime client: `static/js/mode-runtime.js`; status gabungan: `GET /api/mode`, pindah: `POST /api/mode {mode}`.
+
+- **🎥 VTuber**: `POST /api/vtuber/start` → *mock* (simulasi penonton + donasi tanpa key), *twitch* (IRC `wss://irc-ws.chat.twitch.tv`, anonim `justinfan` cukup nama channel, auto-reconnect, PING→PONG), *youtube* (API key + video ID live; `videos.liveStreamingDetails.activeLiveChatId` → poll `liveChatMessages.list` mengikuti `pollingIntervalMillis`; `superChatDetails` → event donasi). Client poll `GET /api/vtuber/events?since=<id>` tiap 2,5 s; AI membalas via LLM dengan gaya atur-sendiri + cooldown antar balas; donasi memunculkan banner + ucapan terima kasih. Catatan: beberapa ISP/proxy memblokir TMI Twitch — kalau feed kosong padahal "Terhubung", coba jaringan lain.
+- **🧠 Assistant**: `POST /api/assistant/ask` — agent multi-turn dengan tools `list_dir` / `read_file` (otomatis) dan `write_file` / `run_shell` (butuh kartu approval di panel, server menahan sampai `POST /api/assistant/approve`). Folder kerja default = folder project; bisa diganti. LLM memakai koneksi aktif (role `assistant`).
+- **🐾 Pet**: `POST /api/pet/launch` membuka jendela Chrome/Edge `--app` berisi `static/pet.html` (model transparan, mata ikut kursor, sapaan berkala) + always-on-top via Win32 `SetWindowPos` (butuh PowerShell, Windows). Pindah mode menutup jendelanya otomatis.
 
 ## 🔒 Keamanan
 
@@ -116,7 +133,7 @@ Copy `deprecated-live2d-agent/config.json` → `data/config.json` (contoh: `conf
 ## 🧪 Test
 
 ```bash
-bun run test         # SEMUA: 200 unit test (bun test) + 381 guard legacy (5 suite)
+bun run test         # SEMUA: 217 unit test (bun test) + 511 guard legacy (11 suite)
 bun run test:unit    # hanya unit test TS (parser, DSL/registry/taxonomy, dispatcher server, voice-input)
 bun run test:guards  # hanya guard legacy
 bun run build && bunx tsc --noEmit   # build + type-check (keduanya bersih)
@@ -131,6 +148,7 @@ Guard legacy (`test/legacy/`) menguji **fungsi asli yang jalan di aplikasi**, bu
 | [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md) | Aturan model-agnostic — kenapa & bagaimana tetap tidak meng-hardcode |
 | [`docs/SHEET-SYSTEM.md`](docs/SHEET-SYSTEM.md) | Sistem sheet, 4 aturan terkunci, adopsi `.exp3`, keputusan agen reaktif |
 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | Spesifikasi Motion Studio + pipeline gerak (satu pipeline, prioritas, validasi) |
+| [`docs/MODES.md`](docs/MODES.md) | Sistem 3 mode — kontrak satu-mode-aktif, konektor VTuber (Twitch/YouTube/mock), agent Assistant, jendela Pet |
 
 Dokumen historis (arsip repo lama): `../deprecated-live2d-agent/docs/PLAN-BESOK-ALIVE.md`, `PLAN-MOTION-STUDIO.md`.
 
@@ -144,6 +162,10 @@ Dokumen historis (arsip repo lama): `../deprecated-live2d-agent/docs/PLAN-BESOK-
 - **413 saat upload?** Body melebihi cap endpoint (sheet 5 MB, upload 200 MB, import-zip 500 MB).
 - **Akses dari HP/LAN?** `HOST=0.0.0.0` — sadari semua orang di jaringan bisa membaca server.
 - **Model blank di headless?** Normal — swiftshader tidak render WebGL ke framebuffer; model tetap load (console `[Live2D] Model loaded`).
+- **TTS 429 / suara browser terus?** Kuota provider TTS habis (mis. Gemini free tier) — sistem otomatis jatuh ke suara browser; tunggu reset kuota atau isi billing. Detail provider: ⚙️ → Mesin Suara.
+- **Suara panjang terpotong/berjeda?** Pipeline per-kalimat menunggu latensi provider (Gemini ±12–16 s/request); segmen berikutnya di-prefetch — pastikan jaringan stabil. Cache server 30 mnt membuat kalimat sama instan.
+- **VTuber Twitch feed kosong padahal "Terhubung"?** Sebagian ISP/proxy memblokir TMI chat Twitch — coba VPN/hotspot, atau pakai provider YouTube/mock.
+- **Assistant menolak menjalankan perintah?** Itu fitur — `write_file`/`run_shell` menunggu persetujuanmu di panel Assistant (kartu ⚠️).
 
 ## ⚠️ Model assets
 

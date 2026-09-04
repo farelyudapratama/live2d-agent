@@ -14,7 +14,12 @@
     }
   ],
   "tts": {
-    "endpoint": ""
+    "provider": "browser",
+    "endpoint": "",
+    "apiKey": "",
+    "voice": "",
+    "model": "",
+    "style": ""
   },
   "events": {
     "idleSpeak": true,

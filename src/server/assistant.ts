@@ -59,8 +59,9 @@ export function assistantStart(cfg: any): { ok: boolean; error?: string } {
   assistantStop();
   // Session sebelumnya dimuat ulang: riwayat & folder kerja bertahan lintas
   // restart. workDir eksplisit dari pemanggil (CLI --cwd / panel) menang.
+  // Default = akar app (bukan process.cwd()) supaya deterministik di portable.
   const saved = loadSession();
-  const workDir = String(cfg?.workDir || saved?.workDir || process.cwd()).trim();
+  const workDir = String(cfg?.workDir || saved?.workDir || appRoot()).trim();
   runtime = {
     cfg: cfg || {},
     history: saved?.history ? saved.history.slice() : [],
@@ -94,8 +95,11 @@ const execAsync = promisify(exec);
 // sesi tidak lenyap saat server restart. Approval SENGAJA tidak dipersist —
 // izin per aksi itu keputusan instan, bukan state lintas sesi.
 import { queueJsonWrite } from "../shared/config";
+import { appRoot } from "../shared/paths";
 
-const SESSION_FILE = join(process.cwd(), "data", "assistant-history.json");
+// Ikut akar app (repo di dev, folder exe saat compiled) — BUKAN process.cwd(),
+// yang bergantung dari mana user meluncurkan (shortcut/terminal bebas).
+const SESSION_FILE = join(appRoot(), "data", "assistant-history.json");
 
 function loadSession(): { history: AsMsg[]; workDir: string | null } | null {
   try {
@@ -108,7 +112,7 @@ function loadSession(): { history: AsMsg[]; workDir: string | null } | null {
 
 function saveSession(rt: Runtime): void {
   try {
-    mkdirSync(join(process.cwd(), "data"), { recursive: true });
+    mkdirSync(join(appRoot(), "data"), { recursive: true });
     queueJsonWrite(SESSION_FILE, { history: rt.history.slice(-MAX_HISTORY), workDir: rt.workDir }).catch(() => {});
   } catch {}
 }

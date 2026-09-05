@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 /* run-guards.js — runner untuk suite guard legacy di test/legacy/*.
  *
- * Suite di test/legacy adalah port dari live2d-agent/test (konvensi skrip
- * mandiri: tiap suite mencetak ringkasan "N passed, M failed" sendiri).
+ * Suite di test/legacy adalah skrip mandiri (konvensi: tiap suite mencetak
+ * ringkasan "N passed, M failed" sendiri).
  * Runner ini menjalankan tiap file dengan interpreter saat ini (bun — bisa
  * node juga untuk .js), mengambil ringkasan TERAKHIR (beberapa suite mencetak
- * catatan setelah ringkasan), dan exit non-zero bila ada kegagalan — konvensi
- * yang sama dengan test/run-all.js di repo v1.
+ * catatan setelah ringkasan), dan exit non-zero bila ada kegagalan.
  *
  * Jalankan: bun run test/run-guards.js   (atau: npm run test:guards)
  */

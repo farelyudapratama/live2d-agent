@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* PORT v2: dari live2d-agent/test/test-role-mapping.js — path disesuaikan ke layout v2 (static/, data/). Sinkronkan bila sumber berubah. */
 /* test-role-mapping.js — MODEL-AGNOSTIC guarantees for role resolution.
  *
  * WHY THIS EXISTS

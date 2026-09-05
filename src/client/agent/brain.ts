@@ -1,5 +1,5 @@
 /**
- * agent/brain.ts — The agent "brain". Full parity with v1 agent.js (841 LOC).
+ * agent/brain.ts — The agent "brain": prompt, directive, riwayat, proaktif.
  *
  * This module is BUNDLED into static/js/bundle.js (IIFE) and, when loaded in the
  * browser, installs itself as `window.__agent` — the exact contract that the
@@ -10,8 +10,7 @@
  *
  * It also builds a richer capability-aware system prompt and delegates actual
  * model driving to window.__live2dAgent (proven in app.js). The TS version is the
- * SINGLE SOURCE OF TRUTH for the conversation brain — the old static/agent.js is
- * retired.
+ * SINGLE SOURCE OF TRUTH for the conversation brain.
  *
  * Kontrak penting dengan engine (app.js):
  *   setAIPose({head:{x,y}, eyes:{x,y}, mouth:{form}, body:{x,y,z}}) — struktur
@@ -119,7 +118,7 @@ export class AgentBrain {
   static AWAY_DELAY_MIN_MS = 10 * 60 * 1000;
   static AWAY_DELAY_MAX_MS = 15 * 60 * 1000;
 
-  // Live history — v1 mengekspos array yang sama lewat window.__agent.history,
+  // Live history — app.js membaca array yang sama lewat window.__agent.history,
   // jadi field ini TIDAK boleh dibuat private (QA/debug membacanya langsung).
   history: ChatMessage[] = [];
   private busy = false;
@@ -264,7 +263,7 @@ Contoh pendek:
     return sys + capBlock;
   }
 
-  // ── Smart fallback: infer head/eyes/body from emotion (v1 parity) ──
+  // ── Smart fallback: infer head/eyes/body from emotion (kompat legacy) ──
   // When the LLM doesn't output explicit HEAD/EYES/BODY directives, we generate
   // natural movement based on the emotion type, scaled to the model's real
   // parameter ranges (roleIds + paramRange) so it works for any model.
@@ -333,8 +332,8 @@ Contoh pendek:
           text,
           capabilities: {
             emotions: profile?.emotions || DEFAULT_EMOTIONS,
-            // v1 mengirim daftar emosi (quirk); v2 mengirim nama gesture asli —
-            // director jadi bisa memilih gesture yang benar-benar ada.
+            // Dulu mengirim daftar emosi (quirk lama); kini mengirim nama
+            // gesture asli — director jadi bisa memilih gesture yang benar-benar ada.
             gestures: profile?.gestures || DEFAULT_GESTURES,
             motions: (profile as any)?.motionCatalog || [],
           },
@@ -476,7 +475,7 @@ Contoh pendek:
     }
   }
 
-  // ── Speak segments sequentially with ACTUAL TTS callback timing (v1 parity) ──
+  // ── Speak segments sequentially with ACTUAL TTS callback timing (kompat legacy) ──
   private playSegments(segments: ParsedSegment[]): void {
     const L = l2d();
     if (!L || !segments.length) return;
@@ -515,14 +514,14 @@ Contoh pendek:
     nextSegment();
   }
 
-  // ── Apply actions to the model (AI-driven, EASED) — v1 parity ──
+  // ── Apply actions to the model (AI-driven, EASED) ──
   // Pose dikirim sebagai TARGET nested {head,eyes,mouth,body} ke setAIPose();
   // engine yang ease menuju target dan menumpuk ambient fidget di atasnya.
   private applyActions(actions: ParsedActions, segmentIndex = 0, segmentText = ""): void {
     const agent = l2d();
     if (!agent || !agent.isReady?.()) return;
 
-    // Emotion — pakai intensity (default 0.85 seperti v1) dan fallback preset
+    // Emotion — pakai intensity (default 0.85) dan fallback preset
     // "user:<nama>" untuk sheet preset yang bukan emosi param/native bawaan.
     if (actions.emotion) {
       const supported =
@@ -742,7 +741,7 @@ Contoh pendek:
   // daripada tebakan kata kunci, jadi tebakan teks tidak boleh menimpanya.
   // Reset ke 'normal' selalu diterima dari sumber mana pun.
   //
-  // v1 parity: method ini HANYA menyimpan state. Reaksi (ekspresi + LLM)
+  // Kontrak: method ini HANYA menyimpan state. Reaksi (ekspresi + LLM)
   // dibangkitkan oleh setCameraMood() — kalau dipindah ke sini, tebakan mood
   // dari kata kunci teks ikut memicu reaksi penuh untuk mood yang bahkan
   // tidak punya event prompt (tersenyum/kesal/bingung).
@@ -763,7 +762,7 @@ Contoh pendek:
     console.log("[agent] userMood ->", this.userMood, `(${this.moodSource})`);
   }
 
-  // HANYA mood kamera yang memicu reaksi (ekspresi + LLM) — v1 parity.
+  // HANYA mood kamera yang memicu reaksi (ekspresi + LLM).
   setCameraMood(m: string): void {
     if (!m || m === "normal") {
       this.setUserMood("normal", "camera");
@@ -786,8 +785,8 @@ Contoh pendek:
       console.log("[agent] capability profile loaded", this.capProfile);
       return;
     }
-    // v2 addition: fallback ke /api/config saat engine belum siap, supaya
-    // otak tetap punya konteks dasar alih-alih prompt kosong.
+    // Fallback ke /api/config saat engine belum siap, supaya otak tetap punya
+    // konteks dasar alih-alih prompt kosong.
     try {
       const resp = await fetch(API + "/api/config");
       if (resp.ok) {
@@ -815,7 +814,7 @@ Contoh pendek:
       : "";
   }
 
-  // ── Perilaku event ambient hidup di config (`events`) — v1 parity ──
+  // ── Perilaku event ambient hidup di config (`events`) ──
   // app.js mem-publish objek EVENTS yang HIDUP (dimutasi in-place setelah
   // fetch, termasuk preset Kelakuan Hidup/Sedang yang set quietMs 15s/60s),
   // jadi membacanya SAAT event terjadi selalu memberi nilai terbaru. Nilai
@@ -871,7 +870,7 @@ if (typeof window !== "undefined") {
     setUserMood: (m: string, src?: string) => brain.setUserMood(m, src),
     setCameraMood: (m: string) => brain.setCameraMood(m),
     setPresence: (p: boolean | null) => brain.setPresence(p),
-    // Array HIDUP — v1 mengekspos referensi yang sama, bukan snapshot kosong.
+    // Array HIDUP — app.js mengonsumsi referensi yang sama, bukan snapshot kosong.
     history: brain.history,
     guessEmotion,
     loadCapabilityProfile: () => brain.loadProfile(),

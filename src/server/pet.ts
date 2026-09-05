@@ -3,9 +3,10 @@
  * Web tidak bisa menembus batas browser, jadi pet berjalan di jendela
  * aplikasi terpisah yang selalu di atas (always-on-top) dan transparan.
  * Urutan peluncur:
- *   1. Shell Tauri (pet-shell/target/release/live2d-pet.exe) — jendela
- *      WebView2 transparan, selalu di atas, dan bisa klik-tembus; paling
- *      ringan (±40-90MB) karena memakai WebView2 bawaan Windows.
+ *   1. Shell Tauri (agent-shell/target/release/live2d-shell.exe pada dev,
+ *      live2d-shell.exe di samping server pada folder release portable) —
+ *      jendela WebView2 transparan, selalu di atas, dan bisa klik-tembus;
+ *      paling ringan (±40-90MB) karena memakai WebView2 bawaan Windows.
  *   2. Chrome/Edge --app (jendela opaque always-on-top via PowerShell)
  *      — fallback nol-build kalau exe Tauri belum dibangun.
  * Referensi: flag Chrome app/kiosk adalah API resmi command-line Chromium.
@@ -13,12 +14,20 @@
 import { spawn, execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
+import { appRoot } from "../shared/paths";
 
-const STATIC = join(import.meta.dir, "../../static");
-const SHELL_EXE = join(
-  import.meta.dir,
-  "../../agent-shell/target/release/live2d-shell.exe",
-);
+const ROOT = appRoot();
+const STATIC = join(ROOT, "static");
+// Urutan kandidat shell: (1) exe di samping server — folder release portable;
+// (2) hasil build dev di agent-shell/target.
+const SHELL_CANDIDATES = [
+  join(ROOT, "live2d-shell.exe"),
+  join(ROOT, "agent-shell", "target", "release", "live2d-shell.exe"),
+];
+function findShellExe(): string | null {
+  for (const c of SHELL_CANDIDATES) { try { if (existsSync(c)) return c; } catch {} }
+  return null;
+}
 
 let petProc: any = null;
 let petPid: number | null = null;
@@ -72,9 +81,10 @@ export function petLaunch(port: number): { ok: boolean; error?: string; how?: st
   const url = `http://127.0.0.1:${port}/pet.html`;
 
   // Shell 1: Tauri — transparan, topmost native, bisa klik-tembus.
-  if (existsSync(SHELL_EXE)) {
+  const shellExe = findShellExe();
+  if (shellExe) {
     try {
-      petProc = spawn(SHELL_EXE, ["pet", url], { detached: false, stdio: "ignore" });
+      petProc = spawn(shellExe, ["pet", url], { detached: false, stdio: "ignore" });
       petPid = petProc.pid ?? null;
       activeShell = "tauri";
       return { ok: true, how: "tauri-shell (transparan + klik-tembus)" };

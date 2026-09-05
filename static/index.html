@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>Live2D Agent</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/app.css?v=drag5" />
+  <!-- Tanpa webfont remote: UI ini menumpang di atas canvas WebGL, jadi
+       first paint tidak boleh menunggu jaringan. app.css memakai stack
+       font sistem. -->
+  <link rel="stylesheet" href="css/app.css?v=matte1" />
   <!-- Cubism Core HARUS dimuat duluan sebelum pixi-live2d -->
   <script src="js/live2dcubismcore.min.js"></script>
 </head>
@@ -17,15 +17,11 @@
   <div class="app">
 
     <!-- ===================== PANGGUNG (kiri) ===================== -->
-    <!-- Proscenium berbingkai: karakter hidup di dalamnya, sorot + kolam cahaya
-         lantai (overlay screen-blend) membuat dia benar-benar berdiri di bawah lampu. -->
+    <!-- Panggung berbingkai: karakter hidup di dalamnya. Tidak ada overlay
+         cahaya / blur di atas canvas — apa pun yang menutupi canvas WebGL
+         memaksa recomposite tiap frame. -->
     <div id="stage">
       <canvas id="live2d-canvas"></canvas>
-
-      <!-- Overlay cahaya: DI ATAS canvas (canvas opaque) dengan mix-blend-mode
-           screen + pointer-events none — menerangi adegan, tidak mengganggu input -->
-      <div id="stage-glow"></div>
-      <div id="stage-shadow"></div>
 
       <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
            berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
@@ -163,7 +159,7 @@
           <span id="vt-status" class="note-status">tidak aktif</span>
         </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
-        <div class="section-title" style="margin-top:10px">Feed Live</div>
+        <div class="section-title">Feed Live</div>
         <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
         <p class="hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
       </div>
@@ -174,6 +170,10 @@
         <div class="as-workdir">
           <span class="cfg-label">Folder kerja</span>
           <input id="as-workdir" type="text" placeholder="(folder project ini)" />
+        </div>
+        <div class="note-row">
+          <button id="as-stop" class="mini-btn">Matikan Agent</button>
+          <span class="hint">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
         </div>
         <div id="as-log" class="as-log"></div>
         <div id="as-approvals"></div>
@@ -191,6 +191,7 @@
         <div class="note-row">
           <button id="pet-launch" class="mini-btn">Buka Jendela Pet</button>
           <button id="pet-close" class="mini-btn">Tutup Pet</button>
+          <button id="pet-through" class="mini-btn">Klik Tembus</button>
         </div>
         <div id="pet-status" class="note-status"></div>
         <p class="hint">Jendela pet memakai Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
@@ -218,7 +219,7 @@
             <p>Drag &amp; drop folder model ke sini,<br />atau</p>
             <button id="btn-pick-model" class="mini-btn">Pilih Folder Model</button>
             <input id="input-model-folder" type="file" webkitdirectory directory multiple hidden />
-            <p style="margin:8px 0 2px">Atau upload <b>.zip</b> model:</p>
+            <p class="model-drop-alt">Atau upload <b>.zip</b> model:</p>
             <button id="btn-pick-zip" class="mini-btn">Pilih File .zip</button>
             <input id="input-model-zip" type="file" accept=".zip,application/zip" hidden />
             <p class="hint">Folder <i>atau</i> .zip; nama model diambil dari nama folder/zip.</p>
@@ -227,26 +228,26 @@
             <input id="input-model-name" type="text" placeholder="nama model (mis. Hatsune)" />
           </div>
           <div id="model-list" class="model-list"></div>
-          <div style="margin-top:10px">
-            <button id="btn-inspect" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">Inspeksi Model (Generate Sheet)</button>
-            <p class="hint" style="margin-top:4px">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
+          <div class="note-row">
+            <button id="btn-inspect" class="mini-btn">Inspeksi Model (Generate Sheet)</button>
           </div>
+          <p class="hint">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
 
           <!-- Catatan karakter: free-text milik USER, ikut dikirim ke AI -->
-          <div class="section-title" style="margin-top:14px">Catatan Karakter</div>
+          <div class="section-title">Catatan Karakter</div>
           <div class="note-box">
             <textarea id="input-user-note" rows="4"
               placeholder="Siapa dia? Sifat, gaya bicara, kebiasaan… mis. &quot;Dia pemalu, panggil aku Senpai, suka kucing.&quot;"
               aria-describedby="note-hint"></textarea>
             <div class="note-row">
-              <button id="btn-save-note" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Catatan</button>
+              <button id="btn-save-note" class="mini-btn">Simpan Catatan</button>
               <span id="note-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
             <p class="hint" id="note-hint">Catatan ini dikirim ke AI sebagai konteks karakter, disimpan per-model, dan <b>tidak hilang</b> saat kamu inspeksi ulang.</p>
           </div>
 
           <!-- Pengaturan per-model: dulu hardcode & reset tiap reload -->
-          <div class="section-title" style="margin-top:14px">Pengaturan Model</div>
+          <div class="section-title">Pengaturan Model</div>
           <div class="cfg-box">
             <label class="cfg-row" for="cfg-display-name">
               <span class="cfg-label">Nama karakter</span>
@@ -294,7 +295,7 @@
             </label>
 
             <!-- Mesin suara (TTS): browser / API eksternal. Global (config.json), bukan per-model -->
-            <div class="section-title" style="margin-top:12px">Mesin Suara (TTS)</div>
+            <div class="section-title">Mesin Suara (TTS)</div>
             <label class="cfg-row" for="cfg-tts-provider">
               <span class="cfg-label">Provider</span>
               <select id="cfg-tts-provider">
@@ -318,7 +319,7 @@
             </label>
             <label class="cfg-row tts-remote-row" for="cfg-tts-voice">
               <span class="cfg-label">Voice</span>
-              <span style="display:flex;gap:6px;align-items:center">
+              <span class="cfg-inline">
                 <select id="cfg-tts-voice" aria-describedby="cfg-tts-hint"></select>
                 <input id="cfg-tts-voice-free" type="text" maxlength="120" hidden
                   placeholder="id voice / nama bebas" aria-describedby="cfg-tts-hint" />
@@ -326,7 +327,7 @@
             </label>
             <label class="cfg-row tts-remote-row" for="cfg-tts-model">
               <span class="cfg-label">Model</span>
-              <span style="display:flex;gap:6px;align-items:center">
+              <span class="cfg-inline">
                 <select id="cfg-tts-model" aria-describedby="cfg-tts-hint"></select>
                 <input id="cfg-tts-model-free" type="text" maxlength="120" hidden
                   placeholder="id model / nama bebas" aria-describedby="cfg-tts-hint" />
@@ -334,7 +335,7 @@
             </label>
             <label class="cfg-row tts-style-row" for="cfg-tts-style">
               <span class="cfg-label">Gaya bicara</span>
-              <span style="display:flex;gap:6px;align-items:center">
+              <span class="cfg-inline">
                 <select id="cfg-tts-style-pick" aria-describedby="cfg-tts-hint">
                   <option value="">(default / netral)</option>
                 </select>
@@ -352,29 +353,29 @@
             </p>
 
             <div class="note-row">
-              <button id="btn-save-cfg" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Pengaturan</button>
-              <button id="btn-test-voice" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Tes Suara</button>
+              <button id="btn-save-cfg" class="mini-btn">Simpan Pengaturan</button>
+              <button id="btn-test-voice" class="mini-btn">Tes Suara</button>
               <span id="cfg-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
             <p class="hint" id="cfg-hint">Disimpan per-model di dalam character sheet. Pitch &amp; kecepatan langsung terasa saat karakter bicara.</p>
           </div>
 
           <!-- Latar panggung per-model: warna, gambar, atau keduanya. -->
-          <div class="section-title" style="margin-top:14px">Latar Panggung</div>
+          <div class="section-title">Latar Panggung</div>
           <div class="cfg-box" id="bg-box">
             <label class="cfg-row" for="cfg-bg-color">
               <span class="cfg-label">Warna</span>
-              <span style="display:flex;gap:8px;align-items:center">
-                <input id="cfg-bg-color" type="color" value="#0d0d10" style="width:44px;height:30px;padding:2px;border:1px solid var(--line);border-radius:8px;background:none" />
-                <button id="btn-bg-reset" class="mini-btn" style="width:auto;padding:4px 10px;font-size:11px" title="Kembali ke latar default">Reset</button>
+              <span class="cfg-inline">
+                <input id="cfg-bg-color" type="color" value="#0d0d10" class="cfg-swatch" />
+                <button id="btn-bg-reset" class="mini-btn ms-small" title="Kembali ke latar default">Reset</button>
               </span>
             </label>
             <label class="cfg-row" for="cfg-bg-file">
               <span class="cfg-label">Gambar</span>
-              <span style="display:flex;gap:8px;align-items:center">
+              <span class="cfg-inline">
                 <input id="cfg-bg-file" type="file" accept="image/*" hidden />
-                <button id="btn-bg-pick" class="mini-btn" style="width:auto;padding:4px 12px;font-size:11px">Pilih Gambar…</button>
-                <button id="btn-bg-clear" class="mini-btn" style="width:auto;padding:4px 10px;font-size:11px" title="Hapus gambar latar">Hapus</button>
+                <button id="btn-bg-pick" class="mini-btn ms-small">Pilih Gambar…</button>
+                <button id="btn-bg-clear" class="mini-btn ms-small" title="Hapus gambar latar">Hapus</button>
               </span>
             </label>
             <label class="cfg-row" for="cfg-bg-dim">
@@ -400,23 +401,23 @@
                Dibuka sebagai popup mengambang di sisi kanan via tombol di bawah,
                supaya tidak menutupi model di stage kiri. Menampilkan SEMUA
                param + part dengan slider live + textarea deskripsi. -->
-          <div class="section-title" style="margin-top:14px">Penjelasan Parameter</div>
+          <div class="section-title">Penjelasan Parameter</div>
           <div class="note-row">
-            <button id="btn-open-paramnotes" class="mini-btn" style="width:auto;padding:5px 12px;font-size:12px">Jelaskan Parameter</button>
+            <button id="btn-open-paramnotes" class="mini-btn">Jelaskan Parameter</button>
             <span id="paramnotes-open-status" class="note-status"></span>
           </div>
 
           <!-- Daftar preset per kategori. Entri user dan saran AI tampil
                berdampingan; yang AI diberi badge supaya asalnya jelas. -->
-          <div class="section-title" style="margin-top:14px">Preset</div>
+          <div class="section-title">Preset</div>
           <div class="sheet-cats" id="sheet-cats" role="tablist" aria-label="Kategori preset"></div>
           <div id="sheet-preset-list" class="preset-list"></div>
           <div class="note-row">
-            <button id="btn-sheet-analyze" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Analisa AI</button>
+            <button id="btn-sheet-analyze" class="mini-btn">Analisa AI</button>
             <span id="sheet-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <div class="note-row">
-            <button id="btn-sheet-reload-file" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Muat Ulang dari File</button>
+            <button id="btn-sheet-reload-file" class="mini-btn">Muat Ulang dari File</button>
             <span id="reload-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <p class="hint">Saran AI aktif setelah kamu tekan <b>Pakai</b>; preset milikmu selalu menang.</p>
@@ -424,18 +425,18 @@
           <!-- Editor preset dipindah ke popup mengambang (#preset-editor-popup)
                supaya tampilannya seragam dengan Jelaskan Parameter. -->
           <div class="note-row">
-            <button id="btn-open-preset-editor" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">Editor Preset</button>
+            <button id="btn-open-preset-editor" class="mini-btn">Editor Preset</button>
           </div>
 
           <!-- Ekspresi teradopsi (opt-out).
                Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox
                untuk mematikan adopsi per-file. Data dari GET /api/model/expressions-adoption. -->
-          <div class="section-title" style="margin-top:14px">Ekspresi</div>
+          <div class="section-title">Ekspresi</div>
           <div class="cfg-box" id="adoption-box">
             <p class="hint">File .exp3 di folder model yang lupa didaftarkan di model3.json diadopsi otomatis agar tidak mati. Matikan yang tak perlu.</p>
             <div id="adoption-list" class="preset-list"></div>
             <div class="note-row">
-              <button id="btn-adoption-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Pilihan</button>
+              <button id="btn-adoption-save" class="mini-btn">Simpan Pilihan</button>
               <span id="adoption-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
           </div>
@@ -453,11 +454,11 @@
             deskripsi &amp; tag, lalu AI bisa memakainya saat ngobrol. Gerakan bawaan
             dan motion milik model tetap jalan seperti biasa.</p>
           <div class="note-row">
-            <button id="btn-open-motion-studio" class="mini-btn" style="width:auto;padding:6px 14px;font-size:12px">Buka Motion Studio</button>
+            <button id="btn-open-motion-studio" class="mini-btn">Buka Motion Studio</button>
             <span id="motion-open-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
 
-          <div class="section-title" style="margin-top:14px">Daftar Gerakan</div>
+          <div class="section-title">Daftar Gerakan</div>
           <div id="motion-registry-list" class="preset-list"></div>
           <p class="hint">Sumber: <b>bawaan</b> = 9 gerakan aplikasi, <b>model</b> = motion dari
             file model, <b>milikmu</b> = hasil Motion Studio. Hanya milikmu yang bisa diedit/hapus.</p>
@@ -491,7 +492,7 @@
         <!-- Kelakuan (Behaviour).
              User bisa atur masa tenang / idle lewat profil atau slider mentah,
              tanpa menyentuh config.json manual. Aksi mengupdate EVENTS live + persist. -->
-        <div class="section-title" style="margin-top:14px">Kelakuan</div>
+        <div class="section-title">Kelakuan</div>
         <div class="cfg-box" id="behaviour-box">
           <p class="hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
             Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.</p>
@@ -530,7 +531,7 @@
           </details>
 
           <div class="note-row">
-            <button id="btn-beh-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Kelakuan</button>
+            <button id="btn-beh-save" class="mini-btn">Simpan Kelakuan</button>
             <span id="beh-save-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <p class="hint" id="beh-quiet-countdown">Masa tenang: —</p>
@@ -569,25 +570,25 @@
         </label>
         <label>System Prompt
           <span class="form-hint">Instruksi teknis untuk sambungan INI (semua peran yang memakainya) — mis. gaya jawaban, format, bahasa. Persona karakter jangan di sini: pakai 📝 Catatan Karakter yang per-model.</span>
-          <textarea id="m-system" rows="3" placeholder="mis. Jawab singkat dalam bahasa Indonesia."></textarea>
+          <textarea id="m-system" rows="2" placeholder="mis. Jawab singkat dalam bahasa Indonesia."></textarea>
         </label>
         <label>Max Tokens &amp; Temperature
           <span class="form-hint">Kosong = default (2048 &amp; 0.8). Model reasoning butuh lebih besar (mis. 8192) supaya jawaban tak terpotong sebelum reasoning-nya selesai.</span>
-          <span class="conn-roles">
-            <input type="number" id="m-maxtokens" min="64" max="200000" step="1" placeholder="2048" style="flex:1" />
-            <input type="number" id="m-temp" min="0" max="2" step="0.1" placeholder="0.8" style="flex:1" />
+          <span class="cfg-pair">
+            <input type="number" id="m-maxtokens" min="64" max="200000" step="1" placeholder="2048" />
+            <input type="number" id="m-temp" min="0" max="2" step="0.1" placeholder="0.8" />
           </span>
         </label>
-        <label class="conn-roles">
-          <input type="checkbox" id="m-stream" /> Stream mode — untuk gateway yang memotong generasi lambat
+        <label class="cfg-check">
+          <input type="checkbox" id="m-stream" /> <span>Stream mode — untuk gateway yang memotong generasi lambat</span>
         </label>
         <label>Peran (roles)
           <span class="form-hint">Kosongkan semua = connection ini boleh dipakai untuk semua peran.</span>
         </label>
-        <div class="conn-roles" id="m-roles">
-          <label><input type="checkbox" value="chat" /> chat (teks balasan)</label>
-          <label><input type="checkbox" value="motion" /> motion (gerak &amp; ekspresi)</label>
-          <label><input type="checkbox" value="sheet" /> sheet (analisa parameter)</label>
+        <div class="cfg-checks" id="m-roles">
+          <label class="cfg-check"><input type="checkbox" value="chat" /> <span>chat (teks balasan)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="motion" /> <span>motion (gerak &amp; ekspresi)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="sheet" /> <span>sheet (analisa parameter)</span></label>
         </div>
       </div>
       <div class="modal-actions">
@@ -617,7 +618,7 @@
       idle kembali mulus.
     </div>
     <div class="pn-popup-actions">
-      <button id="pn-save-all" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Catatan</button>
+      <button id="pn-save-all" class="mini-btn">Simpan Catatan</button>
       <span id="pn-save-status" class="note-status" role="status" aria-live="polite"></span>
     </div>
     <input id="pn-search" class="pn-search" type="search" placeholder="Cari param / label / catatan…" autocomplete="off">
@@ -651,7 +652,7 @@
           </select>
         </label>
         <div class="note-row">
-          <button id="btn-preset-capture" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Ambil Pose Sekarang</button>
+          <button id="btn-preset-capture" class="mini-btn">Ambil Pose Sekarang</button>
           <span id="preset-capture-info" class="note-status"></span>
         </div>
         <div class="preset-sliders-wrap">
@@ -664,8 +665,8 @@
         </div>
         <div id="preset-values" class="preset-values"></div>
         <div class="note-row">
-          <button id="btn-preset-save" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Simpan Preset</button>
-          <button id="btn-preset-clear" class="mini-btn" style="width:auto;padding:5px 12px;font-size:11px">Kosongkan</button>
+          <button id="btn-preset-save" class="mini-btn">Simpan Preset</button>
+          <button id="btn-preset-clear" class="mini-btn">Kosongkan</button>
           <span id="preset-status" class="note-status" role="status" aria-live="polite"></span>
         </div>
         <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
@@ -812,7 +813,9 @@
           <label class="cfg-check"><input type="checkbox" id="ms-loop-meta" /> <span>Berulang (loop)</span></label>
         </div>
       </details>
-    </div>
+        </div><!-- /ms-stage -->
+      </div><!-- /ms-workspace -->
+    </div><!-- /ms-body -->
 
     <div class="ms-footer">
       <button id="ms-analyze" class="mini-btn ms-small">Analisa AI</button>

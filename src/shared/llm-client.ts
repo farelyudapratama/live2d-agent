@@ -278,6 +278,120 @@ async function callWithOneRetry(conn: Connection, messages: ChatMessage[], clien
   }
 }
 
+// ── Streaming ──────────────────────────────────────────────────
+export type StreamDelta = (chunk: string) => void;
+
+/**
+ * LLM dengan streaming token. Wire-format OpenAI (openai, groq,
+ * openai-compatible) benar-benar mengalir; provider lain belum punya jalur
+ * stream di sini — jawaban utuh dikirim sebagai SATU delta supaya pemanggil
+ * tetap seragam. Return = teks balasan lengkap.
+ */
+export async function callLLMStream(conn: Connection, messages: ChatMessage[], clientSystem: string, onDelta: StreamDelta): Promise<string> {
+  const provider = (conn.provider ?? "openai-compatible").toLowerCase() as LLMProvider;
+  if (provider !== "openai-compatible" && provider !== "groq" && provider !== "openai") {
+    const text = await callLLM(conn, messages, clientSystem);
+    onDelta(text);
+    return text;
+  }
+  let base: string;
+  if (provider === "openai-compatible") {
+    base = (conn.baseUrl ?? "").replace(/\/+$/, "");
+    if (!base) throw new Error("baseUrl belum diisi untuk openai-compatible");
+  } else if (provider === "groq") base = "https://api.groq.com/openai/v1";
+  else base = "https://api.openai.com/v1";
+  const apiKey = cleanKey(conn.apiKey);
+  const model = conn.model || DEFAULT_MODELS[provider] || "";
+  const temp = conn.temperature ?? 0.8;
+  const maxT = conn.maxTokens ?? 2048;
+  const sys = [conn.systemPrompt, clientSystem].filter(Boolean).join("\n\n");
+  const body = JSON.stringify({ model, messages: buildChatMessages(messages, sys), temperature: temp, max_tokens: maxT, stream: true });
+
+  // Timeout senyap (bukan total): setiap byte yang datang meng-reset —
+  // reasoning panjang tidak boleh dibunuh, diam 60 dtk boleh.
+  const controller = new AbortController();
+  let timedOut = false;
+  let to: ReturnType<typeof setTimeout> = setTimeout(() => { timedOut = true; controller.abort(new Error("timeout: LLM senyap 60s")); }, TIMEOUT_MS);
+  const reset = () => { if (!timedOut) { clearTimeout(to); to = setTimeout(() => { timedOut = true; controller.abort(new Error("timeout: LLM senyap 60s")); }, TIMEOUT_MS); } };
+
+  const readerLog = conn.name || conn.id;
+  let emitted = 0;
+  try {
+    const resp = await fetch(base + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body,
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => "");
+      const e: any = new Error(`HTTP ${resp.status}: ${t.slice(0, 200)}`);
+      e.statusCode = resp.status;
+      throw e;
+    }
+    if (!resp.body) throw new Error("stream tidak tersedia dari provider ini");
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let raw = "";
+    let full = "";
+    const handleLine = (line: string) => {
+      const m = /^[ \t]*data:[ \t]*(.*)$/.exec(line);
+      if (!m) return;
+      const payload = m[1].trim();
+      if (!payload || payload === "[DONE]") return;
+      let obj: any;
+      try { obj = JSON.parse(payload); } catch { return; } // chunk rusak → lewati
+      const piece = obj?.choices?.[0]?.delta?.content ?? obj?.choices?.[0]?.message?.content ?? "";
+      if (piece) { full += piece; emitted += piece.length; onDelta(piece); }
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        const s = dec.decode(value, { stream: true });
+        buf += s; raw += s;
+        reset();
+        let idx: number;
+        while ((idx = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, idx).replace(/\r$/, "");
+          buf = buf.slice(idx + 1);
+          handleLine(line);
+        }
+      }
+    }
+    if (buf.trim()) handleLine(buf);
+    // Relay aneh (disebut di extractJSON): minta stream, balas satu JSON
+    // utuh non-SSE — rakit dari raw lalu kirim sebagai satu delta.
+    if (!full.trim()) {
+      try {
+        const j = extractJSON(raw);
+        const text = j?.choices?.[0]?.message?.content ?? j?.choices?.[0]?.delta?.content ?? "";
+        if (text) { full = text; emitted += text.length; onDelta(text); }
+      } catch {}
+    }
+    if (!full.trim()) throw new Error(provider + " stream kosong");
+    return full.trim();
+  } catch (e: any) {
+    // Sebagian teks sudah tercetak ke user: JANGAN biarkan fallback mengulang
+    // dari awal di koneksi lain (teks jadi dobel) — tandai dan lempar.
+    if (emitted > 0) { e.emitted = emitted; throw e; }
+    throw e;
+  } finally { clearTimeout(to); void readerLog; }
+}
+
+async function callStreamWithOneRetry(conn: Connection, messages: ChatMessage[], clientSystem: string, onDelta: StreamDelta): Promise<string> {
+  try {
+    return await callLLMStream(conn, messages, clientSystem, onDelta);
+  } catch (e: any) {
+    if (e?.emitted > 0) throw e;
+    if (/respon KOSONG|respon bukan JSON/.test(String(e?.message || "")))
+      return await callLLMStream(conn, messages, clientSystem, onDelta);
+    throw e;
+  }
+}
+
+
 // ── Multi-LLM role routing ─────────────────────────────────────
 // Satu LLM "serba bisa" menerima seluruh konteks (termasuk dulu: tabel
 // parameter) di prompt-nya, dan itu menurunkan mutu balasan teks. Dengan tag
@@ -353,13 +467,35 @@ export function llmForRole(
   return llmWithFallback(getConnections, getActive, persist, messages, clientSystem, order);
 }
 
+/** llmForRole + streaming: delta token diteruskan ke `onDelta`. Kebijakan
+ *  fallback/cooldown/persist identik dengan llmForRole. */
+export function llmForRoleStream(
+  role: string,
+  getConnections: () => Connection[],
+  getActive: () => Connection | null,
+  persist: (conns: Connection[]) => void,
+  messages: ChatMessage[],
+  clientSystem: string,
+  onDelta: StreamDelta
+): Promise<LLMResult> {
+  const order = orderForRole(role, getConnections());
+  if (order.length) {
+    console.log("[roles] role=" + role + " (stream) -> " + order.map((c) => c.name || c.id).join(" > "));
+  }
+  return llmWithFallback(
+    getConnections, getActive, persist, messages, clientSystem, order,
+    (c) => callStreamWithOneRetry(c, messages, clientSystem, onDelta),
+  );
+}
+
 export function llmWithFallback(
   getConnections: () => Connection[],
   getActive: () => Connection | null,
   persist: (conns: Connection[]) => void,
   messages: ChatMessage[],
   clientSystem: string = "",
-  order?: Connection[]
+  order?: Connection[],
+  call: (conn: Connection) => Promise<string> = (c) => callWithOneRetry(c, messages, clientSystem)
 ): Promise<LLMResult> {
   return new Promise((resolve, reject) => {
     // PENTING: `allConns` (daftar utuh) yang dipersist — memfilter dulu lalu
@@ -380,7 +516,7 @@ export function llmWithFallback(
       if (idx >= order2.length) { const e: any = new Error("Semua connection gagal (cek panel ⚙️ AI Connections)."); e.httpStatus = 502; e.kind = "all-failed"; return reject(e); }
       const conn = order2[idx++];
       if (conn.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) return tryNext();
-      callWithOneRetry(conn, messages, clientSystem).then((reply) => {
+      call(conn).then((reply) => {
         conn.testStatus = "success"; (conn as any).lastError = ""; conn.rateLimitedUntil = null as any;
         persist(allConns);
         resolve({ reply, used: conn.id });

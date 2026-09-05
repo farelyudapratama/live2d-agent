@@ -9,7 +9,10 @@
     "build": "bun run src/build.ts",
     "test": "bun test && bun run test/run-guards.js",
     "test:unit": "bun test",
-    "test:guards": "bun run test/run-guards.js"
+    "test:guards": "bun run test/run-guards.js",
+    "build:pet": "cd agent-shell && bunx @tauri-apps/cli build",
+    "dev:pet": "cd agent-shell && bunx @tauri-apps/cli build --debug",
+    "agent": "bun run src/cli/agent.ts"
   },
   "engines": {
     "bun": ">=1.0"

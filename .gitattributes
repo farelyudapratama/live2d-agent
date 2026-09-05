@@ -1,0 +1,6 @@
+# File batch Windows WAJIB CRLF — parser cmd.exe salah membaca offset baris
+# pada file ber-line-ending LF (gejala: perintah terpotong acak, "X is not
+# recognized"). Kunci konversi di sini supaya semua clone/checkout selalu
+# mendapat CRLF untuk batch, apa pun core.autocrlf di mesin masing-masing.
+*.bat text eol=crlf
+*.cmd text eol=crlf

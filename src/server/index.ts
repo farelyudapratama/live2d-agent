@@ -199,7 +199,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
     return o; });
     // apiKey TTS dimask untuk UI; server menyimpan yang asli di config.json
     const ttsOut={...(cfg.tts||{})} as any; if(ttsOut.apiKey) ttsOut.apiKey=config.maskKey(ttsOut.apiKey);
-    return json({ activeId:cfg.activeId, connections:conns, tts:ttsOut, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{}, overlay:cfg.overlay||{} });
+    return json({ activeId:cfg.activeId, connections:conns, tts:ttsOut, events:cfg.events||{}, camera:cfg.camera||{}, motion:cfg.motion||{}, stt:cfg.stt||{}, i18n:cfg.i18n||{}, overlay:cfg.overlay||{} });
   }
   if(method==="POST" && path==="/api/config") return handleConfigPost(req);
   if(method==="POST" && path==="/api/test") return handleTestConnection(req);
@@ -394,6 +394,7 @@ async function handleConfigPost(req:Request):Promise<Response>{
     else if(action==="setActive"){ if(!conns.find(c=>c.id===body.id)) return json({error:"connection tidak ada"},404); cfg.activeId=body.id; }
     else if(action==="saveEvents"){ config.saveEvents(body.events||{}); return json({ok:true, events: config.load().events}); }
     else if(action==="saveTTS"){ config.saveTTS(body.tts||{}); const t=config.load().tts||{}; return json({ok:true, tts:Object.assign({},t,{apiKey:t.apiKey?config.maskKey(t.apiKey):""})}); }
+    else if(action==="saveI18n"){ config.saveI18n(body.i18n||{}); return json({ok:true, i18n: config.load().i18n}); }
     else if(action==="save"){ if(Array.isArray(body.connections)) conns=body.connections; if(body.activeId) cfg.activeId=body.activeId; }
     else return json({error:"action tidak dikenal: "+action},400);
     for(const c of conns) if(c.apiKey) c.apiKey=cleanStr(c.apiKey);

@@ -51,8 +51,16 @@ export interface Config {
   camera: CameraConfig;
   motion: MotionConfig;
   stt: SttConfig;
+  // Bahasa UI & bahasa balasan AI. "auto" = belum dipilih (server
+  // memperlakukannya sebagai "id"); klien menulis nilai konkret saat
+  // first-run / ganti bahasa di panel pengaturan.
+  i18n: I18nConfig;
   // Overlay efek emosi app-level (js/emotion-overlay.js).
   overlay: { enabled: boolean; alpha: number; size: number };
+}
+
+export interface I18nConfig {
+  lang: "auto" | "id" | "en";
 }
 
 export interface EventConfig {

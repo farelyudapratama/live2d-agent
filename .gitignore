@@ -15,4 +15,5 @@ data/sheets/
 agent-shell/target/
 agent-shell/gen/
 # ZCode CLI state lokal (rencana sesi, artifact)
-.zcode/
+.zcode/# build artifacts i18n (setara bundle.js)
+static/js/i18n.js

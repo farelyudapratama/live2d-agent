@@ -29,4 +29,25 @@ if (!result.success) {
   process.exit(1);
 }
 
-console.log("✓ Client bundle built → static/js/bundle.js (TS is now the live client source-of-truth)");
+// Entry kedua: core i18n saja (kamus + t()) untuk static/pet.html yang tidak
+// memuat bundle.js penuh. index.html tidak memuat file ini.
+const i18n = await Bun.build({
+  entrypoints: ["./src/client/i18n-entry.ts"],
+  outdir: "./static/js",
+  naming: "i18n.[ext]",
+  target: "browser",
+  format: "iife",
+  splitting: false,
+  minify: false,
+  sourcemap: "inline",
+});
+
+if (!i18n.success) {
+  console.error("i18n build failed:");
+  for (const msg of i18n.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js (TS is now the live client source-of-truth)");

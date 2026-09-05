@@ -20,6 +20,7 @@ import { MotionRegistry } from "./animation/motion-registry";
 import { MotionRuntime } from "./animation/motion-runtime";
 import * as MotionTaxonomy from "./engine/motion-taxonomy";
 import * as LipSync from "./speech/lip-sync";
+import * as i18n from "./i18n/index";
 import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
 
@@ -29,5 +30,10 @@ if (typeof window !== "undefined") {
   (window as any).MotionRuntime = MotionRuntime;
   (window as any).MotionTaxonomy = MotionTaxonomy;
   (window as any).LipSync = LipSync;
-  console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain)");
+  // i18n: init() sinkron menyweep atribut data-i18n* di DOM statis SEBELUM
+  // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
+  // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.
+  (window as any).__i18n = i18n;
+  i18n.init();
+  console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain + i18n)");
 }

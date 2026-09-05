@@ -1,0 +1,22 @@
+[package]
+name = "live2d-shell"
+version = "0.1.0"
+description = "Cangkang jendela (pet transparan + app utama) untuk Live2D Agent — WebView2, tanpa Electron"
+edition = "2021"
+rust-version = "1.77"
+
+# Binary statis kecil; WebView2 diambil dari runtime bawaan Windows.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"     # ukuran exe kecil lebih penting dari kecepatan ekstra
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

@@ -17,9 +17,22 @@
 // Kenapa bukan Electron: WebView2 sudah menjadi bagian dari Windows 10/11,
 // jadi binary-nya kecil (±3MB) dan RAM jendela ±40-90MB — tidak membawa
 // Chromium sendiri seperti Electron.
+//
+// Mode portable (release): bila exe server (live2d-agent.exe) ada di samping
+// shell dan port masih kosong, shell menyalakannya sendiri (sidecar) dan
+// mematikannya saat aplikasi ditutup — user cukup dobel-klik satu exe.
+//
+// Port (peluncuran TANPA argumen URL — dobel-klik shortcut installer): port
+// dasar 8310 dipakai bila kosong ATAU sudah dipakai server milik kita sendiri
+// (probe /api/mode — dobel-klik kedua menempel ke instance pertama). Bila
+// port diduduki aplikasi ASING, shell bergeser ke 8311..8319. URL argumen
+// eksplisit (start.bat / peluncuran dari server) selalu dihormati apa adanya.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::net::TcpStream;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -37,27 +50,40 @@ enum Mode {
 struct Launch {
     mode: Mode,
     url: String,
+    /// true bila URL datang dari argumen user (dihormati apa adanya);
+    /// false bila jatuh ke fallback — shell boleh memilih port sendiri.
+    explicit: bool,
 }
 
 fn parse_args() -> Launch {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("main") => Launch {
-            mode: Mode::Main,
-            url: args.next().unwrap_or_else(|| FALLBACK_MAIN_URL.into()),
-        },
-        Some("pet") => Launch {
-            mode: Mode::Pet,
-            url: args.next().unwrap_or_else(|| FALLBACK_PET_URL.into()),
-        },
+    let rest: Vec<String> = std::env::args().skip(1).collect();
+    match rest.first().map(|s| s.as_str()) {
+        Some("main") => {
+            let url = rest.get(1).cloned();
+            Launch {
+                mode: Mode::Main,
+                url: url.clone().unwrap_or_else(|| FALLBACK_MAIN_URL.into()),
+                explicit: url.is_some(),
+            }
+        }
+        Some("pet") => {
+            let url = rest.get(1).cloned();
+            Launch {
+                mode: Mode::Pet,
+                url: url.clone().unwrap_or_else(|| FALLBACK_PET_URL.into()),
+                explicit: url.is_some(),
+            }
+        }
         // Kompatibel: panggilan lama langsung memberi URL pet tanpa kata "pet".
         Some(url) if url.starts_with("http") => Launch {
             mode: Mode::Pet,
             url: url.into(),
+            explicit: true,
         },
         _ => Launch {
             mode: Mode::Main,
             url: FALLBACK_MAIN_URL.into(),
+            explicit: false,
         },
     }
 }
@@ -74,9 +100,108 @@ fn can_connect(host_port: &str) -> bool {
     TcpStream::connect(host_port).is_ok()
 }
 
+/// Apakah listener di host_port adalah server milik kita? Probe HTTP singkat
+/// ke /api/mode dan cari kunci `"active"` khas JSON modeStatus(). Listener
+/// asing (aplikasi lain yang kebetulan memakai port 8310) tidak akan
+/// membalas dengan pola ini — tanpa cek ini, jendela pet bisa menampilkan
+/// halaman aplikasi orang lain.
+fn is_our_server(host_port: &str) -> bool {
+    use std::io::{Read, Write};
+    let Ok(mut stream) = TcpStream::connect(host_port) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(700)));
+    let req = format!("GET /api/mode HTTP/1.0\r\nHost: {host_port}\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 2048];
+    let n = stream.read(&mut buf).unwrap_or(0);
+    let resp = String::from_utf8_lossy(&buf[..n]);
+    resp.contains("HTTP/1") && resp.contains("\"active\"")
+}
+
+/// Beri kesempatan kedua: server milik kita yang baru dinyalakan (boot <1 dtk)
+/// mungkin belum sempat membalas saat probe pertama.
+fn is_our_server_with_retry(host_port: &str) -> bool {
+    if is_our_server(host_port) {
+        return true;
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    is_our_server(host_port)
+}
+
+/// Pilih port bila peluncuran tanpa argumen URL (dobel-klik shortcut):
+///   1) port kosong → pakai (sidecar menyusul);
+///   2) port berisi server MILIK KITA → pakai, menempel ke instance itu;
+///   3) port diduduki aplikasi asing → geser ke kandidat berikutnya.
+/// Semua kandidat gagal → kembali ke port dasar (perilaku lama).
+fn pick_port() -> u16 {
+    const BASE_PORT: u16 = 8310;
+    const CANDIDATES: u16 = 10;
+    for candidate in BASE_PORT..BASE_PORT + CANDIDATES {
+        let hp = format!("127.0.0.1:{candidate}");
+        if !can_connect(&hp) || is_our_server_with_retry(&hp) {
+            return candidate;
+        }
+    }
+    BASE_PORT
+}
+
+/// Server exe di samping shell (folder release portable). Tidak ada di layout
+/// dev — di sana server dinyalakan start.bat / `bun run dev` secara terpisah.
+fn sibling_server() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    for name in ["live2d-agent.exe", "live2d-agent"] {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 fn main() {
-    let launch = parse_args();
+    let mut launch = parse_args();
+    // Tanpa argumen URL → shell memilih port sendiri (lihat pick_port).
+    if !launch.explicit {
+        let port = pick_port();
+        launch.url = format!("http://127.0.0.1:{port}/");
+    }
     let host_port = host_port_of(&launch.url);
+    // Sidecar: folder portable — user dobel-klik shell, port masih kosong →
+    // shell menyalakan exe server di sampingnya sendiri (PORT ikut URL arg).
+    // Di layout dev sibling tidak ada, jadi perilaku lama (tunggu + recovery)
+    // tetap berlaku.
+    let server_child: Option<Child> = if !can_connect(&host_port) {
+        match sibling_server() {
+            Some(path) => {
+                let port = host_port.rsplit(':').next().unwrap_or("8310").to_string();
+                match Command::new(&path)
+                    .env("PORT", &port)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => {
+                        eprintln!("[shell] sidecar server dinyalakan: {}", path.display());
+                        Some(child)
+                    }
+                    Err(e) => {
+                        eprintln!("[shell] gagal menyalakan sidecar: {e}");
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    // Dibunuh saat aplikasi keluar supaya tidak menyisakan server yatim —
+    // HANYA bila shell sendiri yang menyalakannya; bila server sudah jalan
+    // dulu (start.bat / pet yang diluncurkan server), server_child kosong.
+    let server_child = Arc::new(Mutex::new(server_child));
     // Tunggu server bind (maks 15 dtk) SEBELUM jendela dibuat — kasus normal.
     let ready = {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -139,6 +264,15 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("gagal menjalankan shell");
+        .build(tauri::generate_context!())
+        .expect("gagal menjalankan shell")
+        .run(move |_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Ok(mut guard) = server_child.lock() {
+                    if let Some(child) = guard.as_mut() {
+                        let _ = child.kill();
+                    }
+                }
+            }
+        });
 }

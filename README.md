@@ -1,10 +1,8 @@
 # 🎭 Live2D Agent
 
-Karakter Live2D (Cubism 4) yang dikendalikan AI — ngobrol lewat teks atau suara, karakter menjawab dengan gerak, ekspresi, dan suara (TTS), dan tetap hidup saat kamu diam: bicara sendiri saat idle, menyapa saat kamu pergi/balik, membaca mood dari webcam. Runtime **Bun** (zero-dep), inti logika **TypeScript**.
+Karakter Live2D (Cubism 4 & 5) yang dikendalikan AI — ngobrol lewat teks atau suara, karakter menjawab dengan gerak, ekspresi, dan suara (TTS), dan tetap hidup saat kamu diam: bicara sendiri saat idle, menyapa saat kamu pergi/balik, membaca mood dari webcam. Runtime **Bun** (zero-dep), inti logika **TypeScript**.
 
-> **Repo ini adalah proyek utama — satu-satunya yang dikembangkan.** `../deprecated-live2d-agent/` adalah arsip versi lama: jangan mengembangkan atau menaruh data di sana; pakai hanya sebagai referensi historis.
->
-> **Model-agnostic:** jalan dengan model Cubism 4 **apa pun** di `data/model/<nama>/`. Aturan mengikat: [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md).
+> **Model-agnostic:** jalan dengan model Cubism 4/5 **apa pun** di `data/model/<nama>/`. Aturan mengikat: [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md).
 
 ## 🚀 Cara Menjalankan
 
@@ -21,6 +19,17 @@ HOST=0.0.0.0 bun run src/server/index.ts  # ekspos ke LAN (default loopback!)
 
 **Clone baru (tanpa model)?** `data/model/` kosong karena aset berlisensi tidak di-commit — aplikasi tetap terbuka dengan **layar impor**: klik 📂 pilih folder model atau 🗜️ impor `.zip` (bisa juga copy manual ke `data/model/`). Model terakhir yang dibuka **diingat otomatis** dan dimuat lagi saat berikutnya; menghapus model dari UI **tidak** menghapus sheet/preset/motion buatanmu — impor ulang model dengan nama sama dan semuanya tersambung kembali. Sheet karakter juga **tidak ikut repo** (privasi): dibuat ulang lewat 🔍 Inspeksi Model, tapi preset & catatan yang kamu tulis hanya hidup di mesin tempat kamu mengetiknya — backup manual `data/sheets/` sebelum pindah mesin.
 
+## 📦 Rilis Portable (bagikan tanpa Bun/Rust)
+
+```bash
+bun run build:pet   # sekali — bangun cangkang Tauri (butuh Rust toolchain)
+bun run dist        # rakit dist/Live2D-Agent/ — siap di-zip & dibagikan
+```
+
+Mau **satu file**? Pasang Inno Setup 6 sekali (`winget install JRSoftware.InnoSetup`) — `bun run dist` otomatis menjalankan [`installer.iss`](installer.iss) di langkah terakhir dan menghasilkan **`dist/Live2D-Agent-Setup.exe`** (±32 MB): installer per-user tanpa admin, install ke `%LOCALAPPDATA%\Programs\Live2D-Agent`, shortcut desktop opsional, data user tetap hidup di samping exe (uninstall membiarkan `data/` utuh), plus deteksi WebView2 yang memandu pasang runtime bila tidak ada. Tanpa Inno Setup, langkah installer dilewati dengan pesan — alur zip tetap jalan seperti biasa.
+
+Hasil `dist/Live2D-Agent/`: `live2d-shell.exe` (cangkang WebView2) + `live2d-agent.exe` (server, runtime Bun ter-embed via `bun build --compile`, dependensi npm ikut di-bundle) + `static/`. **User cukup dobel-klik `live2d-shell.exe`** — shell menyalakan server sendiri (sidecar) dan mematikannya saat ditutup; tanpa Bun, tanpa build, tanpa Rust. `data/` tercipta saat first-run di samping exe: taruh model di `data/model/`, isi API key LLM/TTS lewat panel — jangan ditaruh di bawah `C:\Program Files` (butuh folder yang bisa ditulis). Exe shell per-OS harus dibangun di OS-nya masing-masing; server bisa di-cross-compile: `bun run dist -- bun-linux-x64` (target: `bun-linux-x64`, `bun-darwin-arm64`, dst — lihat `src/dist.ts`).
+
 ## 🧩 Arsitektur
 
 Satu aplikasi dengan dua lapisan yang saling menopang: **inti logika di TypeScript** (punya unit test), **engine/UI legacy di `static/js/`** (sudah teruji jalan, dijaga guard). Kode TS client di-bundle `src/build.ts` → `static/js/bundle.js` (IIFE), dimuat **sebelum** `app.js`, dan memasang bridge `window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent` — engine legacy mengonsumsi global itu, `app.js` tetap pemilik render loop, pemuatan model, dan UI.
@@ -32,6 +41,8 @@ Satu aplikasi dengan dua lapisan yang saling menopang: **inti logika di TypeScri
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
 | Motion taxonomy — klasifikasi klip native | `src/client/engine/motion-taxonomy.ts` | TS — dipakai server & bundle |
 | Mode system — VTuber / Assistant / Pet + ModeManager | `src/server/{vtuber,assistant,pet}.ts` + `static/js/mode-runtime.js` | 1 mode aktif; pindah mode = runtime lama dihancurkan |
+| Release portable — compile server + rakit folder | `src/dist.ts` (`bun run dist`) → `dist/Live2D-Agent/` | server jadi exe (`bun build --compile`), sidecar shell |
+| Cangkang jendela — WebView2, sidecar server | `agent-shell/` (Rust/Tauri, exe ±3 MB) | dobel-klik = app; menyalakan & mematikan server sendiri di mode portable |
 | Engine/UI — render loop, chat, panel, sheet, role mapping | `static/js/app.js` (±6.300 baris) | **legacy** — dijaga guard |
 | Motion Studio UI | `static/js/motion-editor.js` | legacy — terisolasi |
 | Webcam presence | `static/js/camera-presence.js` | legacy — terisolasi |
@@ -42,11 +53,13 @@ Satu aplikasi dengan dua lapisan yang saling menopang: **inti logika di TypeScri
 ```
 src/server/index.ts        # Bun.serve (loopback default) — 40+ route API + static
 src/server/{vtuber,assistant,pet}.ts   # runtime 3 mode (satu mode aktif)
-src/shared/{types,config,llm-client}.ts
+src/shared/{types,config,llm-client,paths}.ts   # paths.ts: akar app dev vs exe compile
 src/client/animation/{easing,motion-dsl,motion-registry,motion-runtime}.ts  # → bundle.js
 src/client/engine/motion-taxonomy.ts   # klasifikasi klip native — server & bundle
 src/client/agent/{directive-parser,brain}.ts   # otak agent → window.__agent
 src/build.ts               # bundle-entry.ts → static/js/bundle.js (IIFE, dimuat SEBELUM app.js)
+src/dist.ts                # bun run dist — rakit dist/Live2D-Agent/ (exe + static)
+agent-shell/src/main.rs    # cangkang Tauri (main/pet) — sidecar server portable
 static/{index.html,css/app.css,js/app.js}      # engine/UI legacy (punya render loop)
 static/js/mode-runtime.js   # client runtime 3 mode + switcher sidebar
 static/pet.html             # halaman jendela Desktop Pet
@@ -126,14 +139,14 @@ Switcher 4 tombol di atas sidebar: **💬 Panggung** (default, semua fitur lama)
 3. **SPA fallback dipersempit** — path tanpa ekstensi → `index.html` 200 (rute UI), tetapi asset `.js`/`.css`/model yang missing → 404 yang jelas, bukan HTML ber-extension js.
 4. **Satu kosakata target motion** — nama gaya SPEC (`angleX`, `eyeX`, …) diterima lalu **dikanoniskan** ke `ax/ay/ex/ey` saat sanitize (`normalizeTarget`), jadi format file motion selalu satu kosakata.
 
-## 📦 Impor data dari versi lama
+## 📁 Data user (`data/`)
 
-Copy `deprecated-live2d-agent/config.json` → `data/config.json` (contoh: `config.example.json`), `model/*` → `data/model/`, `sheets/*` → `data/sheets/`, `motions/*` → `data/motions/`. Format file identik — tidak ada konversi. Model bawaan `神宫白子` + `lumine` sudah ada di `data/model/`.
+Semua data yang kamu buat hidup di `data/` dan **tidak di-commit** (privasi + aset berlisensi): `config.json` (koneksi LLM, TTS, kelakuan — contoh format di `config.example.json`), `model/` (aset Live2D), `sheets/`, `motions/`. Taruh folder model di `data/model/<nama>/` (isi `.model3.json` + tekstur, atau impor `.zip` lewat UI). Pindah mesin = copy folder `data/` — format file identik, tidak ada konversi; model Cubism 4/5 apa pun diterima.
 
 ## 🧪 Test
 
 ```bash
-bun run test         # SEMUA: 217 unit test (bun test) + 511 guard legacy (11 suite)
+bun run test         # SEMUA: 217 unit test (bun test) + 512 guard legacy (11 suite)
 bun run test:unit    # hanya unit test TS (parser, DSL/registry/taxonomy, dispatcher server, voice-input)
 bun run test:guards  # hanya guard legacy
 bun run build && bunx tsc --noEmit   # build + type-check (keduanya bersih)
@@ -149,8 +162,6 @@ Guard legacy (`test/legacy/`) menguji **fungsi asli yang jalan di aplikasi**, bu
 | [`docs/SHEET-SYSTEM.md`](docs/SHEET-SYSTEM.md) | Sistem sheet, 4 aturan terkunci, adopsi `.exp3`, keputusan agen reaktif |
 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | Spesifikasi Motion Studio + pipeline gerak (satu pipeline, prioritas, validasi) |
 | [`docs/MODES.md`](docs/MODES.md) | Sistem 3 mode — kontrak satu-mode-aktif, konektor VTuber (Twitch/YouTube/mock), agent Assistant, jendela Pet |
-
-Dokumen historis (arsip repo lama): `../deprecated-live2d-agent/docs/PLAN-BESOK-ALIVE.md`, `PLAN-MOTION-STUDIO.md`.
 
 ## 🔧 Troubleshooting
 
@@ -169,4 +180,4 @@ Dokumen historis (arsip repo lama): `../deprecated-live2d-agent/docs/PLAN-BESOK-
 
 ## ⚠️ Model assets
 
-`data/model/` **tidak di-commit** (binary berlisensi). Letakkan model Cubism 4 sendiri di `data/model/<nama>/<file>.model3.json`. Model v4 kompatibel dengan runtime Cubism 5 (jangan buka & re-save di Editor v5 kalau mau balik v4).
+`data/model/` **tidak di-commit** (binary berlisensi). Letakkan model Cubism 4 atau 5 sendiri di `data/model/<nama>/<file>.model3.json` — runtime mendukung keduanya (moc3 v4.2 dan v5.0/5.3; detail efek rig v5: `docs/STATUS-CUBISM5-EFEK.md`). Catatan kompatibilitas: model v4 tetap kompatibel dengan runtime Cubism 5, tapi jangan buka & re-save di Editor v5 kalau mau balik ke v4.

@@ -3,9 +3,11 @@
  * Web tidak bisa menembus batas browser, jadi pet berjalan di jendela
  * aplikasi terpisah yang selalu di atas (always-on-top) dan transparan.
  * Urutan peluncur:
- *   1. Neutralino (jika diinstall) — overlay transparan klik-tembus penuh
- *   2. Chrome/Edge --app --kiosk window (jendela chromeless always-on-top
- *      via PowerShell untuk Windows) — fallback nol-dependency
+ *   1. Shell Tauri (pet-shell/target/release/live2d-pet.exe) — jendela
+ *      WebView2 transparan, selalu di atas, dan bisa klik-tembus; paling
+ *      ringan (±40-90MB) karena memakai WebView2 bawaan Windows.
+ *   2. Chrome/Edge --app (jendela opaque always-on-top via PowerShell)
+ *      — fallback nol-build kalau exe Tauri belum dibangun.
  * Referensi: flag Chrome app/kiosk adalah API resmi command-line Chromium.
  */
 import { spawn, execSync } from "child_process";
@@ -13,18 +15,40 @@ import { existsSync } from "fs";
 import { join } from "path";
 
 const STATIC = join(import.meta.dir, "../../static");
+const SHELL_EXE = join(
+  import.meta.dir,
+  "../../agent-shell/target/release/live2d-shell.exe",
+);
 
 let petProc: any = null;
 let petPid: number | null = null;
 let petHelper: any = null;
+let clickThrough = false;
+let activeShell: "tauri" | "browser" | null = null;
 
-export function petStatus() { return { running: !!petProc || !!petPid }; }
+export function petStatus() {
+  // Proses bisa mati sendiri (user menutup via tombol pet); sinkronkan state.
+  if (petProc && petProc.exitCode !== null) {
+    petProc = null;
+    petPid = null;
+    petHelper = null;
+    clickThrough = false;
+    activeShell = null;
+  }
+  return { running: !!petProc || !!petPid, clickThrough, shell: activeShell };
+}
+
+export function petSetClickThrough(on: boolean) {
+  clickThrough = !!on;
+  return { ok: true, clickThrough };
+}
 
 export function petClose() {
   try { petProc?.kill(); } catch {}
   try { if (petHelper) execSync(`taskkill /PID ${petHelper} /T /F`, { stdio: "ignore" }); } catch {}
   try { if (petPid) execSync(`taskkill /PID ${petPid} /T /F`, { stdio: "ignore" }); } catch {}
   petProc = null; petPid = null; petHelper = null;
+  clickThrough = false; activeShell = null;
   return { ok: true };
 }
 
@@ -41,11 +65,34 @@ function findChromeEdge(): string | null {
   return null;
 }
 
-export function petLaunch(): { ok: boolean; error?: string; how?: string } {
+export function petLaunch(port: number): { ok: boolean; error?: string; how?: string } {
   petClose();
-  const url = "http://127.0.0.1:8310/pet.html";
+  // Port lewat parameter supaya tidak ada sumber kebenaran kedua (dulu
+  // hardcode 8310 di sini — bikin pet salah sasaran saat PORT dioverride).
+  const url = `http://127.0.0.1:${port}/pet.html`;
+
+  // Shell 1: Tauri — transparan, topmost native, bisa klik-tembus.
+  if (existsSync(SHELL_EXE)) {
+    try {
+      petProc = spawn(SHELL_EXE, ["pet", url], { detached: false, stdio: "ignore" });
+      petPid = petProc.pid ?? null;
+      activeShell = "tauri";
+      return { ok: true, how: "tauri-shell (transparan + klik-tembus)" };
+    } catch (e: any) {
+      // jatuh ke fallback browser
+      console.warn("[pet] shell Tauri gagal dijalankan:", e.message);
+    }
+  }
+
+  // Shell 2: Chrome/Edge --app — fallback nol-build.
   const exe = findChromeEdge();
-  if (!exe) return { ok: false, error: "Chrome/Edge tidak ditemukan — install salah satu untuk pet mode" };
+  if (!exe) {
+    return {
+      ok: false,
+      error:
+        "Shell belum dibangun (bun run build:pet) dan Chrome/Edge tidak ditemukan",
+    };
+  }
   try {
     // --app: jendela tanpa toolbar; --window-size pas ukuran pet.
     petProc = spawn(exe, [
@@ -55,6 +102,7 @@ export function petLaunch(): { ok: boolean; error?: string; how?: string } {
       "--autoplay-policy=no-user-gesture-required",
     ], { detached: false, stdio: "ignore" });
     petPid = petProc.pid ?? null;
+    activeShell = "browser";
     // Windows: paksa jendela Chrome paling atas (always-on-top) via PowerShell.
     // (Flag CLI Chromium tidak punya always-on-top; SetWindowPos API resmi Win32.)
     if (process.platform === "win32" && petPid) {

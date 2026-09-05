@@ -31,7 +31,14 @@ if %ERRORLEVEL% EQU 0 (
     echo   [2/2] Starting server on http://127.0.0.1:%PORT%
     echo         Press Ctrl+C to stop
     echo.
-    start "" "http://127.0.0.1:%PORT%"
+    rem UI: shell Tauri bila sudah dibangun, kalau tidak browser default.
+    rem Shell menunggu server bind (maks 15 dtk) — aman dinyalakan sekarang.
+    if exist "agent-shell\target\release\live2d-shell.exe" (
+        start "" "%~dp0agent-shell\target\release\live2d-shell.exe" main "http://127.0.0.1:%PORT%/"
+    ) else (
+        echo   [i] Shell Tauri belum dibangun - buka di browser. Bangun dengan: bun run build:pet
+        start "" "http://127.0.0.1:%PORT%"
+    )
     bun run src/server/index.ts
     goto :end
 )

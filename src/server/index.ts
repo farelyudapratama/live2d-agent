@@ -17,7 +17,7 @@ import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay } from "./vtuber";
 import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset } from "./assistant";
-import { petLaunch, petClose, petStatus } from "./pet";
+import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 
 const PORT = Number(process.env.PORT) || 8310;
 const ROOT = import.meta.dir;
@@ -224,12 +224,16 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/assistant/stop") { assistantStop(); return json({ok:true}); }
   if(method==="GET" && path==="/api/assistant/history") return json(assistantHistory());
   if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);
+  if(method==="POST" && path==="/api/assistant/ask-stream") return handleAssistantAskStream(req);
   if(method==="POST" && path==="/api/assistant/approve") return handleAssistantApprove(req);
   if(method==="POST" && path==="/api/assistant/reset") { assistantReset(); return json({ok:true}); }
+  if(method==="GET" && path==="/api/assistant/status") return json(assistantStatus());
 
   // Pet overlay window
-  if(method==="POST" && path==="/api/pet/launch") { return json(petLaunch()); }
+  if(method==="POST" && path==="/api/pet/launch") { return json(petLaunch(PORT)); }
   if(method==="POST" && path==="/api/pet/close") { petClose(); return json({ok:true}); }
+  if(method==="POST" && path==="/api/pet/clickthrough") return handlePetClickThrough(req);
+  if(method==="GET" && path==="/api/pet/state") return json(petStatus());
 
   // classify-params / analyze-sheet / animate-text
   if(method==="POST" && path==="/api/model/classify-params") return handleClassifyParams(req);
@@ -266,16 +270,17 @@ async function handleAPI(req: Request): Promise<Response|null> {
   return null;
 }
 
-// ── Mode manager — satu mode aktif, pindah mode = teardown memori ──
+// ── Mode manager ─────────────────────────────────────────────────
 // mode "stage"    : default (panggung + chat seperti biasa)
 // mode "vtuber"   : runtime streaming aktif (konektor chat/donasi)
-// mode "assistant": runtime agent lokal aktif
-// mode "pet"      : overlay desktop (jendela terpisah)
+// mode "assistant": PANEL agent lokal — runtime-nya LAYANAN mandiri
+// mode "pet"      : PANEL pet — jendelanya juga LAYANAN mandiri
+// Yang benar-benar satu-aktif hanya VTuber (feed-nya terikat panel). Agent
+// & pet dibuat mandiri supaya CLI agent bisa jalan bareng pet/VTuber; pindah
+// panel atau menutup browser tidak mematikan keduanya.
 let activeMode = "stage";
 function teardownMode(mode: string) {
   if (mode === "vtuber") vtuberStop();
-  if (mode === "assistant") assistantStop();
-  if (mode === "pet") petClose();
 }
 function modeStatus() {
   return {
@@ -319,7 +324,8 @@ async function handleVtuberMockEvent(req: Request): Promise<Response> {
 }
 async function handleAssistantStart(req: Request): Promise<Response> {
   const body = await readBody(req);
-  if (activeMode !== "assistant") { teardownMode(activeMode); activeMode = "assistant"; }
+  // Tanpa pindah mode: runtime assistant adalah layanan mandiri — CLI /
+  // panel menyalakannya tanpa membongkar pet/VTuber yang sedang jalan.
   const r = assistantStart(body || {});
   return json(r, r.ok ? 200 : 400);
 }
@@ -328,10 +334,41 @@ async function handleAssistantAsk(req: Request): Promise<Response> {
   const r = await assistantAsk(String(body?.text || ""), config);
   return json(r, r.ok ? 200 : 400);
 }
+// Versi streaming (SSE): event `delta`/`tool_call`/`tool_result`/`approval`
+// dikirim seiring proses, diakhiri `done`. Dipakai CLI; panel browser tetap
+// di jalur ask biasa.
+async function handleAssistantAskStream(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(ctrl) {
+      const send = (obj: unknown) => ctrl.enqueue(enc.encode("data: " + JSON.stringify(obj) + "\n\n"));
+      try {
+        const r = await assistantAsk(String(body?.text || ""), config, (e) => send(e));
+        send({ type: "done", ...r });
+      } catch (e: any) {
+        send({ type: "done", ok: false, error: e.message });
+      } finally {
+        ctrl.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
 async function handleAssistantApprove(req: Request): Promise<Response> {
   const body = await readBody(req);
   const r = await assistantResolveApproval(String(body?.id || ""), !!body?.approve, config);
   return json(r, r.ok ? 200 : 400);
+}
+async function handlePetClickThrough(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  return json(petSetClickThrough(!!body?.on));
 }
 
 // ── handlers ────────────────────────────────────────────────────

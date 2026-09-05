@@ -2,6 +2,7 @@ node_modules/
 dist/
 data/config.json
 data/config.json.bak
+data/assistant-history.json
 data/motions/
 data/model/
 # bundle is build output — keep app.js (legacy parity) tracked
@@ -10,3 +11,8 @@ static/js/bundle.js
 .DS_Store
 data/sheets/
 *.log
+# Tauri pet shell — build artifacts only; sources are tracked
+agent-shell/target/
+agent-shell/gen/
+# ZCode CLI state lokal (rencana sesi, artifact)
+.zcode/

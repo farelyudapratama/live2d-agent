@@ -4,35 +4,42 @@
 <meta charset="utf-8" />
 <title>Desktop Pet — Live2D Agent</title>
 <style>
-  /* Latar transparan dijendela --app Chrome: chroma key tak perlu,
-     body transparan sudah cukup karena --app tanpa kiosk tetap punya
-     background default OS. Untuk kesan overlay: semua elemen mengambang. */
+  /* Overlay desktop di jendela Chrome --app: body transparan, semua kontrol
+     mengambang. Palet & anggaran render sama dengan app utama (static/css/app.css):
+     warna solid, tanpa blur/gradient, bayangan hanya di elemen mengambang. */
   html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
-  #stage {
-    position: fixed; inset: 0;
-    background: transparent;
-  }
+  #stage { position: fixed; inset: 0; background: transparent; }
   #live2d-canvas { position: absolute; top: 0; left: 0; }
   #pet-ui {
     position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 6px; opacity: 0.25; transition: opacity .2s;
+    display: flex; gap: 4px; padding: 3px;
+    border-radius: 6px; background: #12151C; border: 1px solid #232936;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.42);
+    opacity: 0.28; transition: opacity 0.18s ease;
   }
   #pet-ui:hover { opacity: 1; }
   .btn {
-    border: 1px solid #262D3A; background: #13171F;
-    color: #F1F3F6; border-radius: 4px; padding: 5px 12px; font: 12px system-ui; cursor: pointer;
-    transition: all 0.14s ease;
+    border: 1px solid transparent; background: none; color: #9BA5B4;
+    border-radius: 4px; padding: 5px 11px; cursor: pointer;
+    font: 12px "Segoe UI", -apple-system, system-ui, sans-serif;
+    transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   }
-  .btn:hover { background: #1A202A; border-color: #364052; }
+  .btn:hover { background: #212734; border-color: #333B4B; color: #EDF0F4; }
+  /* Tutup = merah hanya saat disentuh, supaya tidak menarik perhatian terus. */
+  #b-close:hover { background: #2A1618; border-color: #5C2A2A; color: #DE4A45; }
+  /* Klik-tembus aktif: hijau mint, penanda bahwa klik menembus desktop. */
+  #b-through.active { background: #12231A; border-color: #235437; color: #21A557; }
   #bubble {
-    position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%);
-    max-width: 320px; background: #13171F; color: #F1F3F6;
-    border: 1px solid #262D3A; border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    padding: 8px 14px; font: 13px/1.5 system-ui; display: none;
+    position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%);
+    max-width: 320px; background: #12151C; color: #EDF0F4;
+    border: 1px solid #333B4B; border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.48);
+    padding: 9px 14px; display: none;
+    font: 13px/1.55 "Segoe UI", -apple-system, system-ui, sans-serif;
   }
   #status {
-    position: fixed; top: 6px; left: 8px; font: 10px monospace; color: #667284;
+    position: fixed; top: 6px; left: 8px;
+    font: 10px ui-monospace, Consolas, monospace; color: #66707F;
   }
 </style>
 </head>
@@ -40,9 +47,10 @@
 <div id="stage"><canvas id="live2d-canvas"></canvas></div>
 <div id="status">pet</div>
 <div id="bubble"><span id="bubble-text"></span></div>
-<div id="pet-ui">
+<div id="pet-ui" data-tauri-drag-region>
   <button class="btn" id="b-wave">Sapa</button>
   <button class="btn" id="b-talk">Bicara</button>
+  <button class="btn" id="b-through" hidden>Klik tembus</button>
   <button class="btn" id="b-close">Tutup</button>
 </div>
 <script src="js/pixi.6.5.10.min.js"></script>
@@ -78,7 +86,10 @@
       } catch (e) {}
     }
     if (!path) { document.getElementById("status").textContent = "tidak ada model"; return; }
-    await PIXI.live2d.registerTicker(PIXI);
+    // registerTicker adalah static di Live2DModel, bukan di namespace live2d —
+    // memanggilnya lewat PIXI.live2d melempar TypeError dan boot() berhenti
+    // sebelum canvas dibuat, jadi jendela pet tampil kosong.
+    PIXI.live2d.Live2DModel.registerTicker(PIXI.Ticker);
     const app = new PIXI.Application({
       view: document.getElementById("live2d-canvas"),
       width: window.innerWidth, height: window.innerHeight,
@@ -88,12 +99,17 @@
     const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
     state.model = model;
     app.stage.addChild(model);
-    // skala pas jendela
-    const b = model.getBounds();
-    const s = Math.min((window.innerWidth * 0.9) / (b.width / model.scale.x), (window.innerHeight * 0.92) / (b.height / model.scale.y));
+    // Skala pas jendela lalu pusatkan. Bounds HARUS dibaca ulang setelah
+    // scale.set(): rumus lama memakai objek bounds pra-skala, sehingga
+    // model.x dihitung dari lebar natural (bisa ribuan px) dan karakter
+    // terdorong jauh ke luar canvas — jendela pet tampak kosong.
+    const nat = model.getBounds();
+    const natW = nat.width / model.scale.x;
+    const natH = nat.height / model.scale.y;
+    const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
     model.scale.set(s);
-    model.x = (window.innerWidth - (b.width / model.scale.x) * s) / 2;
-    model.y = (window.innerHeight - (b.height / model.scale.y) * s) / 2 - window.innerHeight * 0.03;
+    model.x = (window.innerWidth - natW * s) / 2;
+    model.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
     document.getElementById("status").textContent = "pet aktif";
     startIdleLife();
   }
@@ -151,12 +167,70 @@
     const lines = ["Hari ini mau ngapain?", "Butuh bantuan? Buka mode Assistant di app utama ya.", "Aku cuma pet kecil, tapi aku setia 🐾"];
     bubble(lines[Math.floor(Math.random() * lines.length)]);
   });
+
+  // ── Integrasi cangkang Tauri (window transparan + klik-tembus) ──────
+  // window.__TAURI__ hanya ada di shell Tauri (withGlobalTauri); di Chrome
+  // --app undefined, jadi semua fitur di bawah di-feature-detect dan halaman
+  // yang sama tetap jalan di kedua cangkang.
+  const inTauri = () => typeof window.__TAURI__ !== "undefined";
+  const tauriWin = () => inTauri() ? window.__TAURI__.window.getCurrentWindow() : null;
+
+  async function applyClickThrough(on) {
+    const w = tauriWin();
+    if (w) { try { await w.setIgnoreCursorEvents(on); } catch (e) {} }
+    const b = document.getElementById("b-through");
+    if (b) {
+      b.classList.toggle("active", on);
+      b.textContent = on ? "Klik tembus: ON" : "Klik tembus";
+    }
+  }
+
+  // Tombol di bar hanya untuk MEMATIKAN klik-tembus yang tertinggal — saat
+  // menyala, klik pada jendela menembus ke desktop sehingga tombol tak
+  // terjangkau; pemicu utamanya panel app utama lewat /api/pet/clickthrough.
+  const bThrough = document.getElementById("b-through");
+  if (bThrough) {
+    bThrough.addEventListener("click", async () => {
+      try {
+        const r = await fetch(API + "/api/pet/clickthrough", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on: !bThrough.classList.contains("active") }),
+        });
+        const d = await r.json();
+        applyClickThrough(!!d.clickThrough);
+      } catch (e) {}
+    });
+    if (!inTauri()) bThrough.hidden = true; // tak berarti di Chrome --app
+  }
+
+  // Poll state server: sumber kebenaran klik-tembus ada di server agar bisa
+  // dimatikan dari panel app utama (jendela yang tembus klik tidak bisa
+  // diklik, jadi tombol di dalamnya saja tidak cukup sebagai jalan keluar).
+  setInterval(async () => {
+    if (!inTauri()) return;
+    try {
+      const r = await fetch(API + "/api/pet/state");
+      const st = await r.json();
+      applyClickThrough(!!st.clickThrough);
+    } catch (e) {}
+  }, 1500);
+
   document.getElementById("b-close").addEventListener("click", async () => {
     try { await fetch(API + "/api/pet/close", { method: "POST" }); } catch (e) {}
+    // Di Tauri, window.close() hanya menutup konten webview, bukan jendela
+    // OS — tutup jendelanya secara eksplisit. Dua-duanya dipanggil karena
+    // server juga ikut mematikan proses lewat /api/pet/close.
+    const w = tauriWin();
+    if (w) { try { await w.destroy(); } catch (e) {} }
     window.close();
   });
 
-  boot().catch((e) => { document.getElementById("status").textContent = "gagal: " + e.message; });
+  // Jendela frameless tidak punya tombol X — Esc sebagai jalan keluar cepat.
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") document.getElementById("b-close").click();
+  });
+
+  boot().catch((e) => { document.getElementById("status").textContent = "gagal: " + e.message; })();
 })();
 </script>
 </body>

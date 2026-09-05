@@ -30,6 +30,11 @@ const DEFAULT_CONFIG: Config = {
     moodStableTicks: 2,
   },
   motion: { enabled: false, gain: 1.5 },
+  // Bahasa UI + bahasa balasan AI. "auto" = user belum memilih → klien
+  // mendeteksi navigator.language saat first-run dan menulis nilai konkret;
+  // server memperlakukan "auto" sebagai "id". (Pola backfill sama dengan stt:
+  // seksi baru di DEFAULT_CONFIG otomatis terisi ke config.json lama.)
+  i18n: { lang: "auto" },
   // STT dua arah (push-to-talk, Whisper lokal di browser — audio tidak di-upload).
   // device "" = auto (webgpu bila ada, lalu wasm); language "auto" = deteksi sendiri.
   stt: {
@@ -181,6 +186,15 @@ export class ConfigManager {
     const merged = Object.assign({}, prev.tts || {}, tts || {});
     const data = Object.assign({}, prev, { tts: merged });
     try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan tts:", e.message); }
+  }
+
+  // i18n section utuh milik user (lang: "auto" | "id" | "en").
+  saveI18n(i18n: any): void {
+    let prev: any = {};
+    try { prev = JSON.parse(readFileSync(this.path, "utf8")); } catch {}
+    const merged = Object.assign({}, prev.i18n || {}, i18n || {});
+    const data = Object.assign({}, prev, { i18n: merged });
+    try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan i18n:", e.message); }
   }
 
   atomicWriteRaw(file: string, obj: unknown): Promise<void> { return queueJsonWrite(file, obj); }

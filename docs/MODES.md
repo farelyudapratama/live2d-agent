@@ -62,7 +62,11 @@ terpisah. Peluncur memilih cangkang otomatis:
    menjalankan `live2d-shell.exe pet http://127.0.0.1:<PORT>/pet.html`.
    Shell yang sama juga membuka **jendela utama** app (`live2d-shell.exe main
    <url>`, dipakai start.bat) — jendela berdekorasi normal, dan menunggu
-   server bind (maks 15 dtk) sebelum membuat jendela.
+   server bind (maks 15 dtk) sebelum membuat jendela. Di folder release
+   portable (`bun run dist` → `dist/Live2D-Agent/`) hubungannya dibalik:
+   shell jadi **sidecar** — bila port masih kosong dan `live2d-agent.exe`
+   ada di sampingnya, shell menyalakan server sendiri dan mematikannya saat
+   aplikasi ditutup, jadi user cukup dobel-klik shell.
    - Klik-tembus: toggle "Klik Tembus" di panel Pet (atau tombol di bar pet)
      → `POST /api/pet/clickthrough {on}` → pet page memanggil Tauri
      `setIgnoreCursorEvents`. Saat menyala, klik menembus ke desktop; satu-

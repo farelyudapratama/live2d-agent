@@ -12,6 +12,7 @@
     "test:guards": "bun run test/run-guards.js",
     "build:pet": "cd agent-shell && bunx @tauri-apps/cli build",
     "dev:pet": "cd agent-shell && bunx @tauri-apps/cli build --debug",
+    "dist": "bun run src/dist.ts",
     "agent": "bun run src/cli/agent.ts"
   },
   "engines": {

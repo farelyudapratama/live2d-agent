@@ -106,6 +106,11 @@ Motion: `Motion Asset → Registry (builtin + native + user) → Runtime (priori
 | 🧠 Mode AI Assistant | ✅ | Agent lokal dengan tools `list_dir` / `read_file` (otomatis) + `write_file` / `run_shell` (wajib izin via kartu approval); multi-turn LLM + folder kerja bisa diganti. Bisa juga dari terminal: `bun run agent [--cwd path] [--yes]` — REPL ke API yang sama, approval konfirmasi y/n di terminal. `run_shell` asinkron — server tetap responsif selama perintah jalan |
 | 🐾 Mode Desktop Pet | ✅ | Shell Tauri (`bun run build:pet`, WebView2 bawaan Windows): jendela transparan melayang, selalu di atas, bisa klik-tembus — ±40-90MB RAM, tanpa Electron. Shell yang sama buka jendela utama (start.bat). Fallback Chrome/Edge `--app` (Win32 SetWindowPos). `static/pet.html` — mata ikut kursor, sapaan berkala; pindah mode menutup jendela otomatis |
 | Lip-sync presisi (dari audio) | ✅ | amplitudo audio asli via Web Audio AnalyserNode → envelope → mulut (role space, model-agnostic); senyap antar kata benar-benar menutup mulut. speechSynthesis tanpa stream audio tetap osilasi; kalau AudioContext ditahan autoplay, audio tetap bunyi + osilasi fallback |
+| 🌐 Bahasa UI (id/en) | ✅ | Select di ⚙ Pengaturan → Model; deteksi otomatis `navigator.language` saat first-run; bahasa balasan AI (chat/Assistant/VTuber) ikut setting; kata kunci directive (`[EMOTION:]` dst.) tetap kosakata Indonesia karena itu protokol. Guard test: parity kamus + coverage kunci HTML |
+
+### 🌐 Bahasa (Localization)
+
+Dua bahasa: **Indonesia** (identity/fallback) dan **English**. Pilih lewat ⚙ Pengaturan → Model → *Bahasa* — tersimpan di `data/config.json` (`i18n.lang`) + `localStorage`, lalu halaman di-reload. Kunjungan pertama tanpa pilihan: bahasa dideteksi dari browser. Core i18n zero-dep (`src/client/i18n/`) ter-bundle di `bundle.js` + file kecil `js/i18n.js` untuk `pet.html`; markup statis diterjemahkan lewat atribut `data-i18n*`, string runtime lewat `window.__i18n.t()`. Menambah bahasa = buat `dict-xx.ts` baru + satu `<option>` di select — parity & coverage dijaga `test/i18n.test.ts`. Pesan error dari server masih bahasa Indonesia (fase berikutnya).
 
 ### Interaksi
 - **Gerak mouse** → mata + kepala + badan ikut · **Drag** → geser posisi · **Scroll** → zoom · **Double-click** → reset framing

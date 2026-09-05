@@ -260,7 +260,26 @@ Contoh pendek:
    sebelum milih, jangan asal ganti-ganti biar "keliatan hidup"
 ---`;
 
-    return sys + capBlock;
+    // Bahasa balasan mengikuti pilihan UI (window.__i18n, dari bundle i18n).
+    // Prompt bahasa Indonesia sengaja TIDAK diubah (stabil & diuji); bahasa
+    // Inggris mendapat instruksi eksplisit + penegasan bahwa kata kunci
+    // directive tetap memakai kosakata Indonesia di atas — itu protokol yang
+    // dibaca directive-parser, bukan teks ucapan.
+    const lang =
+      typeof window !== "undefined" &&
+      (window as any).__i18n &&
+      typeof (window as any).__i18n.getLang === "function"
+        ? (window as any).__i18n.getLang()
+        : "id";
+    let langBlock = "";
+    if (lang === "en") {
+      langBlock +=
+        "\n=== LANGUAGE ===\n" +
+        "Speak with the user in ENGLISH — the spoken text and every segment's prose must be English.\n" +
+        "EXCEPTION: motion directives like [EMOTION:senang], [GESTURE:wave_hi], [EXPR:nama] keep the exact Indonesian keyword vocabulary listed above — they are protocol tokens read by the app, not prose. Never translate or invent directive keywords.\n";
+    }
+
+    return sys + capBlock + langBlock;
   }
 
   // ── Smart fallback: infer head/eyes/body from emotion (kompat legacy) ──

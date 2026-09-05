@@ -445,7 +445,11 @@
       if (state.model) {
         try {
           app.stage.removeChild(state.model);
-          state.model.destroy();
+          // Destroy penuh: tanpa opsi, Container.destroy PIXI tidak
+          // membebaskan texture anak-anaknya — tiap ganti model, tekstur GPU
+          // model lama menumpuk (basis texture model unik per folder, aman
+          // dihancurkan; tidak dibagi dengan model lain).
+          state.model.destroy({ children: true, texture: true, baseTexture: true });
         } catch (e) {}
         state.model = null;
 
@@ -3101,7 +3105,8 @@
               else {
                 try {
                   app.stage.removeChild(state.model);
-                  state.model.destroy();
+                  // Destroy penuh — alasan sama dengan loadModel().
+                  state.model.destroy({ children: true, texture: true, baseTexture: true });
                 } catch (e) {}
                 state.model = null;
                 showNoModelState();

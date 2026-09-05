@@ -531,7 +531,7 @@
     enable(true);
     const avail = paramAvailable(sel.param);
     lbl.textContent = (tr.label || sel.param) + ' — key ' + (sel.index + 1) + '/' + tr.keys.length
-      + (avail ? '' : '  ⚠ tidak ada di model ini');
+      + (avail ? '' : '  — tidak ada di model ini');
     tIn.value = String(key.t);
     vIn.value = String(key.v);
     if (vNum) vNum.value = String(key.v);
@@ -614,7 +614,7 @@
       o.value = m.id;
       // Motion dari model lain ditandai: parameternya mungkin tidak cocok.
       const foreign = m.sourceModelId && m.sourceModelId !== modelKey();
-      o.textContent = (m.name || m.id) + (foreign ? '  ⚠ model lain' : '');
+      o.textContent = (m.name || m.id) + (foreign ? '  (model lain)' : '');
       if (m.id === cur) o.selected = true;
       sel.appendChild(o);
     }
@@ -787,7 +787,7 @@
     const out = dsl.rolesToParamTracks(asset, roleMap, ranges);
     const leftover = (out.tracks || []).filter(t => t.kind !== 'param').length;
     if (leftover) {
-      setStatus('⚠ ' + leftover + ' track lama tak punya padanan parameter di model ini — dibiarkan utuh', 'err');
+      setStatus('' + leftover + ' track lama tak punya padanan parameter di model ini — dibiarkan utuh', 'err');
     } else {
       setStatus('motion lama dikonversi ke track parameter — periksa lalu Simpan');
     }
@@ -865,7 +865,7 @@
       loadDraft(d.id);
       try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
       renderRegistryList();
-      setStatus('✓ tersimpan — AI sudah bisa memakainya', 'ok');
+      setStatus('tersimpan — AI sudah bisa memakainya', 'ok');
     } catch (e) {
       setStatus('gagal simpan: ' + e.message, 'err');
     }
@@ -886,7 +886,7 @@
       loadDraft(state.userMotions.length ? state.userMotions[0].id : '');
       try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
       renderRegistryList();
-      setStatus('✓ dihapus', 'ok');
+      setStatus('dihapus', 'ok');
     } catch (e) {
       setStatus('gagal hapus: ' + e.message, 'err');
     }
@@ -942,7 +942,7 @@
       if (a.source === 'user') {
         const edit = document.createElement('button');
         edit.className = 'mini-btn ms-icon';
-        edit.textContent = '✏️';
+        edit.textContent = 'Edit';
         edit.title = 'Edit di Motion Studio';
         edit.addEventListener('click', async () => { await openStudio(); loadDraft(a.id); });
         card.appendChild(edit);
@@ -1086,8 +1086,8 @@
     renderRegistryList();
     setStatus(state.params.length
       ? (state.userMotions.length ? 'siap — ' + state.params.length + ' parameter tersedia'
-                                  : 'pilih parameter di ➕ untuk mulai')
-      : 'daftar parameter kosong — jalankan 🔍 Inspeksi Model dulu');
+                                  : 'pilih parameter di tombol + untuk mulai')
+      : 'daftar parameter kosong — jalankan Inspeksi Model dulu');
   }
 
   function closeStudio() {
@@ -1105,7 +1105,7 @@
     if (l2d && l2d.unfreezeForEdit) l2d.unfreezeForEdit();
     if (state.dirty) {
       const st = $('#motion-open-status');
-      if (st) st.textContent = '⚠ ada perubahan belum disimpan';
+      if (st) st.textContent = 'ada perubahan belum disimpan';
     }
   }
 
@@ -1117,7 +1117,7 @@
     if (!d || !d.tracks.some(t => t.keys && t.keys.length)) {
       setStatus('butuh minimal satu keyframe untuk dianalisa', 'err'); return;
     }
-    setStatus('✨ menganalisa…');
+    setStatus('menganalisa…');
     try {
       const r = await fetch(API + '/api/motions/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1133,7 +1133,7 @@
         d.emotionCompatibility = data.emotionCompatibility;
       }
       renderMeta();
-      setStatus('🤖 saran AI diisi — periksa lalu tekan Simpan kalau setuju', 'ok');
+      setStatus('saran AI diisi — periksa lalu tekan Simpan kalau setuju', 'ok');
     } catch (e) {
       setStatus('analisa gagal: ' + e.message, 'err');
     }
@@ -1160,7 +1160,7 @@
     const input = $('#ms-gen-input');
     const prompt = promptArg || (input ? input.value : '');
     if (!prompt || !prompt.trim()) { toggleGenBox(true); setStatus('tulis dulu gerakan yang mau dibuat', 'err'); return; }
-    setStatus('🪄 membuat gerakan — AI memilih parameter & keyframe…');
+    setStatus('membuat gerakan — AI memilih parameter & keyframe…');
     try {
       const r = await fetch(API + '/api/motions/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1183,7 +1183,7 @@
       renderAll(); applyScrubPose();
       // langsung preview: user lihat gerakannya seketika
       try { playPreview(); } catch (e) {}
-      setStatus('🤖 "' + (gen.name || 'draft') + '" dibuat (' + (gen.tracks || []).length + ' track, AI pilih parameternya) — Simpan kalau cocok', 'ok');
+      setStatus('"' + (gen.name || 'draft') + '" dibuat (' + (gen.tracks || []).length + ' track, AI pilih parameternya) — Simpan kalau cocok', 'ok');
       if (box) box.classList.add('hidden');
     } catch (e) {
       setStatus('gagal membuat: ' + e.message, 'err');
@@ -1230,7 +1230,7 @@
       state.selected = null; state.scrubT = 0; state.dirty = false;
       state.undoStack.length = 0; state.redoStack.length = 0;
       renderAll();
-      setStatus('gerakan baru — pilih parameter di ➕ Tambah Track Parameter');
+      setStatus('gerakan baru — pilih parameter di Tambah Track Parameter');
     });
     on('#ms-dup', 'click', duplicateDraft);
     on('#ms-del', 'click', deleteDraft);

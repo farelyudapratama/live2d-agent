@@ -80,7 +80,7 @@
         <button data-mode="vtuber" title="AI VTuber — Live Streaming">VTuber</button>
         <button data-mode="assistant" title="AI Assistant — Agent Lokal">Assistant</button>
         <button data-mode="pet" title="Desktop Pet">Pet</button>
-        <span id="mode-label" class="mode-label">Panggung</span>
+        <span id="mode-label" class="mode-label">Chat</span>
       </div>
 
       <div id="mode-chat" class="mode-panel">
@@ -187,14 +187,14 @@
       <!-- ═══ MODE: DESKTOP PET ═══ -->
       <div id="mode-pet" class="mode-panel hidden">
         <div class="section-title">Desktop Pet</div>
-        <p class="hint">Karakter berjalan sebagai jendela kecil selalu di atas (always-on-top) mengikuti panggung model yang sama. Jendela pet terpisah — app utama boleh diminimalkan.</p>
+        <p class="hint">Karakter melayang transparan selalu di atas (shell Tauri; fallback Chrome/Edge). Jendela terpisah — app utama boleh ditutup, pet tetap jalan.</p>
         <div class="note-row">
           <button id="pet-launch" class="mini-btn">Buka Jendela Pet</button>
           <button id="pet-close" class="mini-btn">Tutup Pet</button>
           <button id="pet-through" class="mini-btn">Klik Tembus</button>
         </div>
         <div id="pet-status" class="note-status"></div>
-        <p class="hint">Jendela pet memakai Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
+        <p class="hint">Shell Tauri (WebView2 bawaan Windows) atau fallback Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, klik-tembus, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
       </div>
 
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
@@ -569,7 +569,7 @@
           <input type="text" id="m-model" placeholder="MiniMaxAI/MiniMax-M2.7" />
         </label>
         <label>System Prompt
-          <span class="form-hint">Instruksi teknis untuk sambungan INI (semua peran yang memakainya) — mis. gaya jawaban, format, bahasa. Persona karakter jangan di sini: pakai 📝 Catatan Karakter yang per-model.</span>
+          <span class="form-hint">Instruksi teknis untuk sambungan INI (semua peran yang memakainya) — mis. gaya jawaban, format, bahasa. Persona karakter jangan di sini: pakai Catatan Karakter (tab Model) yang per-model.</span>
           <textarea id="m-system" rows="2" placeholder="mis. Jawab singkat dalam bahasa Indonesia."></textarea>
         </label>
         <label>Max Tokens &amp; Temperature

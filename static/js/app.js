@@ -2677,6 +2677,10 @@
       msg.appendChild(av);
       msg.appendChild(bb);
       log.appendChild(msg);
+      // Cap DOM: chat-log dulu tumbuh tanpa batas — app ini dirancang jalan
+      // berhari-hari, tiap pesan (dengan avatar ber-<img>) yang tak pernah
+      // dibuang menumpuk memori pelan-pelan. 200 pesan terakhir saja.
+      while (log.children.length > 200) log.removeChild(log.firstChild);
       log.scrollTop = log.scrollHeight;
     }
 

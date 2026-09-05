@@ -112,6 +112,13 @@ function setThinking(on: boolean): void {
 }
 
 export class AgentBrain {
+  // Jeda pamit: user pergi → karakter baru "menyadari" dan bicara setelah
+  // 10-15 menit (acak). Sengaja bukan config: dua angka ini kebijakan sikap,
+  // bukan preferensi yang perlu slider — dan membuatnya bisa dikonfigurasi
+  // berarti harus ikut dirawat di KNOWN_EVENT_KEYS + form Kelakuan.
+  static AWAY_DELAY_MIN_MS = 10 * 60 * 1000;
+  static AWAY_DELAY_MAX_MS = 15 * 60 * 1000;
+
   // Live history — v1 mengekspos array yang sama lewat window.__agent.history,
   // jadi field ini TIDAK boleh dibuat private (QA/debug membacanya langsung).
   history: ChatMessage[] = [];
@@ -121,6 +128,9 @@ export class AgentBrain {
   private moodSource: string | null = null;
   private presenceState: boolean | null = null;
   private agentStart = Date.now();
+  // Timeout "pamit" yang tertunda: user pergi → dijadwalkan bicara setelah
+  // jeda acak; dibatalkan kalau dia balik duluan (lihat setPresence).
+  private awaySpeakTimer: ReturnType<typeof setTimeout> | null = null;
 
   private motionCatalogBlock(profile: CapabilityProfile | null): string {
     const cat =
@@ -632,22 +642,67 @@ Contoh pendek:
     // p: true=hadir, false=pergi, null=tidak tahu (pakai fallback visibility)
     // Hub tunggal: app.js diberi tahu lewat callback ini supaya timer idle-nya
     // ikut benar meski produsen presence-nya kamera atau visibility tab.
+    //
+    // Pamit & sambut kini ber-jeda (awayDelayMs). Dulu blur langsung
+    // memicu "user pergi" dan focus langsung "user balik" — alt-tab
+    // sebentar saja berarti 2-4 panggilan LLM. Sekarang:
+    // - pergi → pamit dijadwalkan dengan delay acak; kalau user balik
+    //   sebelum waktunya, timer dibatalkan DAN sambutan di-skip (dia tidak
+    //   sempat menyadari user hilang, jadi tidak ada yang perlu disambut).
+    // - kalau jeda selesai dan dia sudah bicara sendiri, balik berikutnya
+    //   tetap disambut seperti biasa (kalau returnSpeak menyala).
     const was = this.presenceState;
     this.presenceState = p;
     if (typeof (window as any).__l2dPresenceChanged === "function")
       (window as any).__l2dPresenceChanged(p);
     if (p === null) return;
-    if (this.inQuietPeriod()) return; // masa tenang: jangan reaksi
-    const ev = this.getEvents();
     if (p === false && was !== false) {
+      // Transisi ke "pergi": bersihkan pamit lama (bila ada) lalu jadwalkan.
+      if (this.awaySpeakTimer !== null) {
+        clearTimeout(this.awaySpeakTimer);
+        this.awaySpeakTimer = null;
+      }
+      const ev = this.getEvents();
       if (!ev.awaySpeak) return; // config bilang jangan bersuara saat user pergi
-      this.expressEventEmotion("user_left");
-      this.reactEvent("user_left");
-    } else if (p === true && was === false) {
+      if (this.inQuietPeriod()) return; // masa tenang: jangan reaksi
+      const delay = this.awayDelayMs();
+      console.log(
+        "[agent] user pergi — pamit dijadwalkan dalam",
+        Math.round(delay / 1000),
+        "dtk",
+      );
+      this.awaySpeakTimer = setTimeout(() => {
+        this.awaySpeakTimer = null;
+        if (this.presenceState !== false) return; // sudah balik duluan
+        this.expressEventEmotion("user_left");
+        this.reactEvent("user_left");
+      }, delay);
+      return;
+    }
+    if (p === true && was === false) {
+      // Transisi ke "hadir": pamit yang masih menggantung dibatalkan, dan
+      // karena user balik sebelum jeda habis, dia dianggap tidak pernah
+      // "hilang" — tanpa sambutan.
+      const wasPending = this.awaySpeakTimer !== null;
+      if (this.awaySpeakTimer !== null) {
+        clearTimeout(this.awaySpeakTimer);
+        this.awaySpeakTimer = null;
+        console.log("[agent] user balik sebelum jeda pamit — tidak nyambut");
+        return;
+      }
+      const ev = this.getEvents();
       if (!ev.returnSpeak) return;
+      if (this.inQuietPeriod()) return;
       this.expressEventEmotion("user_returned");
       this.reactEvent("user_returned");
     }
+  }
+
+  // Jeda acak sebelum karakter bicara sendiri setelah ditinggal pergi.
+  // Acak supaya tidak terasa seperti alarm; "±10 menitan" sesuai permintaan.
+  private awayDelayMs(): number {
+    const min = AgentBrain.AWAY_DELAY_MIN_MS;
+    return min + Math.random() * (AgentBrain.AWAY_DELAY_MAX_MS - min);
   }
 
   private pickSupportedEmotion(prefs: string[]): string | null {

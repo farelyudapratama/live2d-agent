@@ -49,7 +49,7 @@
     const panel = $("#mode-" + mode);
     if (panel) panel.classList.remove("hidden");
     $$("#mode-switch button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
-    const labels = { chat: "Panggung", vtuber: "VTuber", assistant: "Assistant", pet: "Pet" };
+    const labels = { chat: "Chat", vtuber: "VTuber", assistant: "Assistant", pet: "Pet" };
     const lbl = $("#mode-label");
     if (lbl) lbl.textContent = labels[mode] || mode;
   }
@@ -86,7 +86,7 @@
     function line(ev) {
       const cls = ev.type === "donation" ? "donation" : ev.type === "system" ? "system" : ev.type === "agent" ? "agent" : "";
       const row = el("div", "vt-line " + cls);
-      if (ev.type === "donation") row.appendChild(el("span", "vt-amount", "💸 " + (ev.amount || "")));
+      if (ev.type === "donation") row.appendChild(el("span", "vt-amount", String(ev.amount || "")));
       row.appendChild(el("span", "vt-user", ev.user));
       row.appendChild(document.createTextNode(ev.text || ""));
       feed.appendChild(row);
@@ -95,7 +95,7 @@
     }
 
     function alert(ev) {
-      alertBox.textContent = "🎉 " + ev.user + " donasi " + (ev.amount || "") + "!";
+      alertBox.textContent = ev.user + " donasi " + (ev.amount || "") + "!";
       alertBox.classList.remove("hidden");
       setTimeout(() => alertBox.classList.add("hidden"), 6000);
     }
@@ -248,11 +248,11 @@
         approvalsBox.textContent = "";
         for (const ap of st.assistant?.pendingApprovals || []) {
           const box = el("div", "as-approval");
-          box.appendChild(el("div", "", "⚠️ Izinkan " + ap.tool + "?"));
+          box.appendChild(el("div", "", "Izinkan " + ap.tool + "?"));
           box.appendChild(el("div", "as-line tool", JSON.stringify(ap.args).slice(0, 220)));
           const row = el("div", "as-ap-row");
-          const ok = el("button", "mini-btn", "✅ Izinkan");
-          const no = el("button", "mini-btn", "✋ Tolak");
+          const ok = el("button", "mini-btn", "Izinkan");
+          const no = el("button", "mini-btn", "Tolak");
           ok.addEventListener("click", async () => {
             try {
               const d = await post("/api/assistant/approve", { id: ap.id, approve: true });
@@ -288,7 +288,7 @@
         for (const m of hist.slice(-40)) line(m.role === "tool" ? "tool" : m.role, m.content);
       } catch (e) {
         log.removeChild(log.lastChild);
-        line("assistant", "⚠️ " + e.message);
+        line("assistant", "gagal: " + e.message);
       }
       refresh();
     }
@@ -336,7 +336,7 @@
             (st.pet.clickThrough ? " — klik tembus ON" : "") +
             (st.pet.shell === "tauri" ? "" : " (tanpa klik-tembus)");
         } else {
-          status.textContent = "jendela pet terbuka ✅";
+          status.textContent = "jendela pet terbuka";
         }
         paintThrough();
       } catch (e) { status.textContent = ""; }

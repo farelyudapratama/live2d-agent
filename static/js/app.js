@@ -428,7 +428,7 @@
         modelPath = await resolveAnyModelPath();
         if (!modelPath)
           throw new Error(
-            "Belum ada model terpasang. Upload model lewat tab 📁 Model.",
+            "Belum ada model terpasang. Upload model lewat tab Model.",
           );
       }
       state.modelPath = modelPath;
@@ -544,7 +544,7 @@
     } catch (err) {
       console.error("[Live2D] Failed to load model:", err);
       const p = $("#loader p");
-      if (p) p.textContent = "❌ Gagal memuat model: " + err.message;
+      if (p) p.textContent = "Gagal memuat model: " + err.message;
 
       if (String((err && err.message) || "").includes("Belum ada model"))
         showNoModelState();
@@ -2664,7 +2664,7 @@
       msg.className = "msg " + role;
       const av = document.createElement("div");
       av.className = "msg-avatar";
-      av.textContent = role === "user" ? "🙂" : characterInitial();
+      av.textContent = role === "user" ? "U" : characterInitial();
       if (role === "agent") paintAvatarEl(av, characterInitial());
       const bb = document.createElement("div");
       bb.className = "msg-bubble";
@@ -2674,7 +2674,7 @@
       bb.addEventListener("click", () => {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(() => {
-            window.showToast?.("Pesan disalin ke clipboard 📋", "info");
+            window.showToast?.("Pesan disalin ke clipboard", "info");
           }).catch(() => {});
         }
       });
@@ -3076,7 +3076,7 @@
           item.innerHTML = `<span class="m-name">${esc(name)}</span>
             <span class="m-actions">
               <button class="load" data-name="${esc(name)}">Load</button>
-              <button class="del" data-name="${esc(name)}">🗑</button>
+              <button class="del" data-name="${esc(name)}">Hapus</button>
             </span>`;
           item
             .querySelector(".load")
@@ -3349,7 +3349,7 @@
           alert("Load model dulu sebelum inspeksi.");
           return;
         }
-        showLoader("🔍 Menganalisis model...");
+        showLoader("Menganalisis model...");
         setTimeout(() => {
           const sheet = inspectModel();
           hideLoader();
@@ -3362,16 +3362,16 @@
               refreshSheetUI();
             } catch (e) {}
             alert(
-              `✅ Character Sheet generated!\n\n` +
-                `📋 ${sheet.paramCount} parameter ditemukan\n` +
-                `😊 ${Object.keys(sheet.supportedEmotions).length} emosi didukung\n` +
-                `✨ ${sheet.accessories.length} aksesoris terdeteksi\n` +
-                `🎭 ${sheet.nativeExpressions.length} expression bawaan\n` +
-                `🎬 ${sheet.motionGroups.length} motion group\n\n` +
+              `Character Sheet generated!\n\n` +
+                `${sheet.paramCount} parameter ditemukan\n` +
+                `${Object.keys(sheet.supportedEmotions).length} emosi didukung\n` +
+                `${sheet.accessories.length} aksesoris terdeteksi\n` +
+                `${sheet.nativeExpressions.length} expression bawaan\n` +
+                `${sheet.motionGroups.length} motion group\n\n` +
                 `Tersimpan di localStorage. AI akan pakai data ini saat chat.`,
             );
           } else {
-            alert("❌ Gagal inspeksi model.");
+            alert("Gagal inspeksi model.");
           }
         }, 100);
       });
@@ -4237,20 +4237,20 @@
 
         const p = st ? st.presenceState : null;
         elP.textContent =
-          "👤 " + (p === true ? "hadir" : p === false ? "pergi" : "tidak tahu");
+          (p === true ? "hadir" : p === false ? "pergi" : "tidak tahu");
 
         const mood =
           st && st.userMood && st.userMood !== "normal"
             ? st.userMood
             : "netral";
         const src = st && st.moodSource ? " (" + st.moodSource + ")" : "";
-        elM.textContent = "😶 mood: " + mood + src;
+        elM.textContent = "mood: " + mood + src;
 
         const q = st ? Number(st.quietMs) || 0 : 0;
         const start = window.__agentStartApprox || Date.now();
         const left = q - (Date.now() - start);
         elQ.textContent =
-          "⏳ masa tenang: " + (left > 0 ? "sisa " + fmtMs(left) : "selesai");
+          "masa tenang: " + (left > 0 ? "sisa " + fmtMs(left) : "selesai");
       }
       setInterval(render, 1000);
       render();
@@ -4332,7 +4332,7 @@
         const p = document.createElement("p");
         p.className = "hint";
         p.textContent =
-          "Belum ada sheet untuk model ini. Buka tab 📁 Model → Inspeksi Model.";
+          "Belum ada sheet untuk model ini. Buka tab Model → Inspeksi Model.";
         box.appendChild(p);
         return;
       }
@@ -4404,7 +4404,7 @@
       resetBtn.type = "button";
       resetBtn.className = "mini-btn";
       resetBtn.style.cssText = "width:auto;padding:4px 12px;font-size:11px";
-      resetBtn.textContent = '🔄 Reset Pose';
+      resetBtn.textContent = 'Reset Pose';
       resetBtn.title =
         "Lepas semua pose preset yang sedang menempel (param, part, ekspresi) dan kembalikan kendali ke animasi idle.";
       resetBtn.addEventListener("click", () => {
@@ -4456,9 +4456,9 @@
         badge.className = "p-badge";
         badge.textContent = isAI
           ? p.suggestion
-            ? "🤖 tertutup"
-            : "🤖 saran"
-          : "👤";
+            ? "tertutup AI"
+            : "saran AI"
+          : "milikmu";
         badge.title = isAI
           ? p.suggestion
             ? "Saran AI, tapi kamu sudah punya preset dengan nama sama — punyamu yang dipakai."
@@ -4480,7 +4480,7 @@
             const ok = applyPreset(p, p.category);
             setSheetStatus(
               ok
-                ? "diterapkan: " + p.name + " — batal via 🔄 Reset Pose"
+                ? "diterapkan: " + p.name + " — batal via Reset Pose"
                 : "tidak ada target valid di preset ini",
               ok ? "ok" : "err",
             );
@@ -4502,7 +4502,7 @@
             const ok = applyPreset(p, p.category);
             setSheetStatus(
               ok
-                ? "pratinjau: " + p.name + " (batal via 🔄 Reset Pose)"
+                ? "pratinjau: " + p.name + " (batal via Reset Pose)"
                 : "tidak ada target valid di preset ini",
               ok ? "" : "err",
             );
@@ -4707,7 +4707,7 @@
         const p = document.createElement("div");
         p.className = "pn-empty";
         p.textContent =
-          "Belum ada sheet. Buka tab 📁 Model → Inspeksi Model dulu.";
+          "Belum ada sheet. Buka tab Model → Inspeksi Model dulu.";
         pnList.appendChild(p);
         return;
       }
@@ -5029,7 +5029,7 @@
         if (window.__addChat)
           window.__addChat(
             "agent",
-            "Belum ada sheet. Inspeksi model dulu (tab 📁 Model → 🔍 Inspeksi Model).",
+            "Belum ada sheet. Inspeksi model dulu (tab Model → Inspeksi Model).",
           );
         return;
       }
@@ -5079,7 +5079,7 @@
         const p = document.createElement("div");
         p.className = "preset-empty";
         p.textContent =
-          "Belum ada nilai. Geser slider di atas, atau tekan 📸 Ambil Pose Sekarang untuk memulai dari pose live.";
+          "Belum ada nilai. Geser slider di atas, atau tekan Ambil Pose Sekarang untuk memulai dari pose live.";
         box.appendChild(p);
         return;
       }
@@ -5314,7 +5314,7 @@
           !Object.keys(draft.parts).length
         ) {
           setPresetStatus(
-            "belum ada nilai — tekan 📸 Ambil Pose Sekarang",
+            "belum ada nilai — tekan Ambil Pose Sekarang",
             "err",
           );
           return;
@@ -5355,7 +5355,7 @@
             const n =
               presets.value && presets.value.count ? presets.value.count : 0;
             parts.push(
-              n ? n + " saran preset (🤖)" : "tidak ada saran preset baru",
+              n ? n + " saran preset (saran AI)" : "tidak ada saran preset baru",
             );
           } else {
             parts.push("preset gagal: " + presets.reason.message);
@@ -5483,7 +5483,7 @@
           const testBtn = document.createElement("button");
           testBtn.type = "button";
           testBtn.className = "p-act";
-          testBtn.textContent = '👁 tes';
+          testBtn.textContent = 'tes';
           testBtn.title =
             "Pasang ekspresi ini di model untuk melihat efeknya (ekspresi berikutnya otomatis menggantikan).";
           testBtn.addEventListener("click", () => {
@@ -6215,7 +6215,7 @@
   // Reset total: hapus SEMUA override yang menempel (preset, aksesori part,
   // impulse/energy dari gesture), hentikan motion & gesture yang berjalan,
   // reset ekspresi + target emosi, lalu kembalikan tiap param ke nilai default
-  // model. Dipanggil tombol 🔄 Reset Pose.
+  // model. Dipanggil tombol Reset Pose.
   function releasePresetPose() {
     if (!state.model) return 0;
     let released = 0;

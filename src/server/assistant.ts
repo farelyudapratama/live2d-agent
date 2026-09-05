@@ -204,14 +204,24 @@ function pushMsg(rt: Runtime, m: Omit<AsMsg, "ts">) {
 import { llmForRole, llmForRoleStream } from "../shared/llm-client";
 import { ConfigManager } from "../shared/config";
 
-const SYSTEM = `Kamu adalah asisten AI yang hidup sebagai karakter Live2D di desktop user.
+// System prompt dengan bahasa balasan dinamis (config.i18n.lang — "auto"
+// dihitung Indonesia: server tidak bisa mendeteksi locale browser, klien yang
+// menulis nilai konkret saat first-run / ganti bahasa). Deskripsi tool dan
+// NAMA tool tidak diterjemahkan — detect() mencari nama tool literal di teks.
+function buildSystem(lang: string): string {
+  const rule1 =
+    lang === "en"
+      ? "1. For normal questions, answer directly, briefly and friendly (in English)."
+      : "1. Untuk pertanyaan biasa, jawab langsung ringkas dan ramah (bahasa Indonesia).";
+  return `Kamu adalah asisten AI yang hidup sebagai karakter Live2D di desktop user.
 Kamu punya tools untuk membantu pekerjaan lokal:
 ${Object.values(TOOLS).map((t) => "- " + t.desc).join("\n")}
 Aturan:
-1. Untuk pertanyaan biasa, jawab langsung ringkas dan ramah (bahasa Indonesia).
+${rule1}
 2. Untuk tugas teknis (lihat file, baca kode, tulis file, jalankan perintah), pilih tool yang tepat.
 3. Setelah hasil tool kembali, rangkum hasilnya untuk user — jangan hanya tempel output mentah jika panjang.
 4. Jangan pernah menulis file atau menjalankan perintah berbahaya (rm -rf, format, dsb).`;
+}
 
 export async function assistantAsk(
   text: string,
@@ -233,7 +243,10 @@ export async function assistantAsk(
       const messages = rt.history
         .filter((m) => m.role !== "tool" || true)
         .map((m) => ({ role: m.role === "tool" ? "user" as const : m.role, content: m.role === "tool" ? "[hasil tool] " + m.content : m.content }));
-      const system = SYSTEM + "\nFolder kerja: " + rt.workDir;
+      const system =
+        buildSystem(config.load().i18n?.lang === "en" ? "en" : "id") +
+        "\nFolder kerja: " +
+        rt.workDir;
       // Jalur non-stream (browser panel): perilaku lama persis — fallback
       // antar koneksi bebas mengulang karena belum ada teks yang tercetak.
       // Jalur stream (CLI/SSE): delta diteruskan; fallback dibatasi (teks

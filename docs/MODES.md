@@ -54,15 +54,30 @@ AI via `/api/chat` dengan gaya dari input `#vt-persona` dan cooldown
 ## Desktop Pet (`src/server/pet.ts` + `static/pet.html`)
 
 Web murni tidak bisa menembus desktop; pet berjalan di jendela aplikasi
-terpisah:
+terpisah. Peluncur memilih cangkang otomatis:
 
-1. `POST /api/pet/launch` — cari Chrome/Edge (path resmi + LOCALAPPDATA), lalu
-   spawn `<exe> --app=http://127.0.0.1:8310/pet.html --window-size=420,640`.
-2. Always-on-top via PowerShell `SetWindowPos(hwnd, -1, …, 0x0041)` (Win32
+1. **Shell Tauri** (`agent-shell/target/release/live2d-shell.exe`, dibangun dengan
+   `bun run build:pet`) — jendela WebView2 transparan melayang di desktop,
+   always-on-top native, tanpa frame, tanpa taskbar (±40-90MB RAM). Server
+   menjalankan `live2d-shell.exe pet http://127.0.0.1:<PORT>/pet.html`.
+   Shell yang sama juga membuka **jendela utama** app (`live2d-shell.exe main
+   <url>`, dipakai start.bat) — jendela berdekorasi normal, dan menunggu
+   server bind (maks 15 dtk) sebelum membuat jendela.
+   - Klik-tembus: toggle "Klik Tembus" di panel Pet (atau tombol di bar pet)
+     → `POST /api/pet/clickthrough {on}` → pet page memanggil Tauri
+     `setIgnoreCursorEvents`. Saat menyala, klik menembus ke desktop; satu-
+     satunya jalan keluar adalah toggle yang sama di app utama.
+2. **Fallback Chrome/Edge** (jika exe Tauri belum dibangun) — cari Chrome/Edge
+   (path resmi + LOCALAPPDATA), lalu spawn
+   `<exe> --app=http://127.0.0.1:<PORT>/pet.html --window-size=420,640`.
+   Always-on-top via PowerShell `SetWindowPos(hwnd, -1, …, 0x0041)` (Win32
    resmi) 2,5 dtk setelah spawn — flag CLI Chromium tidak punya always-on-top.
+   Jendela ini opaque dan tanpa klik-tembus.
 3. `pet.html` — PIXI + model Live2D `backgroundAlpha: 0`; mata/kepala ikut
    kursor (`ParamAngleX/Y`, `ParamEyeBallX/Y`), sapaan berkala, tombol
-   Sapa/Bicara/Tutup (`POST /api/pet/close` mematikan proses).
+   Sapa/Bicara/Klik-tembus/Tutup (`POST /api/pet/close` mematikan proses).
+   Esc juga menutup. Bar bawah memakai `data-tauri-drag-region` (bisa
+   dipindah di shell Tauri).
 4. Pindah mode dari app utama otomatis menutup jendela pet (`petClose()` di
    teardown).
 
@@ -71,7 +86,7 @@ terpisah:
 - Twitch donasi asli butuh EventSub (webhook/public URL) atau layanan pihak
   ketiga (StreamElements) — belum dibangun; donasi Twitch saat ini hanya via
   mock/inject.
-- Click-through pet (klik menembus karakter) butuh Electron/Neutralino —
-  belum dibangun.
+- Click-through pet sudah ada via shell Tauri (`set_ignore_cursor_events`);
+  fallback Chrome tidak mendukungnya.
 - YouTube `liveChatMessages.streamList` bisa mengganti polling bila tersedia
   di semua akun.

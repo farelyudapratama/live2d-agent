@@ -56,11 +56,12 @@
 
   async function switchMode(mode) {
     if (mode === active) { setPanel(mode); return; }
-    // 1) hancurkan runtime client lama
+    // 1) hancurkan runtime client lama (UI saja — assistant & pet di server
+    //    adalah layanan mandiri, tidak ikut dimatikan)
     try { if (destroyFn) destroyFn(); } catch (e) { console.warn("[mode] teardown lama gagal:", e); }
     destroyFn = null;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-    // 2) hancurkan runtime server lama (memori/timer server ikut lepas)
+    // 2) mode aktif untuk PANEL; server hanya membongkar runtime vtuber
     try { await post("/api/mode", { mode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
     active = mode;
     setPanel(mode);
@@ -206,6 +207,8 @@
 
   // ═════════════════════════════════════════════════════════════
   // ASSISTANT — chat + log tools + approval
+  // Panel ini hanya LAYAR: runtime assistant di server adalah layanan
+  // mandiri (tetap hidup saat pindah panel / CLI agent memakainya juga).
   // ═════════════════════════════════════════════════════════════
   function startAssistantClient() {
     const log = $("#as-log");
@@ -213,9 +216,21 @@
     const input = $("#as-input");
     let stopped = false;
 
-    // runtime server langsung menyala saat mode dibuka — tanpa tombol
+    // Runtime server langsung menyala saat panel dibuka. Kalau sudah jalan
+    // (mis. CLI agent membukanya), start() tidak menghapus sesi — history
+    // dimuat ulang dari sesi yang tersimpan.
     post("/api/assistant/start", { workDir: ($("#as-workdir") || {}).value || undefined })
-      .then(() => line("tool", "Assistant aktif. Folder kerja: project ini. Minta apa saja…"))
+      .then(async () => {
+        // Tarik riwayat sesi (bisa berisi percakapan dari CLI / sesi lama).
+        try {
+          const hist = await fetch(API + "/api/assistant/history").then((r) => r.json());
+          if (hist.length) {
+            line("tool", "Sesi dipulihkan (" + hist.length + " pesan — termasuk dari CLI/sesi sebelumnya).");
+            for (const m of hist.slice(-20)) line(m.role === "tool" ? "tool" : m.role, m.content);
+          }
+        } catch (e) {}
+        line("tool", "Assistant aktif. Folder kerja: project ini. Minta apa saja…");
+      })
       .catch((e) => line("tool", "gagal start: " + e.message));
 
     function line(role, text) {
@@ -280,17 +295,24 @@
 
     const onSend = () => send();
     const onKey = (e) => { if (e.key === "Enter") send(); };
+    const onStop = async () => {
+      try { await post("/api/assistant/stop"); } catch (e) {}
+      line("tool", "Runtime agent dimatikan. Panel ini tetap bisa dipakai — kirim pesan untuk menyalakan lagi.");
+    };
     $("#btn-as-send").addEventListener("click", onSend);
     input.addEventListener("keydown", onKey);
+    $("#as-stop").addEventListener("click", onStop);
     const iv = setInterval(refresh, 4000);
     refresh();
 
     return function destroy() {
+      // Panel ditutup ≠ runtime dimatikan: assistant adalah layanan mandiri
+      // (mungkin sedang dipakai CLI agent). Yang dilepas hanya UI ini.
       stopped = true;
       $("#btn-as-send").removeEventListener("click", onSend);
       input.removeEventListener("keydown", onKey);
+      $("#as-stop").removeEventListener("click", onStop);
       clearInterval(iv);
-      post("/api/assistant/stop").catch(() => {});
       log.textContent = "";
       approvalsBox.textContent = "";
     };
@@ -301,35 +323,83 @@
   // ═════════════════════════════════════════════════════════════
   function startPetClient() {
     const status = $("#pet-status");
+    let throughOn = false;
     async function checkStatus() {
       try {
         const st = await fetch(API + "/api/mode").then((r) => r.json());
-        status.textContent = st.pet?.running ? "jendela pet terbuka ✅" : "belum terbuka";
+        if (!st.pet?.running) {
+          status.textContent = "belum terbuka";
+          throughOn = false;
+        } else if (st.pet.shell) {
+          status.textContent =
+            (st.pet.shell === "tauri" ? "shell Tauri" : "shell Chrome/Edge") +
+            (st.pet.clickThrough ? " — klik tembus ON" : "") +
+            (st.pet.shell === "tauri" ? "" : " (tanpa klik-tembus)");
+        } else {
+          status.textContent = "jendela pet terbuka ✅";
+        }
+        paintThrough();
       } catch (e) { status.textContent = ""; }
+    }
+    function paintThrough() {
+      const b = $("#pet-through");
+      if (b) {
+        b.textContent = throughOn ? "Klik Tembus: ON" : "Klik Tembus";
+        b.classList.toggle("active", throughOn);
+      }
     }
     const onLaunch = async () => {
       status.textContent = "membuka jendela…";
       try {
         const d = await post("/api/pet/launch");
         status.textContent = d.how ? "jendela pet dibuka (" + d.how + ")" : "terbuka";
+        checkStatus();
       } catch (e) { status.textContent = "gagal: " + e.message; }
     };
     const onClose = async () => {
       try { await post("/api/pet/close"); } catch (e) {}
+      throughOn = false;
+      paintThrough();
       status.textContent = "ditutup";
+    };
+    // Klik-tembus hanya ada di shell Tauri; server mengabaikan bila shell
+    // browser. Saat menyala, satu-satunya cara mematikan adalah dari sini —
+    // klik pada jendela pet menembus ke desktop.
+    const onThrough = async () => {
+      throughOn = !throughOn;
+      paintThrough();
+      try {
+        const d = await post("/api/pet/clickthrough", { on: throughOn });
+        throughOn = !!d.clickThrough;
+        paintThrough();
+      } catch (e) {
+        throughOn = false;
+        paintThrough();
+      }
     };
     $("#pet-launch").addEventListener("click", onLaunch);
     $("#pet-close").addEventListener("click", onClose);
+    $("#pet-through").addEventListener("click", onThrough);
     checkStatus();
     const iv = setInterval(checkStatus, 5000);
-    // otomatis buka saat mode pet dipilih
-    onLaunch();
+    // Auto-buka saat panel pet dipilih — TAPI hanya kalau jendela belum
+    // jalan; onLaunch mematikan-menyalakan, jadi re-enter panel tidak
+    // me-restart jendela yang sudah ada.
+    (async () => {
+      try {
+        const st = await fetch(API + "/api/mode").then((r) => r.json());
+        if (st.pet?.running) { checkStatus(); return; }
+      } catch (e) {}
+      onLaunch();
+    })();
 
     return function destroy() {
+      // Panel ditutup ≠ jendela pet ditutup: pet adalah layanan mandiri
+      // (kontrak baru sejak shell Tauri). Yang dilepas hanya UI panel.
       $("#pet-launch").removeEventListener("click", onLaunch);
       $("#pet-close").removeEventListener("click", onClose);
+      $("#pet-through").removeEventListener("click", onThrough);
       clearInterval(iv);
-      post("/api/pet/close").catch(() => {});
     };
   }
 

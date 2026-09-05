@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* PORT v2: dari live2d-agent/test/test-param-scaling.js — path disesuaikan ke layout v2 (static/, data/). Sinkronkan bila sumber berubah. */
 /* test-param-scaling.js — the REFERENCE SCALE must never leak model assumptions.
  *
  * WHY THIS EXISTS

@@ -10,11 +10,11 @@ describe("FIELD_BOUNDS parity with js/motion-dsl.js", () => {
     expect(FIELD_BOUNDS.ex).toBe(1);
     expect(FIELD_BOUNDS.mouthForm).toBe(1);
   });
-  it("only canonical keys exist (v1 parity — no alias entries)", () => {
+  it("only canonical keys exist (legacy parity — no alias entries)", () => {
     expect(FIELD_BOUNDS.angleX).toBeUndefined();
     expect(FIELD_BOUNDS.mouthOpen).toBeUndefined();
   });
-  it("SPEC-style alias names are canonicalized to internal fields (v1 parity)", () => {
+  it("SPEC-style alias names are canonicalized to internal fields (legacy parity)", () => {
     expect(normalizeTarget("angleX")).toBe("ax");
     expect(normalizeTarget("angleY")).toBe("ay");
     expect(normalizeTarget("eyeX")).toBe("ex");

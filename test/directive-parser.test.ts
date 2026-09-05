@@ -113,8 +113,8 @@ describe("guessEmotion", () => {
     expect(guessEmotion("Hello world")).toBe("normal");
   });
 
-  // Regression: cakupan keyword v1 (agent.js:489-499) harus utuh.
-  it("keeps v1 keyword coverage (tersenyum branch + restored keywords)", () => {
+  // Regression: cakupan keyword guessEmotion harus utuh.
+  it("keeps full keyword coverage (tersenyum branch + restored keywords)", () => {
     expect(guessEmotion("makasih ya!")).toBe("senang");
     expect(guessEmotion("halo, hai!")).toBe("tersenyum");
     expect(guessEmotion("ayok dekat sama aku")).toBe("malu");
@@ -143,7 +143,7 @@ describe("segmentTextFallback", () => {
 
   // Regression: fallback v1 selalu memberi gesture (EMOTION_GESTURE_FALLBACK),
   // supaya segmen tanpa directive tetap menggerakkan karakter.
-  it("assigns a gesture to every segment (v1 parity)", () => {
+  it("assigns a gesture to every segment", () => {
     const segs = segmentTextFallback("Aku senang! Lalu aku sedih.");
     for (const s of segs) expect(s.actions.gesture).toBeTruthy();
   });

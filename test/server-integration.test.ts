@@ -115,10 +115,9 @@ describe("server API parity (dispatcher-level)", () => {
     expect(json.models).toContain("神宫白子");
   });
 
-  it("/api/model/motion-taxonomy works WITHOUT the v1 sibling repo present", async () => {
-    // The server must be self-contained: it imports the v2 TS module
-    // (src/client/engine/motion-taxonomy.ts), never the ../live2d-agent copy.
-    // If this resolves, the cross-repo dependency is gone.
+  it("/api/model/motion-taxonomy works standalone (self-contained)", async () => {
+    // The server imports its own TS module (src/client/engine/motion-taxonomy.ts)
+    // — no external repo copies. If this resolves, the module is bundled in.
     const res = await call("GET", "/api/model/motion-taxonomy?name=" + encodeURIComponent("神宫白子"));
     expect(res).not.toBeNull();
     const json = await (res as Response).json();

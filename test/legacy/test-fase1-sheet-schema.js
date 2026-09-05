@@ -1,5 +1,4 @@
 // Fase 1 tests — sheet schemaVersion + userNote persistence.
-/* PORT v2: dari live2d-agent/test/test-fase1-sheet-schema.js — path disesuaikan ke layout v2 (static/, data/). Sinkronkan bila sumber berubah. */
 //
 // migrateSheet() and existingUserFields() live inside app.js's browser IIFE, so
 // we extract the source of migrateSheet and evaluate it in isolation. That keeps

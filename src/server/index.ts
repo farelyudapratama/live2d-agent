@@ -1,6 +1,6 @@
 /**
- * server/index.ts — Bun server, full parity with server.js (1945 LOC).
- * No external deps except Bun.
+ * server/index.ts — Bun server: 40+ route API, proxy LLM/TTS, static, upload.
+ * Tanpa dependensi eksternal selain Bun (ws untuk Twitch IRC ikut di-bundle).
  */
 import { ConfigManager, queueJsonWrite, mergeEventsIntoConfig } from "../shared/config";
 import { llmWithFallback, callLLM, llmForRole, normalizeRoles, salvageJSONArrayOfObjects } from "../shared/llm-client";
@@ -9,20 +9,21 @@ import { sanitizeMotionAsset } from "../client/animation/motion-dsl";
 import { readdirSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from "fs";
 import { join, extname, dirname, relative, resolve, normalize, sep } from "path";
 import { execSync } from "child_process";
-// Motion taxonomy: modul TS milik v2 (src/client/engine/motion-taxonomy.ts),
-// dipakai bersama oleh server & bundle browser. No dependency on the
-// v1 sibling repo — the server must be self-contained.
+// Motion taxonomy: modul TS client (src/client/engine/motion-taxonomy.ts),
+// dipakai bersama oleh server & bundle browser — server harus self-contained.
 // @ts-ignore — modul TS client, dipakai bareng oleh server & bundle browser
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay } from "./vtuber";
 import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
+import { appRoot } from "../shared/paths";
 
 const PORT = Number(process.env.PORT) || 8310;
-const ROOT = import.meta.dir;
-const STATIC = join(ROOT, "../../static");
-const DATA = join(ROOT, "../../data");
+// Akar dev = folder repo; akar exe hasil compile = folder portable (lihat paths.ts)
+const ROOT = appRoot();
+const STATIC = join(ROOT, "static");
+const DATA = join(ROOT, "data");
 const MODEL_DIR = join(DATA, "model");
 const SHEETS_DIR = join(DATA, "sheets");
 const MOTIONS_DIR = join(DATA, "motions");
@@ -46,9 +47,8 @@ function json(data: unknown, status=200): Response {
 }
 function cors(res: Response){ res.headers.set("Access-Control-Allow-Origin","*"); res.headers.set("Access-Control-Allow-Methods","POST, GET, PUT, DELETE, OPTIONS"); res.headers.set("Access-Control-Allow-Headers","Content-Type"); return res; }
 
-// Body-size caps (v1 parity). v1 menghancurkan socket body yang kelebihan
-// batas; di sini kita lempar BodyTooLargeError yang dijawab 413 JSON supaya
-// client dapat error yang terbaca. Tabel batas = batas v1 per endpoint.
+// Body-size caps per endpoint. Kalau body kelebihan batas, lempar
+// BodyTooLargeError yang dijawab 413 JSON supaya client dapat error terbaca.
 class BodyTooLargeError extends Error {}
 function bodyLimitFor(path: string): number {
   if (path === "/api/model/import-zip") return 500 * 1024 * 1024;

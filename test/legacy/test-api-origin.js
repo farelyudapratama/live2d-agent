@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-/* PORT v2: dari live2d-agent/test/test-api-origin.js — path disesuaikan ke layout v2 (static/, data/). Sinkronkan bila sumber berubah. */
 /* test-api-origin.js — the backend origin must be DERIVED, never a literal port.
  *
  * WHY THIS EXISTS
- * server.js has honoured `process.env.PORT` for a while (`const PORT =
- * Number(process.env.PORT) || 8310`), but the frontend had `http://127.0.0.1:8310`
+ * The server honours `process.env.PORT` (`const PORT =
+ * Number(process.env.PORT) || 8310`), but the frontend once had `http://127.0.0.1:8310`
  * written out in 11 places across js/app.js and agent.js. Start the server on any
  * other port — a second instance for testing, or 8310 already taken — and the page
  * loads fine (it's served by that server) while every single fetch goes to a port

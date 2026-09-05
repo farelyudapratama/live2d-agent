@@ -1,12 +1,12 @@
-// test-exp3-adoption.ts — PORT v2 dari live2d-agent/test/test-exp3-adoption.js
+// test-exp3-adoption.ts — adopsi `.exp3` tak terdaftar, diuji in-process.
 //
-// Perbedaan dari v1 (disengaja, semantik dijaga):
+// Desain (disengaja):
 //  - Bagian SERVER dijalankan IN-PROCESS lewat handleAPI() (dispatcher nyata,
-//    tanpa socket/spawn). v1 men-spawn server.js di direktori stage; v2 server
-//    membaca data/ dari import.meta.dir, jadi model sintetis di-stage ke
-//    data/model/__exp3_* lalu DIHAPUS di finally. Endpoint discovery read-only.
-//  - Bagian CLIENT (vm-extract buildModelSettings dari app.js) identik v1,
-//    dengan app.js dari static/js/app.js (byte-identik v1).
+//    tanpa socket/spawn). Server membaca data/ lewat appRoot() (paths.ts),
+//    jadi model sintetis di-stage ke data/model/__exp3_* lalu DIHAPUS di
+//    finally. Endpoint discovery read-only.
+//  - Bagian CLIENT (vm-extract buildModelSettings dari app.js) menjalankan
+//    fungsi asli dari static/js/app.js.
 //  - Fetchability file ekspresi diverifikasi lewat serveStatic() (fallback DATA
 //    yang sama dipakai loader di browser), bukan HTTP socket.
 //

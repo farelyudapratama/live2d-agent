@@ -634,48 +634,31 @@
   function renderPlayheads() {
     const dur = state.draft ? (state.draft.duration || 1) : 1;
     document.querySelectorAll('.ms-playhead').forEach(head => {
-      head.style.left = ((state.scrubT / dur) * 100).toFixed(2) + '%';
+      // Clamp 0..100%: key terjauh boleh melebihi draft.duration (runtime
+      // memakai max(durasi, key terjauh)) — tanpa clamp playhead menembus
+      // tepi lane.
+      const pct = Math.max(0, Math.min(100, (state.scrubT / dur) * 100));
+      head.style.left = pct.toFixed(2) + '%';
     });
     renderTime();
   }
 
   // ── Sweep playhead selama preview diputar ────────────────────────
-  // Runtime yang mengemudikan model; editor hanya menggambar waktu yang lewat.
-  // TIDAK menulis pose (applyScrubPose) — tulisan editor dan runtime akan
-  // bertumpuk di frame yang sama dan hasilnya acak.
-  let sweepRaf = 0, sweepWd = 0, sweepLast = 0;
+  // Playhead kini MENGIKUTI klok runtime, bukan menghitung waktunya sendiri.
+  // Dulu editor memakai rAF + watchdog dengan rumus t = (now - t0) yang
+  // berbeda dari runtime: runtime menunda mulainya selama blend-in, loop-nya
+  // me-reset start di awal tiap siklus dan menambah blendOut di akhir —
+  // playhead pasti desinkron (jalan duluan/mundur sendiri padahal pose
+  // diam). Sekarang runtime memanggil onProgress(p) tiap frame tick yang
+  // SAMA dengan yang menggerakkan model; p = t / totalMs, dan tSec yang
+  // benar dikembalikan lewat closure playPreview().
+  let sweepActive = false;
   function stopPlayheadSweep() {
-    if (sweepRaf) { cancelAnimationFrame(sweepRaf); sweepRaf = 0; }
-    if (sweepWd) { clearInterval(sweepWd); sweepWd = 0; }
+    sweepActive = false;
   }
   function startPlayheadSweep() {
     stopPlayheadSweep();
-    if (!state.draft) return;
-    const dur = state.draft.duration || 1;
-    const loop = !!state.draft.loop;
-    const t0 = performance.now();
-    sweepLast = 0;
-    const step = (fromWatchdog) => {
-      if (!state.playing) { stopPlayheadSweep(); return; }
-      let t = (performance.now() - t0) / 1000;
-      if (t >= dur) {
-        if (loop) t = t % dur;
-        else { state.scrubT = dur; renderPlayheads(); stopPlayheadSweep(); return; }
-      }
-      state.scrubT = t;
-      renderPlayheads();
-      sweepLast = performance.now();
-      if (!fromWatchdog) sweepRaf = requestAnimationFrame(() => step(false));
-    };
-    sweepRaf = requestAnimationFrame(() => step(false));
-    // Watchdog 250 ms — pola yang sama dengan MotionRuntime: rAF berhenti di tab
-    // latar, tapi playback tetap selesai (runtime memakai watchdog sendiri),
-    // jadi playhead tidak boleh ikut membeku. Waktu dihitung dari jam, bukan
-    // penambahan per-frame, jadi dobel-tick dari dua jalur tetap akurat.
-    sweepWd = setInterval(() => {
-      if (!state.playing) { stopPlayheadSweep(); return; }
-      if (!sweepLast || performance.now() - sweepLast >= 250) step(true);
-    }, 250);
+    sweepActive = true;
   }
 
   function renderUndoButtons() {
@@ -707,16 +690,42 @@
     const r = l2d.registerUserMotion(probe);
     if (!r.ok) { setStatus('gagal: ' + r.error, 'err'); return; }
     const startT = state.scrubT;
+    const loop = !!state.draft.loop;
+    // totalMs HARUS identik dengan computePlaybackPlan runtime:
+    // max(durasi, key terjauh, 200ms) + blendOut. Kalau beda, p di onProgress
+    // menskalakan ke durasi yang salah dan playhead melenceng lagi.
+    let maxKey = 0;
+    for (const t of state.draft.tracks) for (const k of (t.keys || [])) if (k.t > maxKey) maxKey = k.t;
+    const durSec = Math.max(state.draft.duration || 0, maxKey, 0.2);
+    const blendInS = 0.12, blendOutS = 0.25;
+    const totalS = durSec + blendOutS;
+    stopPlayheadSweep();
     const okPlay = l2d.playMotion(PREVIEW_ID, {
       intensity: state.draft.intensity ? state.draft.intensity.default : 0.8,
       priority: 100, blendIn: 120, blendOut: 250,
+      onProgress: (p) => {
+        if (!sweepActive) return;
+        // p = t / totalMs dari klok runtime (tick yang sama dengan yang
+        // menggerakkan pose) — tidak mungkin desinkron. Konversi balik ke
+        // detik timeline draft: tMs = p*totalMs; tSec = (tMs - blendIn)/1000;
+        // posisi di luar [0,dur] dicukat (blend-out) atau di-modulo (loop —
+        // runtime me-reset start tiap siklus, jadi t runtime memang naik
+        // terus melampaui dur; modulo mengembalikan posisi siklusnya).
+        let tSec = (p * totalS - blendInS);
+        if (tSec < 0) tSec = 0;
+        if (loop) tSec = tSec % durSec;
+        else if (tSec > durSec) tSec = durSec;
+        state.scrubT = tSec;
+        renderPlayheads();
+      },
       onDone: () => {
         state.playing = false;
         stopPlayheadSweep();
         if (l2d.removeUserMotion) l2d.removeUserMotion(PREVIEW_ID);
-        // Playhead sweep meninggalkan scrubT di akhir durasi — kembalikan ke
-        // titik mulai supaya konteks edit tidak "nyangkut" di ujung.
-        state.scrubT = startT;
+        // Loop: kembali ke titik mulai (playhead sudah di posisi siklus
+        // terakhir). Non-loop: playhead menempel di ujung — konteks edit
+        // "nyangkut" di ujung justru benar, pose edit tetap terlihat.
+        state.scrubT = loop ? Math.min(startT, durSec) : durSec;
         applyScrubPose();
         renderPlayheads();
         setStatus('selesai diputar');

@@ -25,6 +25,9 @@ const DEFAULTS = {
 };
 
 let cfg = { ...DEFAULTS };
+
+// i18n: window.__i18n dipasang bundle.js (dimuat sebelum modul ini).
+const __t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
 let cfgLoaded = false;
 
 let asr = null;             // pipeline STT (lazy, sekali)
@@ -46,9 +49,9 @@ const input = () => document.getElementById('bubble-input');
 
 function setStatus(text) {
   const el = input();
-  if (el) el.placeholder = text || 'Ketik pesan lalu Enter...';
+  if (el) el.placeholder = text || __t('chat.inputPh');
   const b = btn();
-  if (b) b.title = text || 'Voice: bicara lalu kirim (klik lagi untuk berhenti)';
+  if (b) b.title = text || __t('chat.micTip');
 }
 
 function setRecordingUI(on) {
@@ -174,7 +177,7 @@ async function startRecording() {
 
   recording = true;
   setRecordingUI(true);
-  setStatus('🎤 mendengarkan... (klik lagi untuk berhenti)');
+  setStatus(__t('chat.micListening'));
 
   // Monitor senyap: rantai setTimeout (bukan interval) supaya tidak menumpuk.
   const buf = new Float32Array(analyser.fftSize);
@@ -208,7 +211,7 @@ function fail(e) {
   console.warn('[voice]', e && e.message);
   releaseAll();
   busy = false;
-  setStatus('⚠️ ' + (e && e.message ? e.message : 'gagal'));
+  setStatus('⚠️ ' + (e && e.message ? e.message : __t('chat.micFail')));
   setTimeout(() => setStatus(''), 4000);
   syncButtonState();
 }
@@ -216,7 +219,7 @@ function fail(e) {
 async function transcribeAndSend() {
   busy = true;
   syncButtonState();
-  setStatus('⏳ mentranskripsi...');
+  setStatus(__t('chat.micTranscribing'));
   try {
     const blob = new Blob(chunks, { type: recorder && recorder.mimeType || 'audio/webm' });
     const buf = await blob.arrayBuffer();
@@ -247,11 +250,11 @@ async function transcribeAndSend() {
         const send = document.getElementById('btn-bubble');
         if (send) send.click();               // jalur kirim milik app.js — tanpa duplikasi
       } else {
-        setStatus('teks siap — Enter untuk kirim');
+        setStatus(__t('chat.micReady'));
         inp.focus();
       }
     } else {
-      setStatus('tidak ada ucapan terdeteksi');
+      setStatus(__t('chat.micNothing'));
       setTimeout(() => setStatus(''), 2500);
     }
   } finally {

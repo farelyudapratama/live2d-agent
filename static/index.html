@@ -26,16 +26,16 @@
       <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
            berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
            folder/.zip lewat UI, atau copy manual ke data/model/. -->
-      <button id="btn-stage-controls" class="stage-ctl" title="Buka panel kontrol">☰</button>
+      <button id="btn-stage-controls" class="stage-ctl" data-i18n-title="stage.openControls">☰</button>
         <div id="stage-empty" class="stage-empty hidden">
         <div class="se-box">
-          <div class="se-title">Belum ada model Live2D</div>
-          <p>Repo ini tidak menyertakan model (aset berlisensi). Impor model Cubism 4 milikmu lewat sini, atau copy folder model ke <code>data/model/</code> lalu muat ulang.</p>
+          <div class="se-title" data-i18n="stage.empty.title">Belum ada model Live2D</div>
+          <p><span data-i18n="stage.empty.desc1">Repo ini tidak menyertakan model (aset berlisensi). Impor model Cubism 4 milikmu lewat sini, atau copy folder model ke</span> <code>data/model/</code> <span data-i18n="stage.empty.desc2">lalu muat ulang.</span></p>
           <div class="se-actions">
-            <button id="btn-empty-folder" class="mini-btn">Pilih Folder Model</button>
-            <button id="btn-empty-zip" class="mini-btn">Impor .zip</button>
+            <button id="btn-empty-folder" class="mini-btn" data-i18n="sys.pickFolder">Pilih Folder Model</button>
+            <button id="btn-empty-zip" class="mini-btn" data-i18n="stage.empty.pickZip">Impor .zip</button>
           </div>
-          <p class="hint">Model juga bisa ditambah kapan saja lewat Pengaturan → Model. Model terakhir yang dibuka diingat otomatis.</p>
+          <p class="hint" data-i18n="stage.empty.hint">Model juga bisa ditambah kapan saja lewat Pengaturan → Model. Model terakhir yang dibuka diingat otomatis.</p>
         </div>
       </div>
 
@@ -47,15 +47,15 @@
 
       <!-- Lower-third siaran: keadaan karakter di atas panggung (dipindah dari sidebar, redesign 2026-09-02). -->
       <div id="live-state" aria-live="polite">
-        <span class="ls-item" id="ls-presence">presence: —</span>
-        <span class="ls-item" id="ls-mood">mood: —</span>
-        <span class="ls-item" id="ls-quiet">masa tenang: —</span>
+        <span class="ls-item" id="ls-presence" data-i18n="live.presence">presence: —</span>
+        <span class="ls-item" id="ls-mood" data-i18n="live.mood">mood: —</span>
+        <span class="ls-item" id="ls-quiet" data-i18n="live.quiet">masa tenang: —</span>
       </div>
 
       <!-- Full Body button: only shows after the user manually zooms/drags -->
-      <button id="btn-fullbody" class="hidden" title="Tampilkan full body">Full Body</button>
+      <button id="btn-fullbody" class="hidden" data-i18n-title="live.fullBodyTip" data-i18n="live.fullBody">Full Body</button>
 
-      <div id="hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
+      <div id="hint" data-i18n="live.hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
     </div>
 
     <!-- ===================== RAIL OBROLAN (kanan) ===================== -->
@@ -68,19 +68,19 @@
         <div class="sb-avatar">?</div>
         <div class="sb-id">
           <div class="sb-name">Live2D Agent</div>
-          <div class="sb-status"><span class="dot"></span> <span id="sb-state">Online</span></div>
+          <div class="sb-status"><span class="dot"></span> <span id="sb-state" data-i18n="sys.online">Online</span></div>
         </div>
-        <button id="btn-clear-chat" title="Bersihkan riwayat obrolan">Clear</button>
-        <button id="btn-toggle-controls" title="Tampilkan panel kontrol">⚙</button>
+        <button id="btn-clear-chat" data-i18n-title="chat.clearTip" data-i18n="chat.clear">Clear</button>
+        <button id="btn-toggle-controls" data-i18n-title="top.toggleControlsTip">⚙</button>
       </div>
 
       <!-- Mode switcher: satu mode aktif; pindah mode = runtime lama dihancurkan -->
       <div class="mode-switch" id="mode-switch" role="tablist">
-        <button data-mode="chat" class="active" title="Panggung + Chat">Chat</button>
-        <button data-mode="vtuber" title="AI VTuber — Live Streaming">VTuber</button>
-        <button data-mode="assistant" title="AI Assistant — Agent Lokal">Assistant</button>
-        <button data-mode="pet" title="Desktop Pet">Pet</button>
-        <span id="mode-label" class="mode-label">Chat</span>
+        <button data-mode="chat" class="active" data-i18n-title="top.tabTip.chat" data-i18n="top.tab.chat">Chat</button>
+        <button data-mode="vtuber" data-i18n-title="top.tabTip.vtuber" data-i18n="top.tab.vtuber">VTuber</button>
+        <button data-mode="assistant" data-i18n-title="top.tabTip.assistant" data-i18n="top.tab.assistant">Assistant</button>
+        <button data-mode="pet" data-i18n-title="top.tabTip.pet" data-i18n="top.tab.pet">Pet</button>
+        <span id="mode-label" class="mode-label" data-i18n="top.tab.chat">Chat</span>
       </div>
 
       <div id="mode-chat" class="mode-panel">
@@ -88,113 +88,113 @@
       <div id="chat-log">
         <div class="msg agent">
           <div class="msg-avatar">?</div>
-          <div class="msg-bubble" id="greeting-bubble">Halo! Ada yang bisa kubantu?</div>
+          <div class="msg-bubble" id="greeting-bubble" data-i18n="chat.greeting">Halo! Ada yang bisa kubantu?</div>
         </div>
       </div>
 
       <!-- Thinking indicator -->
-      <div id="thinking" class="thinking hidden">Mikir...</div>
+      <div id="thinking" class="thinking hidden" data-i18n="chat.thinking">Mikir...</div>
 
       <!-- Input -->
       <div class="chat-input">
-        <button id="btn-mic" title="Voice: bicara lalu kirim (klik lagi untuk berhenti)">Mic</button>
-        <input type="text" id="bubble-input" placeholder="Ketik pesan lalu Enter..." />
-        <button id="btn-bubble" title="Kirim pesan (Enter)">Kirim</button>
+        <button id="btn-mic" data-i18n-title="chat.micTip" data-i18n="chat.mic">Mic</button>
+        <input type="text" id="bubble-input" data-i18n-ph="chat.inputPh" placeholder="Ketik pesan lalu Enter..." />
+        <button id="btn-bubble" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
       </div>
       <div class="quick-phrases">
-        <button class="phrase-btn" data-phrase="Halo~">Halo~</button>
-        <button class="phrase-btn" data-phrase="Apa kabar?">Apa kabar?</button>
-        <button class="phrase-btn" data-phrase="Ceritakan tentang dirimu">Cerita dong</button>
-        <button class="phrase-btn" data-phrase="Yay~!">Yay~!</button>
-        <button class="phrase-btn" data-phrase="Semangat ya!">Semangat!</button>
-        <button class="phrase-btn" data-phrase="Hmmm...">Hmmm...</button>
-        <button class="phrase-btn" data-phrase="Maaf ya...">Maaf ya...</button>
+        <button class="phrase-btn" data-phrase="Halo~" data-i18n="chat.phrase1">Halo~</button>
+        <button class="phrase-btn" data-phrase="Apa kabar?" data-i18n="chat.phrase2">Apa kabar?</button>
+        <button class="phrase-btn" data-phrase="Ceritakan tentang dirimu" data-i18n="chat.phrase3">Cerita dong</button>
+        <button class="phrase-btn" data-phrase="Yay~!" data-i18n="chat.phrase4">Yay~!</button>
+        <button class="phrase-btn" data-phrase="Semangat ya!" data-i18n="chat.phrase5">Semangat!</button>
+        <button class="phrase-btn" data-phrase="Hmmm..." data-i18n="chat.phrase6">Hmmm...</button>
+        <button class="phrase-btn" data-phrase="Maaf ya..." data-i18n="chat.phrase7">Maaf ya...</button>
       </div>
       <label class="brain-toggle">
         <input type="checkbox" id="toggle-brain" checked />
-        <span>Mode Otak (LLM mikir & balas sendiri)</span>
+        <span data-i18n="chat.brainToggle">Mode Otak (LLM mikir & balas sendiri)</span>
       </label>
       </div><!-- /mode-chat -->
 
       <!-- ═══ MODE: AI VTUBER (streaming) ═══ -->
       <div id="mode-vtuber" class="mode-panel hidden">
-        <div class="section-title">AI VTuber — Live Stream</div>
+        <div class="section-title" data-i18n="vt.title">AI VTuber — Live Stream</div>
         <label class="cfg-row" for="vt-provider">
-          <span class="cfg-label">Platform</span>
+          <span class="cfg-label" data-i18n="vt.platform">Platform</span>
           <select id="vt-provider">
-            <option value="mock">Mock (simulasi, tanpa key)</option>
-            <option value="twitch">Twitch (baca chat)</option>
-            <option value="youtube">YouTube Live (chat + superchat)</option>
+            <option value="mock" data-i18n="vt.prov.mock">Mock (simulasi, tanpa key)</option>
+            <option value="twitch" data-i18n="vt.prov.twitch">Twitch (baca chat)</option>
+            <option value="youtube" data-i18n="vt.prov.youtube">YouTube Live (chat + superchat)</option>
           </select>
         </label>
         <label class="cfg-row" id="vt-row-channel" for="vt-channel">
-          <span class="cfg-label">Channel Twitch</span>
-          <input id="vt-channel" type="text" placeholder="mis. nama_channel" />
+          <span class="cfg-label" data-i18n="vt.channel">Channel Twitch</span>
+          <input id="vt-channel" type="text" data-i18n-ph="vt.channelPh" placeholder="mis. nama_channel" />
         </label>
         <label class="cfg-row" id="vt-row-ytid" for="vt-video-id">
-          <span class="cfg-label">Video ID Live YT</span>
-          <input id="vt-video-id" type="text" placeholder="mis. 5YxZabc123" />
+          <span class="cfg-label" data-i18n="vt.videoId">Video ID Live YT</span>
+          <input id="vt-video-id" type="text" data-i18n-ph="vt.videoIdPh" placeholder="mis. 5YxZabc123" />
         </label>
         <label class="cfg-row" id="vt-row-ytkey" for="vt-yt-key">
-          <span class="cfg-label">API Key YouTube</span>
+          <span class="cfg-label" data-i18n="vt.ytKey">API Key YouTube</span>
           <input id="vt-yt-key" type="password" placeholder="AIza…" />
         </label>
         <label class="cfg-row" for="vt-persona">
-          <span class="cfg-label">Gaya jawab</span>
+          <span class="cfg-label" data-i18n="vt.persona">Gaya jawab</span>
           <input id="vt-persona" type="text" value="ceria, singkat, suka emoji, panggil penonton dengan nama" />
         </label>
         <label class="cfg-check">
-          <input id="vt-respond" type="checkbox" checked /> <span>AI balas chat otomatis</span>
+          <input id="vt-respond" type="checkbox" checked /> <span data-i18n="vt.autoReply">AI balas chat otomatis</span>
         </label>
         <label class="cfg-check">
-          <input id="vt-donate-respond" type="checkbox" checked /> <span>Ucapkan terima kasih saat donasi</span>
+          <input id="vt-donate-respond" type="checkbox" checked /> <span data-i18n="vt.thanksOnDonate">Ucapkan terima kasih saat donasi</span>
         </label>
         <label class="cfg-row" for="vt-cooldown">
-          <span class="cfg-label">Jeda antar balas (dtk)</span>
+          <span class="cfg-label" data-i18n="vt.cooldown">Jeda antar balas (dtk)</span>
           <input id="vt-cooldown" type="number" min="5" max="120" value="12" />
         </label>
         <div class="note-row">
-          <button id="vt-start" class="mini-btn">Mulai</button>
-          <button id="vt-stop" class="mini-btn">Berhenti</button>
-          <span id="vt-status" class="note-status">tidak aktif</span>
+          <button id="vt-start" class="mini-btn" data-i18n="vt.start">Mulai</button>
+          <button id="vt-stop" class="mini-btn" data-i18n="vt.stop">Berhenti</button>
+          <span id="vt-status" class="note-status" data-i18n="vt.inactive">tidak aktif</span>
         </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
-        <div class="section-title">Feed Live</div>
+        <div class="section-title" data-i18n="vt.feedTitle">Feed Live</div>
         <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
-        <p class="hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
+        <p class="hint" data-i18n="vt.hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
       </div>
 
       <!-- ═══ MODE: AI ASSISTANT (agent lokal) ═══ -->
       <div id="mode-assistant" class="mode-panel hidden">
-        <div class="section-title">AI Assistant — Agent Lokal</div>
+        <div class="section-title" data-i18n="as.title">AI Assistant — Agent Lokal</div>
         <div class="as-workdir">
-          <span class="cfg-label">Folder kerja</span>
-          <input id="as-workdir" type="text" placeholder="(folder project ini)" />
+          <span class="cfg-label" data-i18n="as.workdir">Folder kerja</span>
+          <input id="as-workdir" type="text" data-i18n-ph="as.workdirPh" placeholder="(folder project ini)" />
         </div>
         <div class="note-row">
-          <button id="as-stop" class="mini-btn">Matikan Agent</button>
-          <span class="hint">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
+          <button id="as-stop" class="mini-btn" data-i18n="as.stop">Matikan Agent</button>
+          <span class="hint" data-i18n="as.hint1">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
         </div>
         <div id="as-log" class="as-log"></div>
         <div id="as-approvals"></div>
         <div class="chat-input">
-          <input type="text" id="as-input" placeholder="Minta apa? mis. baca struktur folder…" />
-          <button id="btn-as-send" title="Kirim">Kirim</button>
+          <input type="text" id="as-input" data-i18n-ph="as.inputPh" placeholder="Minta apa? mis. baca struktur folder…" />
+          <button id="btn-as-send" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
         </div>
-        <p class="hint">Tools aman (lihat folder, baca file) jalan otomatis. Menulis file &amp; menjalankan perintah butuh persetujuanmu di panel ini.</p>
+        <p class="hint" data-i18n="as.hint2">Tools aman (lihat folder, baca file) jalan otomatis. Menulis file &amp; menjalankan perintah butuh persetujuanmu di panel ini.</p>
       </div>
 
       <!-- ═══ MODE: DESKTOP PET ═══ -->
       <div id="mode-pet" class="mode-panel hidden">
-        <div class="section-title">Desktop Pet</div>
-        <p class="hint">Karakter melayang transparan selalu di atas (shell Tauri; fallback Chrome/Edge). Jendela terpisah — app utama boleh ditutup, pet tetap jalan.</p>
+        <div class="section-title" data-i18n="pet.title">Desktop Pet</div>
+        <p class="hint" data-i18n="pet.hint1">Karakter melayang transparan selalu di atas (shell Tauri; fallback Chrome/Edge). Jendela terpisah — app utama boleh ditutup, pet tetap jalan.</p>
         <div class="note-row">
-          <button id="pet-launch" class="mini-btn">Buka Jendela Pet</button>
-          <button id="pet-close" class="mini-btn">Tutup Pet</button>
-          <button id="pet-through" class="mini-btn">Klik Tembus</button>
+          <button id="pet-launch" class="mini-btn" data-i18n="pet.open">Buka Jendela Pet</button>
+          <button id="pet-close" class="mini-btn" data-i18n="pet.close">Tutup Pet</button>
+          <button id="pet-through" class="mini-btn" data-i18n="pet.clickThrough">Klik Tembus</button>
         </div>
         <div id="pet-status" class="note-status"></div>
-        <p class="hint">Shell Tauri (WebView2 bawaan Windows) atau fallback Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, klik-tembus, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
+        <p class="hint" data-i18n="pet.hint2">Shell Tauri (WebView2 bawaan Windows) atau fallback Chrome/Edge --app + always-on-top. Tombol di jendela pet: sapa, bicara, klik-tembus, tutup. Web murni tidak bisa menembus desktop — makanya jendela khusus dibutuhkan.</p>
       </div>
 
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
@@ -203,147 +203,163 @@
       <div id="controls-panel" class="hidden">
         <div class="drawer-head">
           <div class="tabs">
-            <button class="tab active" data-tab="model">Model</button>
-            <button class="tab" data-tab="sheet">Sheet</button>
-            <button class="tab" data-tab="motion">Motion</button>
-            <button class="tab" data-tab="ai">AI</button>
+            <button class="tab active" data-tab="model" data-i18n="cfg.tab.model">Model</button>
+            <button class="tab" data-tab="sheet" data-i18n="cfg.tab.sheet">Sheet</button>
+            <button class="tab" data-tab="motion" data-i18n="cfg.tab.motion">Motion</button>
+            <button class="tab" data-tab="ai" data-i18n="cfg.tab.ai">AI</button>
           </div>
-          <button id="btn-close-controls" class="drawer-close" title="Tutup panel (Esc)">✕</button>
+          <button id="btn-close-controls" class="drawer-close" data-i18n-title="cfg.closeTip">✕</button>
         </div>
       <div class="tab-body">
 
         <!-- Model (import / switch user models) -->
         <div class="tab-pane active" data-pane="model">
-          <div class="section-title">Model</div>
+          <div class="section-title" data-i18n="cfg.model.title">Model</div>
+
+          <!-- Bahasa UI + bahasa balasan AI (global, config.json section i18n).
+               Wiring di app.js: ganti → setLang + reload. -->
+          <div class="section-title" data-i18n="cfg.langTitle">Bahasa</div>
+          <div class="cfg-box">
+            <label class="cfg-row" for="cfg-lang">
+              <span class="cfg-label" data-i18n="cfg.langLabel">Bahasa</span>
+              <select id="cfg-lang">
+                <option value="id">Bahasa Indonesia</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <p class="hint" data-i18n="cfg.langHint">Bahasa UI dan bahasa balasan karakter. Deteksi otomatis saat pertama dibuka; kata kunci gerak ([EMOTION:], dst.) tetap mengikuti protokol aplikasi.</p>
+          </div>
+
           <div id="model-drop" class="model-drop">
-            <p>Drag &amp; drop folder model ke sini,<br />atau</p>
-            <button id="btn-pick-model" class="mini-btn">Pilih Folder Model</button>
+            <p><span data-i18n="cfg.drop1">Drag &amp; drop folder model ke sini,</span><br /><span data-i18n="cfg.dropOr">atau</span></p>
+            <button id="btn-pick-model" class="mini-btn" data-i18n="sys.pickFolder">Pilih Folder Model</button>
             <input id="input-model-folder" type="file" webkitdirectory directory multiple hidden />
-            <p class="model-drop-alt">Atau upload <b>.zip</b> model:</p>
-            <button id="btn-pick-zip" class="mini-btn">Pilih File .zip</button>
+            <p class="model-drop-alt" data-i18n-html="cfg.uploadZip">Atau upload <b>.zip</b> model:</p>
+            <button id="btn-pick-zip" class="mini-btn" data-i18n="cfg.pickZip">Pilih File .zip</button>
             <input id="input-model-zip" type="file" accept=".zip,application/zip" hidden />
-            <p class="hint">Folder <i>atau</i> .zip; nama model diambil dari nama folder/zip.</p>
+            <p class="hint" data-i18n-html="cfg.dropHint">Folder <i>atau</i> .zip; nama model diambil dari nama folder/zip.</p>
           </div>
           <div class="model-name-row">
-            <input id="input-model-name" type="text" placeholder="nama model (mis. Hatsune)" />
+            <input id="input-model-name" type="text" data-i18n-ph="cfg.modelNamePh" placeholder="nama model (mis. Hatsune)" />
           </div>
           <div id="model-list" class="model-list"></div>
           <div class="note-row">
-            <button id="btn-inspect" class="mini-btn">Inspeksi Model (Generate Sheet)</button>
+            <button id="btn-inspect" class="mini-btn" data-i18n="cfg.inspect">Inspeksi Model (Generate Sheet)</button>
           </div>
-          <p class="hint">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
+          <p class="hint" data-i18n="cfg.inspectHint">Scan param, expression, aksesoris model → simpan sebagai referensi AI. Auto-jalan saat pertama chat.</p>
 
           <!-- Catatan karakter: free-text milik USER, ikut dikirim ke AI -->
-          <div class="section-title">Catatan Karakter</div>
+          <div class="section-title" data-i18n="cfg.noteTitle">Catatan Karakter</div>
           <div class="note-box">
             <textarea id="input-user-note" rows="4"
+              data-i18n-ph="cfg.notePh"
               placeholder="Siapa dia? Sifat, gaya bicara, kebiasaan… mis. &quot;Dia pemalu, panggil aku Senpai, suka kucing.&quot;"
               aria-describedby="note-hint"></textarea>
             <div class="note-row">
-              <button id="btn-save-note" class="mini-btn">Simpan Catatan</button>
+              <button id="btn-save-note" class="mini-btn" data-i18n="cfg.saveNote">Simpan Catatan</button>
               <span id="note-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
-            <p class="hint" id="note-hint">Catatan ini dikirim ke AI sebagai konteks karakter, disimpan per-model, dan <b>tidak hilang</b> saat kamu inspeksi ulang.</p>
+            <p class="hint" id="note-hint" data-i18n-html="cfg.noteHint">Catatan ini dikirim ke AI sebagai konteks karakter, disimpan per-model, dan <b>tidak hilang</b> saat kamu inspeksi ulang.</p>
           </div>
 
           <!-- Pengaturan per-model: dulu hardcode & reset tiap reload -->
-          <div class="section-title">Pengaturan Model</div>
+          <div class="section-title" data-i18n="cfg.modelCfgTitle">Pengaturan Model</div>
           <div class="cfg-box">
             <label class="cfg-row" for="cfg-display-name">
-              <span class="cfg-label">Nama karakter</span>
+              <span class="cfg-label" data-i18n="cfg.displayName">Nama karakter</span>
               <input id="cfg-display-name" type="text" maxlength="40"
-                placeholder="(otomatis dari nama folder model)" aria-describedby="cfg-hint" />
+                data-i18n-ph="cfg.displayNamePh" placeholder="(otomatis dari nama folder model)" aria-describedby="cfg-hint" />
             </label>
 
             <label class="cfg-check">
-              <input id="cfg-blink" type="checkbox" /> <span>Kedip mata otomatis</span>
+              <input id="cfg-blink" type="checkbox" /> <span data-i18n="cfg.blink">Kedip mata otomatis</span>
             </label>
             <label class="cfg-check">
-              <input id="cfg-idle" type="checkbox" /> <span>Gerak idle otomatis</span>
+              <input id="cfg-idle" type="checkbox" /> <span data-i18n="cfg.idleMotion">Gerak idle otomatis</span>
             </label>
 
             <label class="cfg-row" for="cfg-framing">
-              <span class="cfg-label">Framing</span>
+              <span class="cfg-label" data-i18n="cfg.framing">Framing</span>
               <select id="cfg-framing">
-                <option value="upper">Atas (kepala + bahu)</option>
-                <option value="full">Penuh (seluruh badan)</option>
+                <option value="upper" data-i18n="cfg.framing.upper">Atas (kepala + bahu)</option>
+                <option value="full" data-i18n="cfg.framing.full">Penuh (seluruh badan)</option>
               </select>
             </label>
 
             <label class="cfg-row" for="cfg-tts-pitch">
-              <span class="cfg-label">Pitch suara</span>
+              <span class="cfg-label" data-i18n="cfg.pitch">Pitch suara</span>
               <input id="cfg-tts-pitch" type="range" min="0" max="2" step="0.05"
                 aria-describedby="cfg-hint" />
               <output id="cfg-tts-pitch-out" class="cfg-out" for="cfg-tts-pitch"></output>
             </label>
 
             <label class="cfg-row" for="cfg-tts-rate">
-              <span class="cfg-label">Kecepatan bicara</span>
+              <span class="cfg-label" data-i18n="cfg.rate">Kecepatan bicara</span>
               <input id="cfg-tts-rate" type="range" min="0.5" max="2" step="0.05"
                 aria-describedby="cfg-hint" />
               <output id="cfg-tts-rate-out" class="cfg-out" for="cfg-tts-rate"></output>
             </label>
 
             <label class="cfg-row" for="cfg-tts-lang">
-              <span class="cfg-label">Bahasa suara</span>
+              <span class="cfg-label" data-i18n="cfg.voiceLang">Bahasa suara</span>
               <select id="cfg-tts-lang">
-                <option value="id-ID">Indonesia (id-ID)</option>
-                <option value="ja-JP">Jepang (ja-JP)</option>
-                <option value="en-US">Inggris (en-US)</option>
-                <option value="zh-CN">Mandarin (zh-CN)</option>
+                <option value="id-ID" data-i18n="cfg.ttsLang.id">Indonesia (id-ID)</option>
+                <option value="ja-JP" data-i18n="cfg.ttsLang.ja">Jepang (ja-JP)</option>
+                <option value="en-US" data-i18n="cfg.ttsLang.en">Inggris (en-US)</option>
+                <option value="zh-CN" data-i18n="cfg.ttsLang.zh">Mandarin (zh-CN)</option>
               </select>
             </label>
 
             <!-- Mesin suara (TTS): browser / API eksternal. Global (config.json), bukan per-model -->
-            <div class="section-title">Mesin Suara (TTS)</div>
+            <div class="section-title" data-i18n="cfg.ttsTitle">Mesin Suara (TTS)</div>
             <label class="cfg-row" for="cfg-tts-provider">
-              <span class="cfg-label">Provider</span>
+              <span class="cfg-label" data-i18n="cfg.provider">Provider</span>
               <select id="cfg-tts-provider">
-                <option value="browser">Browser (Web Speech)</option>
-                <option value="gradio">Gradio Space</option>
-                <option value="openai">OpenAI-compatible (/v1/audio/speech)</option>
-                <option value="elevenlabs">ElevenLabs</option>
-                <option value="gemini">Google Gemini TTS</option>
-                <option value="custom">API Kustom</option>
+                <option value="browser" data-i18n="cfg.prov.browser">Browser (Web Speech)</option>
+                <option value="gradio" data-i18n="cfg.prov.gradio">Gradio Space</option>
+                <option value="openai" data-i18n="cfg.prov.openai">OpenAI-compatible (/v1/audio/speech)</option>
+                <option value="elevenlabs" data-i18n="cfg.prov.elevenlabs">ElevenLabs</option>
+                <option value="gemini" data-i18n="cfg.prov.gemini">Google Gemini TTS</option>
+                <option value="custom" data-i18n="cfg.prov.custom">API Kustom</option>
               </select>
             </label>
             <label class="cfg-row tts-remote-row tts-endpoint-row" for="cfg-tts-endpoint">
-              <span class="cfg-label">Endpoint</span>
+              <span class="cfg-label" data-i18n="cfg.endpoint">Endpoint</span>
               <input id="cfg-tts-endpoint" type="text" maxlength="300"
-                placeholder="mis. http://127.0.0.1:7860" aria-describedby="cfg-tts-hint" />
+                data-i18n-ph="cfg.endpointPh" placeholder="mis. http://127.0.0.1:7860" aria-describedby="cfg-tts-hint" />
             </label>
             <label class="cfg-row tts-key-row" for="cfg-tts-key">
-              <span class="cfg-label">API Key</span>
+              <span class="cfg-label" data-i18n="cfg.apiKey">API Key</span>
               <input id="cfg-tts-key" type="password" maxlength="200"
-                placeholder="kosongkan bila tidak perlu" aria-describedby="cfg-tts-hint" />
+                data-i18n-ph="cfg.apiKeyPh" placeholder="kosongkan bila tidak perlu" aria-describedby="cfg-tts-hint" />
             </label>
             <label class="cfg-row tts-remote-row" for="cfg-tts-voice">
-              <span class="cfg-label">Voice</span>
+              <span class="cfg-label" data-i18n="cfg.voice">Voice</span>
               <span class="cfg-inline">
                 <select id="cfg-tts-voice" aria-describedby="cfg-tts-hint"></select>
                 <input id="cfg-tts-voice-free" type="text" maxlength="120" hidden
-                  placeholder="id voice / nama bebas" aria-describedby="cfg-tts-hint" />
+                  data-i18n-ph="cfg.voicePh" placeholder="id voice / nama bebas" aria-describedby="cfg-tts-hint" />
               </span>
             </label>
             <label class="cfg-row tts-remote-row" for="cfg-tts-model">
-              <span class="cfg-label">Model</span>
+              <span class="cfg-label" data-i18n="cfg.modelLabel">Model</span>
               <span class="cfg-inline">
                 <select id="cfg-tts-model" aria-describedby="cfg-tts-hint"></select>
                 <input id="cfg-tts-model-free" type="text" maxlength="120" hidden
-                  placeholder="id model / nama bebas" aria-describedby="cfg-tts-hint" />
+                  data-i18n-ph="cfg.modelPh" placeholder="id model / nama bebas" aria-describedby="cfg-tts-hint" />
               </span>
             </label>
             <label class="cfg-row tts-style-row" for="cfg-tts-style">
-              <span class="cfg-label">Gaya bicara</span>
+              <span class="cfg-label" data-i18n="cfg.style">Gaya bicara</span>
               <span class="cfg-inline">
                 <select id="cfg-tts-style-pick" aria-describedby="cfg-tts-hint">
-                  <option value="">(default / netral)</option>
+                  <option value="" data-i18n="cfg.styleDefault">(default / netral)</option>
                 </select>
                 <input id="cfg-tts-style" type="text" maxlength="300" hidden
-                  placeholder="mis. Bicara ceria dengan aksen Jawa" aria-describedby="cfg-tts-hint" />
+                  data-i18n-ph="cfg.stylePh" placeholder="mis. Bicara ceria dengan aksen Jawa" aria-describedby="cfg-tts-hint" />
               </span>
             </label>
-            <p class="hint" id="cfg-tts-hint">
+            <p class="hint" id="cfg-tts-hint" data-i18n-html="cfg.ttsHint">
               Browser = suara bawaan sistem. Gradio = perilaku lama (endpoint space).
               OpenAI-compatible = endpoint base, dipanggil di &lt;endpoint&gt;/v1/audio/speech — voice/model
               otomatis ditarik dari server bila mendukung. Gemini &amp; ElevenLabs = cukup API key;
@@ -353,37 +369,37 @@
             </p>
 
             <div class="note-row">
-              <button id="btn-save-cfg" class="mini-btn">Simpan Pengaturan</button>
-              <button id="btn-test-voice" class="mini-btn">Tes Suara</button>
+              <button id="btn-save-cfg" class="mini-btn" data-i18n="cfg.saveSettings">Simpan Pengaturan</button>
+              <button id="btn-test-voice" class="mini-btn" data-i18n="cfg.testVoice">Tes Suara</button>
               <span id="cfg-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
-            <p class="hint" id="cfg-hint">Disimpan per-model di dalam character sheet. Pitch &amp; kecepatan langsung terasa saat karakter bicara.</p>
+            <p class="hint" id="cfg-hint" data-i18n="cfg.cfgHint">Disimpan per-model di dalam character sheet. Pitch &amp; kecepatan langsung terasa saat karakter bicara.</p>
           </div>
 
           <!-- Latar panggung per-model: warna, gambar, atau keduanya. -->
-          <div class="section-title">Latar Panggung</div>
+          <div class="section-title" data-i18n="cfg.bgTitle">Latar Panggung</div>
           <div class="cfg-box" id="bg-box">
             <label class="cfg-row" for="cfg-bg-color">
-              <span class="cfg-label">Warna</span>
+              <span class="cfg-label" data-i18n="cfg.bgColor">Warna</span>
               <span class="cfg-inline">
                 <input id="cfg-bg-color" type="color" value="#0d0d10" class="cfg-swatch" />
-                <button id="btn-bg-reset" class="mini-btn ms-small" title="Kembali ke latar default">Reset</button>
+                <button id="btn-bg-reset" class="mini-btn ms-small" data-i18n-title="cfg.resetTip" data-i18n="cfg.reset">Reset</button>
               </span>
             </label>
             <label class="cfg-row" for="cfg-bg-file">
-              <span class="cfg-label">Gambar</span>
+              <span class="cfg-label" data-i18n="cfg.bgImage">Gambar</span>
               <span class="cfg-inline">
                 <input id="cfg-bg-file" type="file" accept="image/*" hidden />
-                <button id="btn-bg-pick" class="mini-btn ms-small">Pilih Gambar…</button>
-                <button id="btn-bg-clear" class="mini-btn ms-small" title="Hapus gambar latar">Hapus</button>
+                <button id="btn-bg-pick" class="mini-btn ms-small" data-i18n="cfg.pickImage">Pilih Gambar…</button>
+                <button id="btn-bg-clear" class="mini-btn ms-small" data-i18n-title="cfg.removeTip" data-i18n="cfg.remove">Hapus</button>
               </span>
             </label>
             <label class="cfg-row" for="cfg-bg-dim">
-              <span class="cfg-label">Redup gambar</span>
+              <span class="cfg-label" data-i18n="cfg.bgDim">Redup gambar</span>
               <input id="cfg-bg-dim" type="range" min="0" max="0.9" step="0.05" />
               <output id="cfg-bg-dim-out" class="cfg-out" for="cfg-bg-dim"></output>
             </label>
-            <p class="hint">Gambar disimpan di dalam character sheet (data-URL, per-model). Latar gelap membuat karakter menonjol — atur redupnya kalau terlalu terang.</p>
+            <p class="hint" data-i18n="cfg.bgHint">Gambar disimpan di dalam character sheet (data-URL, per-model). Latar gelap membuat karakter menonjol — atur redupnya kalau terlalu terang.</p>
           </div>
         </div>
 
@@ -392,51 +408,51 @@
              Tanpa dia, hasil analisa AI cuma menumpuk di sheets/*.json tanpa
              pernah bisa dipakai atau ditolak user. -->
         <div class="tab-pane" data-pane="sheet">
-          <div class="section-title">Character Sheet</div>
+          <div class="section-title" data-i18n="sheet.title">Character Sheet</div>
           <div id="sheet-summary" class="sheet-summary">
-            <p class="hint">Belum ada sheet. Buka tab Model → <b>Inspeksi Model</b> dulu.</p>
+            <p class="hint" data-i18n-html="sheet.empty">Belum ada sheet. Buka tab Model → <b>Inspeksi Model</b> dulu.</p>
           </div>
 
             <!-- Penjelasan per-parameter (user-authored). Field params[i].userNote.
                Dibuka sebagai popup mengambang di sisi kanan via tombol di bawah,
                supaya tidak menutupi model di stage kiri. Menampilkan SEMUA
                param + part dengan slider live + textarea deskripsi. -->
-          <div class="section-title">Penjelasan Parameter</div>
+          <div class="section-title" data-i18n="sheet.paramNotesTitle">Penjelasan Parameter</div>
           <div class="note-row">
-            <button id="btn-open-paramnotes" class="mini-btn">Jelaskan Parameter</button>
+            <button id="btn-open-paramnotes" class="mini-btn" data-i18n="sheet.openParamNotes">Jelaskan Parameter</button>
             <span id="paramnotes-open-status" class="note-status"></span>
           </div>
 
           <!-- Daftar preset per kategori. Entri user dan saran AI tampil
                berdampingan; yang AI diberi badge supaya asalnya jelas. -->
-          <div class="section-title">Preset</div>
-          <div class="sheet-cats" id="sheet-cats" role="tablist" aria-label="Kategori preset"></div>
+          <div class="section-title" data-i18n="sheet.presetTitle">Preset</div>
+          <div class="sheet-cats" id="sheet-cats" role="tablist" data-i18n-aria="sheet.catsAria" aria-label="Kategori preset"></div>
           <div id="sheet-preset-list" class="preset-list"></div>
           <div class="note-row">
-            <button id="btn-sheet-analyze" class="mini-btn">Analisa AI</button>
+            <button id="btn-sheet-analyze" class="mini-btn" data-i18n="sheet.analyze">Analisa AI</button>
             <span id="sheet-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <div class="note-row">
-            <button id="btn-sheet-reload-file" class="mini-btn">Muat Ulang dari File</button>
+            <button id="btn-sheet-reload-file" class="mini-btn" data-i18n="sheet.reloadFile">Muat Ulang dari File</button>
             <span id="reload-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
-          <p class="hint">Saran AI aktif setelah kamu tekan <b>Pakai</b>; preset milikmu selalu menang.</p>
+          <p class="hint" data-i18n-html="sheet.hint">Saran AI aktif setelah kamu tekan <b>Pakai</b>; preset milikmu selalu menang.</p>
 
           <!-- Editor preset dipindah ke popup mengambang (#preset-editor-popup)
                supaya tampilannya seragam dengan Jelaskan Parameter. -->
           <div class="note-row">
-            <button id="btn-open-preset-editor" class="mini-btn">Editor Preset</button>
+            <button id="btn-open-preset-editor" class="mini-btn" data-i18n="sheet.presetEditor">Editor Preset</button>
           </div>
 
           <!-- Ekspresi teradopsi (opt-out).
                Menampilkan .exp3 yatim yang diadopsi otomatis, dengan checkbox
                untuk mematikan adopsi per-file. Data dari GET /api/model/expressions-adoption. -->
-          <div class="section-title">Ekspresi</div>
+          <div class="section-title" data-i18n="sheet.exprTitle">Ekspresi</div>
           <div class="cfg-box" id="adoption-box">
-            <p class="hint">File .exp3 di folder model yang lupa didaftarkan di model3.json diadopsi otomatis agar tidak mati. Matikan yang tak perlu.</p>
+            <p class="hint" data-i18n="sheet.adoptionHint">File .exp3 di folder model yang lupa didaftarkan di model3.json diadopsi otomatis agar tidak mati. Matikan yang tak perlu.</p>
             <div id="adoption-list" class="preset-list"></div>
             <div class="note-row">
-              <button id="btn-adoption-save" class="mini-btn">Simpan Pilihan</button>
+              <button id="btn-adoption-save" class="mini-btn" data-i18n="sheet.saveAdoption">Simpan Pilihan</button>
               <span id="adoption-status" class="note-status" role="status" aria-live="polite"></span>
             </div>
           </div>
@@ -448,93 +464,93 @@
              tidak menutupi model di stage kiri — sama seperti
              Jelaskan Parameter & Editor Preset. -->
         <div class="tab-pane" data-pane="motion">
-          <div class="section-title">Motion Studio</div>
-          <p class="hint">Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b>
+          <div class="section-title" data-i18n="ms.title">Motion Studio</div>
+          <p class="hint" data-i18n-html="ms.paneHint">Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b>
             — kepala, tangan, rambut, alis, apa pun yang rig-nya punya. Simpan dengan
             deskripsi &amp; tag, lalu AI bisa memakainya saat ngobrol. Gerakan bawaan
             dan motion milik model tetap jalan seperti biasa.</p>
           <div class="note-row">
-            <button id="btn-open-motion-studio" class="mini-btn">Buka Motion Studio</button>
+            <button id="btn-open-motion-studio" class="mini-btn" data-i18n="ms.open">Buka Motion Studio</button>
             <span id="motion-open-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
 
-          <div class="section-title">Daftar Gerakan</div>
+          <div class="section-title" data-i18n="ms.listTitle">Daftar Gerakan</div>
           <div id="motion-registry-list" class="preset-list"></div>
-          <p class="hint">Sumber: <b>bawaan</b> = 9 gerakan aplikasi, <b>model</b> = motion dari
+          <p class="hint" data-i18n-html="ms.listHint">Sumber: <b>bawaan</b> = 9 gerakan aplikasi, <b>model</b> = motion dari
             file model, <b>milikmu</b> = hasil Motion Studio. Hanya milikmu yang bisa diedit/hapus.</p>
         </div>
 
         <!-- AI Connections (9router-style) -->
         <div class="tab-pane" data-pane="ai">
-          <div class="section-title">Koneksi AI
-            <button id="btn-add-conn" class="mini-btn" title="Tambah connection">＋</button>
+          <div class="section-title"><span data-i18n="cfg.connTitle">Koneksi AI</span>
+            <button id="btn-add-conn" class="mini-btn" data-i18n-title="cfg.addConnTip">＋</button>
           </div>
           <div id="conn-list" class="conn-list"></div>
-          <div class="conn-hint">Router otomatis pakai connection <b>Active</b>; kalau gagal (quota/limit) fallback ke berikutnya.</div>
+          <div class="conn-hint" data-i18n-html="cfg.connHint">Router otomatis pakai connection <b>Active</b>; kalau gagal (quota/limit) fallback ke berikutnya.</div>
 
           <!-- Kamera reaktif (opt-in).
                Modul js/camera-presence.js sudah lengkap sejak awal, tapi checkbox
                ini tidak pernah ada di markup: `getElementById('useCamera')` selalu
                null, jadi start() tak pernah bisa dipanggil user. Ini kontrolnya. -->
-          <div class="section-title">Kamera</div>
+          <div class="section-title" data-i18n="cfg.cameraTitle">Kamera</div>
           <div class="cfg-box">
             <div class="cfg-check-inline">
               <label class="cfg-check" for="use-camera">
                 <input type="checkbox" id="use-camera" aria-describedby="camera-hint" />
-                Pakai kamera (deteksi hadir &amp; mood)
+                <span data-i18n="cfg.useCamera">Pakai kamera (deteksi hadir &amp; mood)</span>
               </label>
-              <span id="camera-status" class="note-status" role="status" aria-live="polite">mati</span>
+              <span id="camera-status" class="note-status" role="status" aria-live="polite" data-i18n="cfg.camOff">mati</span>
             </div>
-            <p class="hint" id="camera-hint">Semua inferensi jalan di browser — frame kamera tidak pernah dikirim ke mana pun. Saat mati, kehadiran ditebak dari fokus/visibilitas tab.</p>
+            <p class="hint" id="camera-hint" data-i18n="cfg.cameraHint">Semua inferensi jalan di browser — frame kamera tidak pernah dikirim ke mana pun. Saat mati, kehadiran ditebak dari fokus/visibilitas tab.</p>
           </div>
         </div>
 
         <!-- Kelakuan (Behaviour).
              User bisa atur masa tenang / idle lewat profil atau slider mentah,
              tanpa menyentuh config.json manual. Aksi mengupdate EVENTS live + persist. -->
-        <div class="section-title">Kelakuan</div>
+        <div class="section-title" data-i18n="beh.title">Kelakuan</div>
         <div class="cfg-box" id="behaviour-box">
-          <p class="hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
+          <p class="hint" data-i18n="beh.hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
             Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.</p>
           <div class="behaviour-profiles">
-            <button class="mini-btn profil" data-profil="hidup">Hidup</button>
-            <button class="mini-btn profil" data-profil="sedang">Sedang</button>
-            <button class="mini-btn profil" data-profil="tenang">Tenang</button>
+            <button class="mini-btn profil" data-profil="hidup" data-i18n="beh.profil.hidup">Hidup</button>
+            <button class="mini-btn profil" data-profil="sedang" data-i18n="beh.profil.sedang">Sedang</button>
+            <button class="mini-btn profil" data-profil="tenang" data-i18n="beh.profil.tenang">Tenang</button>
           </div>
           <div class="note-row">
             <span id="behaviour-profil-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
 
           <div class="cfg-checks">
-            <label class="cfg-check"><input type="checkbox" id="beh-idleSpeak" /> <span>Bicara saat diam (idle)</span></label>
-            <label class="cfg-check"><input type="checkbox" id="beh-awaySpeak" /> <span>Bicara saat kamu pergi</span></label>
-            <label class="cfg-check"><input type="checkbox" id="beh-returnSpeak" /> <span>Sapa saat kamu balik</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-idleSpeak" /> <span data-i18n="beh.idleSpeak">Bicara saat diam (idle)</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-awaySpeak" /> <span data-i18n="beh.awaySpeak">Bicara saat kamu pergi</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-returnSpeak" /> <span data-i18n="beh.returnSpeak">Sapa saat kamu balik</span></label>
           </div>
 
           <details class="beh-advanced">
-            <summary>Mode lanjutan (angka mentah)</summary>
+            <summary data-i18n="beh.advanced">Mode lanjutan (angka mentah)</summary>
             <label class="cfg-row" for="beh-quietMs">
-              <span class="cfg-label">Masa tenang awal</span>
+              <span class="cfg-label" data-i18n="beh.quietMs">Masa tenang awal</span>
               <input type="range" id="beh-quietMs" min="0" max="600000" step="1000" />
               <output id="beh-quietMs-out" class="cfg-out"></output>
             </label>
             <label class="cfg-row" for="beh-idleMs">
-              <span class="cfg-label">Tunggu sebelum idle</span>
+              <span class="cfg-label" data-i18n="beh.idleMs">Tunggu sebelum idle</span>
               <input type="range" id="beh-idleMs" min="5000" max="600000" step="1000" />
               <output id="beh-idleMs-out" class="cfg-out"></output>
             </label>
             <label class="cfg-row" for="beh-idleRepeatMs">
-              <span class="cfg-label">Ulangi tiap</span>
+              <span class="cfg-label" data-i18n="beh.idleRepeatMs">Ulangi tiap</span>
               <input type="range" id="beh-idleRepeatMs" min="10000" max="600000" step="1000" />
               <output id="beh-idleRepeatMs-out" class="cfg-out"></output>
             </label>
           </details>
 
           <div class="note-row">
-            <button id="btn-beh-save" class="mini-btn">Simpan Kelakuan</button>
+            <button id="btn-beh-save" class="mini-btn" data-i18n="beh.save">Simpan Kelakuan</button>
             <span id="beh-save-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
-          <p class="hint" id="beh-quiet-countdown">Masa tenang: —</p>
+          <p class="hint" id="beh-quiet-countdown" data-i18n="beh.quietCountdown">Masa tenang: —</p>
         </div>
 
       </div>
@@ -544,56 +560,56 @@
   <!-- § Connection editor modal -->
   <div id="conn-modal" class="modal hidden">
     <div class="modal-box">
-      <div class="modal-title">Connection</div>
+      <div class="modal-title" data-i18n="conn.title">Connection</div>
       <div class="api-form">
-        <label>Name
-          <input type="text" id="m-name" placeholder="mis. dahl inference" />
+        <label><span data-i18n="conn.name">Name</span>
+          <input type="text" id="m-name" data-i18n-ph="conn.namePh" placeholder="mis. dahl inference" />
         </label>
-        <label>Provider
+        <label><span data-i18n="cfg.provider">Provider</span>
           <select id="m-provider">
-            <option value="openai-compatible">OpenAI-Compatible (router)</option>
-            <option value="gemini">Gemini</option>
-            <option value="groq">Groq</option>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="mock">Mock (tes lokal)</option>
+            <option value="openai-compatible" data-i18n="conn.prov.openaiCompat">OpenAI-Compatible (router)</option>
+            <option value="gemini" data-i18n="conn.prov.gemini">Gemini</option>
+            <option value="groq" data-i18n="conn.prov.groq">Groq</option>
+            <option value="openai" data-i18n="conn.prov.openai">OpenAI</option>
+            <option value="anthropic" data-i18n="conn.prov.anthropic">Anthropic</option>
+            <option value="mock" data-i18n="conn.prov.mock">Mock (tes lokal)</option>
           </select>
         </label>
-        <label>Base URL
+        <label><span data-i18n="conn.baseUrl">Base URL</span>
           <input type="text" id="m-baseurl" placeholder="https://inference.dahl.global/v1" />
         </label>
-        <label>API Key
-          <input type="password" id="m-apikey" placeholder="isi api key" autocomplete="off" />
+        <label><span data-i18n="cfg.apiKey">API Key</span>
+          <input type="password" id="m-apikey" data-i18n-ph="conn.apiKeyPh" placeholder="isi api key" autocomplete="off" />
         </label>
-        <label>Model
+        <label><span data-i18n="cfg.modelLabel">Model</span>
           <input type="text" id="m-model" placeholder="MiniMaxAI/MiniMax-M2.7" />
         </label>
-        <label>System Prompt
-          <span class="form-hint">Instruksi teknis untuk sambungan INI (semua peran yang memakainya) — mis. gaya jawaban, format, bahasa. Persona karakter jangan di sini: pakai Catatan Karakter (tab Model) yang per-model.</span>
-          <textarea id="m-system" rows="2" placeholder="mis. Jawab singkat dalam bahasa Indonesia."></textarea>
+        <label><span data-i18n="conn.systemPrompt">System Prompt</span>
+          <span class="form-hint" data-i18n="conn.systemHint">Instruksi teknis untuk sambungan INI (semua peran yang memakainya) — mis. gaya jawaban, format, bahasa. Persona karakter jangan di sini: pakai Catatan Karakter (tab Model) yang per-model.</span>
+          <textarea id="m-system" rows="2" data-i18n-ph="conn.systemPh" placeholder="mis. Jawab singkat dalam bahasa Indonesia."></textarea>
         </label>
-        <label>Max Tokens &amp; Temperature
-          <span class="form-hint">Kosong = default (2048 &amp; 0.8). Model reasoning butuh lebih besar (mis. 8192) supaya jawaban tak terpotong sebelum reasoning-nya selesai.</span>
+        <label><span data-i18n="conn.maxTokTitle">Max Tokens &amp; Temperature</span>
+          <span class="form-hint" data-i18n="conn.maxTokHint">Kosong = default (2048 &amp; 0.8). Model reasoning butuh lebih besar (mis. 8192) supaya jawaban tak terpotong sebelum reasoning-nya selesai.</span>
           <span class="cfg-pair">
             <input type="number" id="m-maxtokens" min="64" max="200000" step="1" placeholder="2048" />
             <input type="number" id="m-temp" min="0" max="2" step="0.1" placeholder="0.8" />
           </span>
         </label>
         <label class="cfg-check">
-          <input type="checkbox" id="m-stream" /> <span>Stream mode — untuk gateway yang memotong generasi lambat</span>
+          <input type="checkbox" id="m-stream" /> <span data-i18n="conn.stream">Stream mode — untuk gateway yang memotong generasi lambat</span>
         </label>
-        <label>Peran (roles)
-          <span class="form-hint">Kosongkan semua = connection ini boleh dipakai untuk semua peran.</span>
+        <label><span data-i18n="conn.roles">Peran (roles)</span>
+          <span class="form-hint" data-i18n="conn.rolesHint">Kosongkan semua = connection ini boleh dipakai untuk semua peran.</span>
         </label>
         <div class="cfg-checks" id="m-roles">
-          <label class="cfg-check"><input type="checkbox" value="chat" /> <span>chat (teks balasan)</span></label>
-          <label class="cfg-check"><input type="checkbox" value="motion" /> <span>motion (gerak &amp; ekspresi)</span></label>
-          <label class="cfg-check"><input type="checkbox" value="sheet" /> <span>sheet (analisa parameter)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="chat" /> <span data-i18n="conn.role.chat">chat (teks balasan)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="motion" /> <span data-i18n="conn.role.motion">motion (gerak &amp; ekspresi)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="sheet" /> <span data-i18n="conn.role.sheet">sheet (analisa parameter)</span></label>
         </div>
       </div>
       <div class="modal-actions">
-        <button id="m-save">Simpan</button>
-        <button id="m-cancel">Batal</button>
+        <button id="m-save" data-i18n="conn.save">Simpan</button>
+        <button id="m-cancel" data-i18n="conn.cancel">Batal</button>
       </div>
     </div>
   </div>
@@ -602,26 +618,26 @@
   <div id="loader">
     <div class="loader-inner">
       <div class="loader-spinner"></div>
-      <p>Memuat model...</p>
+      <p data-i18n="sys.loader.model">Memuat model...</p>
     </div>
   </div>
 
   <!-- § Popup Penjelasan Parameter (mengambang di sisi kanan, tidak menutupi model) -->
   <div id="paramnotes-popup" class="pn-popup hidden" aria-hidden="true">
     <div class="pn-popup-head">
-      <span class="pn-popup-title">Penjelasan Parameter</span>
-      <button id="pn-popup-close" class="pn-popup-x" title="Tutup">✕</button>
+      <span class="pn-popup-title" data-i18n="sheet.paramNotesTitle">Penjelasan Parameter</span>
+      <button id="pn-popup-close" class="pn-popup-x" data-i18n-title="sys.closeTip">✕</button>
     </div>
-    <div class="pn-popup-sub">
+    <div class="pn-popup-sub" data-i18n="pn.sub">
       Geser slider untuk melihat efeknya langsung di model. Saat kamu menggeser,
       gerak idle & mouse-follow dibekukan; setelah 10 dtk tidak digeser, gerak
       idle kembali mulus.
     </div>
     <div class="pn-popup-actions">
-      <button id="pn-save-all" class="mini-btn">Simpan Catatan</button>
+      <button id="pn-save-all" class="mini-btn" data-i18n="cfg.saveNote">Simpan Catatan</button>
       <span id="pn-save-status" class="note-status" role="status" aria-live="polite"></span>
     </div>
-    <input id="pn-search" class="pn-search" type="search" placeholder="Cari param / label / catatan…" autocomplete="off">
+    <input id="pn-search" class="pn-search" type="search" data-i18n-ph="pn.searchPh" placeholder="Cari param / label / catatan…" autocomplete="off">
     <div id="pn-countdown" class="pn-countdown"></div>
     <div id="paramnotes-popup-list" class="paramnotes-list"></div>
   </div>
@@ -629,21 +645,21 @@
   <!-- § Popup Editor Preset (mengambang di sisi kanan, serupa dengan Jelaskan Parameter) -->
   <div id="preset-editor-popup" class="pn-popup hidden" aria-hidden="true">
     <div class="pn-popup-head">
-      <span class="pn-popup-title">Editor Preset</span>
-      <button id="preset-editor-close" class="pn-popup-x" title="Tutup">✕</button>
+      <span class="pn-popup-title" data-i18n="sheet.presetEditor">Editor Preset</span>
+      <button id="preset-editor-close" class="pn-popup-x" data-i18n-title="sys.closeTip">✕</button>
     </div>
-    <div class="pn-popup-sub">
+    <div class="pn-popup-sub" data-i18n="pe.sub">
       Susun pose preset lewat slider. Geser slider → langsung terlihat di model &amp; tersimpan ke draft.
       Saat mengedit, model dibekukan sepenuhnya (tanpa idle / blink / napas); bekuan lepas setelah Simpan / Kosongkan / Terap / Tutup.
     </div>
     <div class="preset-editor-body">
       <div class="cfg-box">
         <label class="cfg-row" for="preset-name">
-          <span class="cfg-label">Nama</span>
-          <input id="preset-name" type="text" maxlength="60" placeholder="mis. Senang, Kacamata, Melambai" />
+          <span class="cfg-label" data-i18n="pe.name">Nama</span>
+          <input id="preset-name" type="text" maxlength="60" data-i18n-ph="pe.namePh" placeholder="mis. Senang, Kacamata, Melambai" />
         </label>
         <label class="cfg-row" for="preset-cat">
-          <span class="cfg-label">Kategori</span>
+          <span class="cfg-label" data-i18n="pe.category">Kategori</span>
           <select id="preset-cat">
             <option value="emosi">emosi</option>
             <option value="properti">properti</option>
@@ -652,24 +668,24 @@
           </select>
         </label>
         <div class="note-row">
-          <button id="btn-preset-capture" class="mini-btn">Ambil Pose Sekarang</button>
+          <button id="btn-preset-capture" class="mini-btn" data-i18n="pe.capture">Ambil Pose Sekarang</button>
           <span id="preset-capture-info" class="note-status"></span>
         </div>
         <div class="preset-sliders-wrap">
           <div class="note-row">
-            <span class="cfg-label">Atur Parameter</span>
+            <span class="cfg-label" data-i18n="pe.adjustParams">Atur Parameter</span>
             <span id="preset-freeze-info" class="note-status"></span>
           </div>
-          <p class="hint">Geser slider untuk menyusun pose preset secara bebas — muka, tubuh, maupun bagian. Perubahan langsung terlihat di model &amp; tersimpan ke draft. "Ambil Pose Sekarang" bisa dipakai untuk mulai dari pose live, lalu disempurnakan di sini.</p>
+          <p class="hint" data-i18n="pe.slidersHint">Geser slider untuk menyusun pose preset secara bebas — muka, tubuh, maupun bagian. Perubahan langsung terlihat di model &amp; tersimpan ke draft. "Ambil Pose Sekarang" bisa dipakai untuk mulai dari pose live, lalu disempurnakan di sini.</p>
           <div id="preset-param-sliders" class="param-sliders"></div>
         </div>
         <div id="preset-values" class="preset-values"></div>
         <div class="note-row">
-          <button id="btn-preset-save" class="mini-btn">Simpan Preset</button>
-          <button id="btn-preset-clear" class="mini-btn">Kosongkan</button>
+          <button id="btn-preset-save" class="mini-btn" data-i18n="pe.save">Simpan Preset</button>
+          <button id="btn-preset-clear" class="mini-btn" data-i18n="pe.clear">Kosongkan</button>
           <span id="preset-status" class="note-status" role="status" aria-live="polite"></span>
         </div>
-        <p class="hint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
+        <p class="hint" data-i18n-html="pe.gerakHint">Kategori <b>gerak</b> tidak boleh memakai nama motion bawaan model — kalau bentrok, akan ditolak dengan usulan nama lain.</p>
       </div>
     </div>
   </div>
@@ -680,10 +696,10 @@
        kedua, jadi apa yang kamu lihat saat edit persis yang dilihat AI. -->
   <div id="motion-studio-popup" class="pn-popup ms-popup hidden" aria-hidden="true">
     <div class="pn-popup-head">
-      <span class="pn-popup-title">Motion Studio</span>
-      <button id="motion-studio-close" class="pn-popup-x" title="Tutup">✕</button>
+      <span class="pn-popup-title" data-i18n="ms.title">Motion Studio</span>
+      <button id="motion-studio-close" class="pn-popup-x" data-i18n-title="sys.closeTip">✕</button>
     </div>
-    <div class="pn-popup-sub">
+    <div class="pn-popup-sub" data-i18n="ms.sub">
       Susun gerakan lewat keyframe. Tekan ▶ untuk melihatnya langsung di model.
       Saat mengedit, gerak idle dibekukan supaya pose terlihat apa adanya.
     </div>
@@ -691,30 +707,30 @@
     <div class="ms-body">
       <!-- Library + aksi berkas -->
       <div class="ms-lib-row">
-        <select id="ms-lib" aria-label="Daftar gerakan milikmu"></select>
-        <button id="ms-new" class="mini-btn ms-icon" title="Gerakan baru">＋</button>
-        <button id="ms-dup" class="mini-btn ms-icon" title="Duplikat">⧉</button>
-        <button id="ms-del" class="mini-btn ms-icon" title="Hapus">✕</button>
+        <select id="ms-lib" data-i18n-aria="ms.libAria" aria-label="Daftar gerakan milikmu"></select>
+        <button id="ms-new" class="mini-btn ms-icon" data-i18n-title="ms.newTip">＋</button>
+        <button id="ms-dup" class="mini-btn ms-icon" data-i18n-title="ms.dupTip">⧉</button>
+        <button id="ms-del" class="mini-btn ms-icon" data-i18n-title="ms.delTip">✕</button>
       </div>
 
       <!-- Transport -->
       <div class="ms-transport">
-        <button id="ms-play" class="mini-btn ms-icon" title="Putar (Space)">▶</button>
-        <button id="ms-stop" class="mini-btn ms-icon" title="Stop (Space)">■</button>
-        <label class="ms-loop"><input type="checkbox" id="ms-loop" /> loop</label>
-        <button id="ms-undo" class="mini-btn ms-icon" title="Undo (Ctrl+Z)">↶</button>
-        <button id="ms-redo" class="mini-btn ms-icon" title="Redo (Ctrl+Y)">↷</button>
+        <button id="ms-play" class="mini-btn ms-icon" data-i18n-title="ms.playTip">▶</button>
+        <button id="ms-stop" class="mini-btn ms-icon" data-i18n-title="ms.stopTip">■</button>
+        <label class="ms-loop"><input type="checkbox" id="ms-loop" /> <span data-i18n="ms.loop">loop</span></label>
+        <button id="ms-undo" class="mini-btn ms-icon" data-i18n-title="ms.undoTip">↶</button>
+        <button id="ms-redo" class="mini-btn ms-icon" data-i18n-title="ms.redoTip">↷</button>
         <span id="ms-time" class="ms-time">0.00s</span>
       </div>
 
       <!-- Workspace: kiri = pustaka parameter (selalu terlihat),
            kanan = timeline sebagai pusat kerja. -->
       <div class="ms-workspace">
-        <aside class="ms-params-panel" aria-label="Tambah track parameter">
-          <div class="ms-panel-title">Track Parameter</div>
+        <aside class="ms-params-panel" data-i18n-aria="ms.addTrackAria" aria-label="Tambah track parameter">
+          <div class="ms-panel-title" data-i18n="ms.trackTitle">Track Parameter</div>
           <div class="ms-param-search-row">
-            <input type="search" id="ms-param-search" placeholder="cari parameter… (mis. hair, arm, brow)" aria-label="Cari parameter" />
-            <select id="ms-param-group" aria-label="Filter kategori"><option value="">semua kategori</option></select>
+            <input type="search" id="ms-param-search" data-i18n-ph="ms.searchPh" data-i18n-aria="ms.searchAria" placeholder="cari parameter… (mis. hair, arm, brow)" aria-label="Cari parameter" />
+            <select id="ms-param-group" data-i18n-aria="ms.filterAria" aria-label="Filter kategori"><option value="" data-i18n="ms.allCats">semua kategori</option></select>
           </div>
           <div id="ms-param-list" class="ms-param-list"></div>
           <p class="hint" id="ms-param-count"></p>
@@ -723,94 +739,94 @@
         <div class="ms-stage">
           <!-- Timeline: satu baris per parameter yang ditambahkan -->
           <div class="ms-timeline-wrap">
-            <div class="ms-ruler" id="ms-ruler" title="Klik/seret untuk menggeser waktu"></div>
+            <div class="ms-ruler" id="ms-ruler" data-i18n-title="ms.rulerTip"></div>
             <div id="ms-tracks" class="ms-tracks"></div>
-            <p class="hint" id="ms-tracks-empty">Belum ada track. Pilih parameter di panel <b>Track Parameter</b> di kiri.</p>
+            <p class="hint" id="ms-tracks-empty" data-i18n-html="ms.tracksEmpty">Belum ada track. Pilih parameter di panel <b>Track Parameter</b> di kiri.</p>
             <div class="ms-scrub-row">
-              <input type="range" id="ms-scrub" min="0" max="1000" value="0" aria-label="Geser waktu" />
+              <input type="range" id="ms-scrub" min="0" max="1000" value="0" data-i18n-aria="ms.scrubAria" aria-label="Geser waktu" />
             </div>
           </div>
 
           <!-- Editor keyframe terpilih — strip kompak, selalu di bawah timeline -->
           <div class="cfg-box ms-keybox" id="ms-key-box">
             <div class="ms-key-row">
-              <span class="cfg-label" id="ms-key-label">Belum ada keyframe dipilih</span>
+              <span class="cfg-label" id="ms-key-label" data-i18n="ms.noKeySel">Belum ada keyframe dipilih</span>
               <span id="ms-key-range" class="ms-range-hint"></span>
             </div>
             <div class="ms-key-row">
-              <label class="ms-kfield">Waktu
+              <label class="ms-kfield"><span data-i18n="ms.time">Waktu</span>
                 <input type="number" id="ms-key-t" step="0.05" min="0" />
               </label>
-              <label class="ms-kfield ms-kfield-wide">Nilai
+              <label class="ms-kfield ms-kfield-wide"><span data-i18n="ms.value">Nilai</span>
                 <input type="range" id="ms-key-v" step="0.01" />
                 <output id="ms-key-v-out" class="cfg-out"></output>
               </label>
-              <label class="ms-kfield">Angka
+              <label class="ms-kfield"><span data-i18n="ms.number">Angka</span>
                 <input type="number" id="ms-key-v-num" step="0.01" />
               </label>
-              <label class="ms-kfield">Easing
+              <label class="ms-kfield"><span data-i18n="ms.easing">Easing</span>
                 <select id="ms-key-easing">
                   <option value="linear">linear</option>
                   <option value="ease-in">ease-in</option>
                   <option value="ease-out">ease-out</option>
                   <option value="ease-in-out">ease-in-out</option>
-                  <option value="stepped">stepped (patah)</option>
+                  <option value="stepped" data-i18n="ms.easingStepped">stepped (patah)</option>
                 </select>
               </label>
               <div class="ms-key-btns">
-                <button id="ms-key-add" class="mini-btn ms-small">+ Key di Sini</button>
-                <button id="ms-key-dupe" class="mini-btn ms-small">Duplikat</button>
-                <button id="ms-key-copy" class="mini-btn ms-small">Copy</button>
-                <button id="ms-key-paste" class="mini-btn ms-small">Paste</button>
-                <button id="ms-key-del" class="mini-btn ms-small">Hapus</button>
+                <button id="ms-key-add" class="mini-btn ms-small" data-i18n="ms.keyAdd">+ Key di Sini</button>
+                <button id="ms-key-dupe" class="mini-btn ms-small" data-i18n="ms.keyDupe">Duplikat</button>
+                <button id="ms-key-copy" class="mini-btn ms-small" data-i18n="ms.keyCopy">Copy</button>
+                <button id="ms-key-paste" class="mini-btn ms-small" data-i18n="ms.keyPaste">Paste</button>
+                <button id="ms-key-del" class="mini-btn ms-small" data-i18n="ms.keyDel">Hapus</button>
               </div>
             </div>
-            <p class="hint">Klik lane = geser playhead · <b>klik dua kali lane = tambah keyframe</b> · seret key = pindah waktu, naik/turun = ubah nilai (Shift = tanpa snap) · Space = putar · Delete = hapus key terpilih.</p>
+            <p class="hint" data-i18n-html="ms.keyHint">Klik lane = geser playhead · <b>klik dua kali lane = tambah keyframe</b> · seret key = pindah waktu, naik/turun = ubah nilai (Shift = tanpa snap) · Space = putar · Delete = hapus key terpilih.</p>
           </div>
 
           <!-- Metadata (Fase 4) — ditutup default: menyusun gerak dulu, Label belakangan -->
           <details class="ms-meta" id="ms-meta">
-            <summary>Info &amp; Kecocokan Emosi</summary>
+            <summary data-i18n="ms.metaTitle">Info &amp; Kecocokan Emosi</summary>
         <div class="cfg-box">
           <label class="cfg-row" for="ms-name">
-            <span class="cfg-label">Nama</span>
-            <input id="ms-name" type="text" maxlength="60" placeholder="mis. Malu Menunduk" />
+            <span class="cfg-label" data-i18n="pe.name">Nama</span>
+            <input id="ms-name" type="text" maxlength="60" data-i18n-ph="ms.namePh" placeholder="mis. Malu Menunduk" />
           </label>
           <label class="cfg-row" for="ms-id">
-            <span class="cfg-label">ID</span>
+            <span class="cfg-label" data-i18n="ms.id">ID</span>
             <input id="ms-id" type="text" maxlength="60" placeholder="shy_look_away" />
           </label>
           <label class="cfg-row ms-col" for="ms-desc">
-            <span class="cfg-label">Deskripsi (dibaca AI)</span>
-            <textarea id="ms-desc" rows="2" placeholder="Menundukkan kepala lalu mengalihkan pandangan."></textarea>
+            <span class="cfg-label" data-i18n="ms.desc">Deskripsi (dibaca AI)</span>
+            <textarea id="ms-desc" rows="2" data-i18n-ph="ms.descPh" placeholder="Menundukkan kepala lalu mengalihkan pandangan."></textarea>
           </label>
           <label class="cfg-row" for="ms-tags">
-            <span class="cfg-label">Tag</span>
-            <input id="ms-tags" type="text" placeholder="malu, lucu, canggung" />
+            <span class="cfg-label" data-i18n="ms.tags">Tag</span>
+            <input id="ms-tags" type="text" data-i18n-ph="ms.tagsPh" placeholder="malu, lucu, canggung" />
           </label>
           <label class="cfg-row" for="ms-duration">
-            <span class="cfg-label">Durasi (s)</span>
+            <span class="cfg-label" data-i18n="ms.duration">Durasi (s)</span>
             <input id="ms-duration" type="number" min="0.1" max="20" step="0.1" />
           </label>
 
-          <div class="note-row"><span class="cfg-label">Cocok untuk emosi</span></div>
+          <div class="note-row"><span class="cfg-label" data-i18n="ms.fitEmotion">Cocok untuk emosi</span></div>
           <div id="ms-emo-list" class="ms-emo-list"></div>
 
           <label class="cfg-row" for="ms-intensity-def">
-            <span class="cfg-label">Intensitas default</span>
+            <span class="cfg-label" data-i18n="ms.intensity">Intensitas default</span>
             <input type="range" id="ms-intensity-def" min="0" max="1" step="0.05" />
             <output id="ms-intensity-def-out" class="cfg-out"></output>
           </label>
           <label class="cfg-row" for="ms-cooldown">
-            <span class="cfg-label">Cooldown (ms)</span>
+            <span class="cfg-label" data-i18n="ms.cooldown">Cooldown (ms)</span>
             <input id="ms-cooldown" type="number" min="0" max="600000" step="500" />
           </label>
           <label class="cfg-row" for="ms-priority">
-            <span class="cfg-label">Prioritas</span>
+            <span class="cfg-label" data-i18n="ms.priority">Prioritas</span>
             <input id="ms-priority" type="number" min="0" max="100" step="5" />
           </label>
-          <label class="cfg-check"><input type="checkbox" id="ms-ai-enabled" /> <span>Boleh dipakai AI saat ngobrol</span></label>
-          <label class="cfg-check"><input type="checkbox" id="ms-loop-meta" /> <span>Berulang (loop)</span></label>
+          <label class="cfg-check"><input type="checkbox" id="ms-ai-enabled" /> <span data-i18n="ms.aiEnabled">Boleh dipakai AI saat ngobrol</span></label>
+          <label class="cfg-check"><input type="checkbox" id="ms-loop-meta" /> <span data-i18n="ms.loopMeta">Berulang (loop)</span></label>
         </div>
       </details>
         </div><!-- /ms-stage -->
@@ -818,21 +834,21 @@
     </div><!-- /ms-body -->
 
     <div class="ms-footer">
-      <button id="ms-analyze" class="mini-btn ms-small">Analisa AI</button>
-      <button id="ms-generate" class="mini-btn ms-small">Buat dari Teks</button>
-      <button id="ms-save" class="mini-btn ms-small">Simpan</button>
+      <button id="ms-analyze" class="mini-btn ms-small" data-i18n="sheet.analyze">Analisa AI</button>
+      <button id="ms-generate" class="mini-btn ms-small" data-i18n="ms.generate">Buat dari Teks</button>
+      <button id="ms-save" class="mini-btn ms-small" data-i18n="ms.save">Simpan</button>
       <span id="ms-status" class="note-status" role="status" aria-live="polite"></span>
       <div id="ms-gen-box" class="ms-gen-box hidden">
         <input id="ms-gen-input" type="text" maxlength="200"
-          placeholder="mis. senang, badan bergoyang kanan-kiri + senyum lebar" />
+          data-i18n-ph="ms.genPh" placeholder="mis. senang, badan bergoyang kanan-kiri + senyum lebar" />
         <div class="ms-gen-chips">
-          <button class="ms-gen-chip" data-q="Senang, kepala mengangguk-gangguk dan senyum lebar">senang mengangguk</button>
-          <button class="ms-gen-chip" data-q="Malu, kepala menunduk lalu melirik ke samping">malu menunduk</button>
-          <button class="ms-gen-chip" data-q="Kaget, badan tersentak ke belakang lalu diam">kaget tersentak</button>
-          <button class="ms-gen-chip" data-q="Marah, kepala digeleng-geleng dan alis menyeringai">marah geleng</button>
-          <button class="ms-gen-chip" data-q="Sedih, kepala turun pelan-pelan, mata turun">sedih turun</button>
+          <button class="ms-gen-chip" data-q="Senang, kepala mengangguk-gangguk dan senyum lebar" data-i18n="ms.chip1">senang mengangguk</button>
+          <button class="ms-gen-chip" data-q="Malu, kepala menunduk lalu melirik ke samping" data-i18n="ms.chip2">malu menunduk</button>
+          <button class="ms-gen-chip" data-q="Kaget, badan tersentak ke belakang lalu diam" data-i18n="ms.chip3">kaget tersentak</button>
+          <button class="ms-gen-chip" data-q="Marah, kepala digeleng-geleng dan alis menyeringai" data-i18n="ms.chip4">marah geleng</button>
+          <button class="ms-gen-chip" data-q="Sedih, kepala turun pelan-pelan, mata turun" data-i18n="ms.chip5">sedih turun</button>
         </div>
-        <button id="ms-gen-go" class="mini-btn ms-small">Buat</button>
+        <button id="ms-gen-go" class="mini-btn ms-small" data-i18n="ms.genGo">Buat</button>
       </div>
     </div>
   </div>
@@ -843,9 +859,10 @@
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>
   <script src="js/pixi-live2d-0.4.0.js"></script>
-  <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain, terpasang sebagai
-       window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent.
-       Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js. -->
+  <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain + i18n, terpasang sebagai
+       window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent / __i18n.
+       Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js —
+       init() i18n menyweep atribut data-i18n* sebelum app.js jalan. -->
   <script src="js/bundle.js"></script>
   <script src="js/app.js"></script>
   <script src="js/mode-runtime.js"></script>

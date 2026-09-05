@@ -1,6 +1,10 @@
 (function () {
   "use strict";
 
+  // i18n: pintas penerjemah runtime — window.__i18n dipasang bundle.js
+  // (memuat core i18n) SEBELUM app.js dieksekusi.
+  const __t = (key, vars) => (window.__i18n ? window.__i18n.t(key, vars) : key);
+
   (function patchCubismCore() {
     const core = window.Live2DCubismCore;
     if (!core || !core.Moc || !core.Moc.fromArrayBuffer) return;
@@ -544,7 +548,7 @@
     } catch (err) {
       console.error("[Live2D] Failed to load model:", err);
       const p = $("#loader p");
-      if (p) p.textContent = "Gagal memuat model: " + err.message;
+      if (p) p.textContent = __t("sys.errLoadModel", { msg: err.message });
 
       if (String((err && err.message) || "").includes("Belum ada model"))
         showNoModelState();
@@ -557,7 +561,7 @@
     const empty = $("#stage-empty");
     if (empty) empty.classList.remove("hidden");
     const st = $("#sb-state");
-    if (st) st.textContent = "Tanpa model";
+    if (st) st.textContent = __t("live.noModel");
     console.warn("[model] belum ada model terpasang — empty state ditampilkan");
   }
   function hideNoModelState() {
@@ -2614,7 +2618,7 @@
           scale: state.model.scale.x,
         };
         frameModel("full");
-        fbBtn.textContent = "⤡ Kembali";
+        fbBtn.textContent = __t("live.back");
         fbBtn.classList.add("active");
       } else {
         if (state.preFull) {
@@ -2627,7 +2631,7 @@
         } else {
           frameModel("upper");
         }
-        fbBtn.textContent = "⤢ Full Body";
+        fbBtn.textContent = __t("live.fullBodyBtn");
         fbBtn.classList.remove("active");
         fbBtn.classList.add("hidden");
       }
@@ -2669,12 +2673,12 @@
       const bb = document.createElement("div");
       bb.className = "msg-bubble";
       bb.textContent = text;
-      bb.title = "Klik untuk menyalin teks";
+      bb.title = __t("chat.copyTip");
       bb.style.cursor = "pointer";
       bb.addEventListener("click", () => {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(() => {
-            window.showToast?.("Pesan disalin ke clipboard", "info");
+            window.showToast?.(__t("chat.copiedToast"), "info");
           }).catch(() => {});
         }
       });
@@ -2697,7 +2701,7 @@
         log.innerHTML = `
           <div class="msg agent">
             <div class="msg-avatar">${characterInitial()}</div>
-            <div class="msg-bubble" id="greeting-bubble">Halo! Aku ${name}~ Ada yang bisa kubantu? 😊</div>
+            <div class="msg-bubble" id="greeting-bubble">${__t("chat.greetName", { name })}</div>
           </div>
         `;
         const av = log.querySelector(".msg-avatar");
@@ -2705,7 +2709,7 @@
         if (window.__agent) {
           window.__agent.history = [];
         }
-        window.showToast?.("Riwayat obrolan dibersihkan", "info");
+        window.showToast?.(__t("chat.clearedToast"), "info");
       });
     }
 
@@ -2760,12 +2764,25 @@
 
     $$(".phrase-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const p = btn.dataset.phrase;
+        const p = btn.textContent.trim() || btn.dataset.phrase;
         resetAgentIdle();
         showBubble(p, 3500);
         speak(p);
       });
     });
+
+    // Bahasa UI + bahasa balasan AI (config section i18n). Ganti → persist
+    // (localStorage + config.json via setLang) → reload: app.js punya banyak
+    // state modul, sweep tanpa reload tidak memadai.
+    const langSel = document.getElementById("cfg-lang");
+    if (langSel) {
+      langSel.value = window.__i18n ? window.__i18n.getLang() : "id";
+      langSel.addEventListener("change", () => {
+        const v = langSel.value === "en" ? "en" : "id";
+        if (window.__i18n) window.__i18n.setLang(v);
+        location.reload();
+      });
+    }
 
     const camToggle = document.getElementById("use-camera");
     const camStatus = document.getElementById("camera-status");
@@ -2781,22 +2798,22 @@
         if (on) {
           if (!window.cameraPresence) {
             e.target.checked = false;
-            setCamStatus("modul kamera belum dimuat", "err");
+            setCamStatus(__t("cfg.camModuleMissing"), "err");
             return;
           }
 
           e.target.disabled = true;
-          setCamStatus("meminta izin & memuat model…", "busy");
+          setCamStatus(__t("cfg.camStarting"), "busy");
           try {
             await window.cameraPresence.start(
               Object.assign({}, CAMERA, { awayHiddenMs: EVENTS.awayHiddenMs }),
             );
-            setCamStatus("aktif — deteksi hadir & mood", "ok");
+            setCamStatus(__t("cfg.camOn"), "ok");
           } catch (err) {
             console.error("[camera] start gagal:", err);
             e.target.checked = false;
             setCamStatus(
-              "gagal: " + (err && err.message ? err.message : err),
+              __t("sys.errGeneric", { msg: err && err.message ? err.message : err }),
               "err",
             );
           } finally {
@@ -2804,7 +2821,7 @@
           }
         } else {
           if (window.cameraPresence) window.cameraPresence.stop();
-          setCamStatus("mati", "");
+          setCamStatus(__t("cfg.camOff"), "");
           applyFallbackPresence(!document.hidden);
         }
       });
@@ -2873,17 +2890,17 @@
           ? roleList
               .map((r) => `<span class="conn-role-tag">${esc(r)}</span>`)
               .join("")
-          : '<span class="conn-role-tag wild">semua peran</span>';
+          : '<span class="conn-role-tag wild">' + __t("conn.allRoles") + "</span>";
         const enabled = c.enabled !== false;
         card.classList.toggle("disabled", !enabled);
         const badgeTextFinal = !enabled
           ? c.id === activeId
-            ? "⏸ off — dilewati"
+            ? __t("conn.offSkipped")
             : "⏸ off"
           : badgeText;
         card.innerHTML = `
           <div class="conn-head">
-            <label class="conn-switch" title="Aktif / nonaktifkan koneksi (nonaktif = dilewati semua role)">
+            <label class="conn-switch" title="${__t("conn.switchTip")}">
               <input type="checkbox" ${enabled ? "checked" : ""} data-act="toggle" />
               <span class="slider"></span>
             </label>
@@ -3027,7 +3044,7 @@
       loadConns();
     }
     async function delConn(id) {
-      if (!confirm("Hapus connection ini?")) return;
+      if (!confirm(__t("conn.delConfirm"))) return;
       await fetch(API + "/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3037,7 +3054,7 @@
     }
     async function testConn(c, btn) {
       btn.disabled = true;
-      btn.textContent = "testing…";
+      btn.textContent = __t("cfg.testing");
       const r = await fetch(API + "/api/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3045,7 +3062,7 @@
       });
       const d = await r.json();
       btn.disabled = false;
-      btn.textContent = "Test";
+      btn.textContent = __t("cfg.testBtn");
       alert(
         d.valid
           ? "✓ Connection OK: " + (d.reply || "")
@@ -3076,20 +3093,13 @@
           item.innerHTML = `<span class="m-name">${esc(name)}</span>
             <span class="m-actions">
               <button class="load" data-name="${esc(name)}">Load</button>
-              <button class="del" data-name="${esc(name)}">Hapus</button>
+              <button class="del" data-name="${esc(name)}">${__t("sheet.del")}</button>
             </span>`;
           item
             .querySelector(".load")
             .addEventListener("click", () => loadUserModel(name));
           item.querySelector(".del").addEventListener("click", async () => {
-            if (
-              !confirm(
-                'Hapus model "' +
-                  name +
-                  '"?\n\nFolder model dihapus. Sheet, preset, dan gerakan buatanmu tetap disimpan — impor ulang model dengan nama yang sama dan datanya tersambung kembali otomatis.',
-              )
-            )
-              return;
+            if (!confirm(__t("cfg.delModelConfirm", { name }))) return;
             await fetch(API + "/api/model/" + encodeURIComponent(name), {
               method: "DELETE",
             });
@@ -3151,7 +3161,7 @@
         refreshModels();
       } catch (e) {
         console.error("[model] load", e);
-        alert("Gagal memuat model: " + e.message);
+        alert(__t("sys.errLoadModel", { msg: e.message }));
       } finally {
         hideLoader();
       }
@@ -3235,7 +3245,7 @@
           await refreshModels();
           loadUserModel(n);
         } catch (e) {
-          alert("Upload gagal: " + e.message);
+          alert(__t("sys.errUpload", { msg: e.message }));
           hideLoader();
         }
       });
@@ -3267,7 +3277,7 @@
           }
           await loadModel(d.path);
         } catch (e) {
-          alert("Import .zip gagal: " + e.message);
+          alert(__t("cfg.errZip", { msg: e.message }));
         } finally {
           hideLoader();
           zipInput.value = "";
@@ -3324,7 +3334,7 @@
               await refreshModels();
               loadUserModel(n);
             } catch (err) {
-              alert("Upload gagal: " + err.message);
+              alert(__t("sys.errUpload", { msg: err.message }));
               hideLoader();
             }
           }
@@ -3334,7 +3344,7 @@
             await refreshModels();
             loadUserModel(n);
           } catch (err) {
-            alert("Upload gagal: " + err.message);
+            alert(__t("sys.errUpload", { msg: err.message }));
             hideLoader();
           }
         }
@@ -3346,7 +3356,7 @@
     if (inspectBtn)
       inspectBtn.addEventListener("click", () => {
         if (!state.model) {
-          alert("Load model dulu sebelum inspeksi.");
+          alert(__t("cfg.loadFirst"));
           return;
         }
         showLoader("Menganalisis model...");
@@ -3371,7 +3381,7 @@
                 `Tersimpan di localStorage. AI akan pakai data ini saat chat.`,
             );
           } else {
-            alert("Gagal inspeksi model.");
+            alert(__t("cfg.inspectFail"));
           }
         }, 100);
       });
@@ -3383,13 +3393,13 @@
       if (!noteStatus) return;
       noteStatus.textContent = msg;
       noteStatus.className = "note-status" + (kind ? " " + kind : "");
-      if (kind === "ok") window.showToast?.("Catatan karakter tersimpan", "success");
+      if (kind === "ok") window.showToast?.(__t("cfg.noteSavedToast"), "success");
       else if (kind === "err") window.showToast?.(msg, "error");
     }
     if (noteBtn && noteBox) {
       noteBtn.addEventListener("click", async () => {
         noteBtn.disabled = true;
-        setNoteStatus("menyimpan…");
+        setNoteStatus(__t("sys.saving"));
         try {
           const saved = await saveUserNote(noteBox.value);
 
@@ -3401,7 +3411,7 @@
             "ok",
           );
         } catch (e) {
-          setNoteStatus("gagal: " + e.message, "err");
+          setNoteStatus(__t("sys.errGeneric", { msg: e.message }), "err");
         } finally {
           noteBtn.disabled = false;
         }
@@ -3461,7 +3471,7 @@
       if (!cfgEls.status) return;
       cfgEls.status.textContent = msg;
       cfgEls.status.className = "note-status" + (kind ? " " + kind : "");
-      if (kind === "ok") window.showToast?.("Pengaturan model tersimpan", "success");
+      if (kind === "ok") window.showToast?.(__t("cfg.settingsSavedToast"), "success");
       else if (kind === "err") window.showToast?.(msg, "error");
     }
 
@@ -3491,7 +3501,7 @@
         if (!has) {
           const opt = document.createElement("option");
           opt.value = c.ttsLang;
-          opt.textContent = c.ttsLang + " (tersimpan)";
+          opt.textContent = c.ttsLang + " " + __t("cfg.savedSuffix");
           cfgEls.lang.appendChild(opt);
         }
         cfgEls.lang.value = c.ttsLang;
@@ -3533,7 +3543,7 @@
                   : (state.modelConfig || {}).bgImage || "",
           }),
         );
-        setCfgStatus("belum disimpan", "");
+        setCfgStatus(__t("cfg.notSaved"), "");
       });
     }
     if (cfgEls.bgDim) {
@@ -3551,7 +3561,7 @@
                   : (state.modelConfig || {}).bgImage || "",
           }),
         );
-        setCfgStatus("belum disimpan", "");
+        setCfgStatus(__t("cfg.notSaved"), "");
       });
     }
     if (cfgEls.bgPick && cfgEls.bgFile) {
@@ -3560,7 +3570,7 @@
         const file = cfgEls.bgFile.files && cfgEls.bgFile.files[0];
         if (!file) return;
         if (file.size > 3 * 1024 * 1024) {
-          setCfgStatus("gambar terlalu besar (maks 3 MB)", "err");
+          setCfgStatus(__t("cfg.imgTooBig"), "err");
           return;
         }
         const reader = new FileReader();
@@ -3569,9 +3579,9 @@
           applyStageBackground(
             Object.assign({}, state.modelConfig, { bgImage: bgImageDraft }),
           );
-          setCfgStatus("gambar dimuat — tekan Simpan Pengaturan", "");
+          setCfgStatus(__t("cfg.imgLoaded"), "");
         };
-        reader.onerror = () => setCfgStatus("gagal membaca gambar", "err");
+        reader.onerror = () => setCfgStatus(__t("cfg.imgReadFail"), "err");
         reader.readAsDataURL(file);
         cfgEls.bgFile.value = "";
       });
@@ -3582,7 +3592,7 @@
         applyStageBackground(
           Object.assign({}, state.modelConfig, { bgImage: "" }),
         );
-        setCfgStatus("gambar latar dihapus — tekan Simpan Pengaturan", "");
+        setCfgStatus(__t("cfg.imgRemoved"), "");
       });
     }
     if (cfgEls.bgReset) {
@@ -3592,7 +3602,7 @@
         applyStageBackground(
           Object.assign({}, state.modelConfig, { bgColor: "", bgImage: "" }),
         );
-        setCfgStatus("latar kembali ke default — tekan Simpan Pengaturan", "");
+        setCfgStatus(__t("cfg.bgReset"), "");
       });
     }
 
@@ -3610,12 +3620,12 @@
     if (cfgEls.blink)
       cfgEls.blink.addEventListener("change", () => {
         state.blinkEnabled = !!cfgEls.blink.checked;
-        setCfgStatus("belum disimpan", "");
+        setCfgStatus(__t("cfg.notSaved"), "");
       });
     if (cfgEls.idle)
       cfgEls.idle.addEventListener("change", () => {
         state.idleEnabled = !!cfgEls.idle.checked;
-        setCfgStatus("belum disimpan", "");
+        setCfgStatus(__t("cfg.notSaved"), "");
       });
     if (cfgEls.framing)
       cfgEls.framing.addEventListener("change", () => {
@@ -3624,13 +3634,13 @@
             frameModel(cfgEls.framing.value);
           } catch (e) {}
         }
-        setCfgStatus("belum disimpan", "");
+        setCfgStatus(__t("cfg.notSaved"), "");
       });
 
     if (cfgEls.btn) {
       cfgEls.btn.addEventListener("click", async () => {
         cfgEls.btn.disabled = true;
-        setCfgStatus("menyimpan…");
+        setCfgStatus(__t("sys.saving"));
         try {
           const saved = await saveModelConfig(readConfigForm());
 
@@ -3673,9 +3683,9 @@
           }
 
           paintConfigForm(saved);
-          setCfgStatus("tersimpan", "ok");
+          setCfgStatus(__t("sys.saved"), "ok");
         } catch (e) {
-          setCfgStatus("gagal: " + e.message, "err");
+          setCfgStatus(__t("sys.errGeneric", { msg: e.message }), "err");
         } finally {
           cfgEls.btn.disabled = false;
         }
@@ -3692,10 +3702,10 @@
         // Provider remote → tes lewat server dengan nilai form yang belum
         // disimpan; provider browser → tes speechSynthesis seperti dulu.
         if (ttsFormRemoteActive()) {
-          setCfgStatus("mengetes suara…");
+          setCfgStatus(__t("cfg.testingVoice"));
           ttsTestRemote(readTTSForm())
-            .then(() => setCfgStatus("tes suara ok", "ok"))
-            .catch((e) => setCfgStatus("tes suara gagal: " + e.message, "err"));
+            .then(() => setCfgStatus(__t("cfg.voiceOk"), "ok"))
+            .catch((e) => setCfgStatus(__t("cfg.voiceFail", { msg: e.message }), "err"));
           return;
         }
         try {
@@ -3708,7 +3718,7 @@
           );
         } catch (e) {
           state.modelConfig = prev;
-          setCfgStatus("tes suara gagal: " + e.message, "err");
+          setCfgStatus(__t("cfg.voiceFail", { msg: e.message }), "err");
         }
       });
     }
@@ -3809,7 +3819,7 @@
       if (list.length) {
         const def = document.createElement("option");
         def.value = "";
-        def.textContent = "(pilih — " + freeLabel + ")";
+        def.textContent = __t("cfg.pickOr", { label: freeLabel });
         sel.appendChild(def);
         let savedListed = !savedVal;
         for (const it of list) {
@@ -3822,7 +3832,7 @@
         if (savedVal && !savedListed) {
           const o = document.createElement("option");
           o.value = savedVal;
-          o.textContent = savedVal + " (tersimpan)";
+          o.textContent = savedVal + " " + __t("cfg.savedSuffix");
           sel.appendChild(o);
         }
         sel.value = savedVal || "";
@@ -3831,7 +3841,7 @@
         // Tanpa katalog → mode input bebas (tetap fleksibel seperti dulu)
         const o = document.createElement("option");
         o.value = "__free__";
-        o.textContent = "(isi manual →)";
+        o.textContent = __t("cfg.manualEntry");
         sel.appendChild(o);
         sel.value = "__free__";
         if (freeInput) {
@@ -3848,7 +3858,7 @@
       sel.textContent = "";
       const def = document.createElement("option");
       def.value = "";
-      def.textContent = "(default / netral)";
+      def.textContent = __t("cfg.styleDefault");
       sel.appendChild(def);
       const preset = styles || [];
       let curListed = !current;
@@ -3862,13 +3872,13 @@
       if (current && !curListed) {
         const o = document.createElement("option");
         o.value = current;
-        o.textContent = "Gaya tersimpan: " + current;
+        o.textContent = __t("cfg.styleSaved", { v: current });
         sel.appendChild(o);
       }
       // Pilihan "tulis sendiri" selalu ada di bawah
       const free = document.createElement("option");
       free.value = "__free__";
-      free.textContent = "Tulis gaya sendiri…";
+      free.textContent = __t("cfg.writeStyle");
       sel.appendChild(free);
       sel.value = current ? (curListed ? current : "__free__") : "";
       updateStyleFreeVisibility();
@@ -4035,10 +4045,10 @@
         if (s < 60) return s + " detik";
         const m = Math.floor(s / 60),
           r = s % 60;
-        if (m < 60) return r ? m + " mnt " + r + " dtk" : m + " mnt";
+        if (m < 60) return r ? m + " " + __t("live.min") + " " + r + " " + __t("live.sec") : m + " " + __t("live.min");
         const h = Math.floor(m / 60),
           mr = m % 60;
-        return mr ? h + " jam " + mr + " mnt" : h + " jam";
+        return mr ? h + " " + __t("live.hour") + " " + mr + " " + __t("live.min") : h + " " + __t("live.hour");
       };
 
       window.__agentStartApprox = window.__agentStartApprox || Date.now();
@@ -4107,7 +4117,7 @@
         if (!els.saveStatus) return;
         els.saveStatus.textContent = msg;
         els.saveStatus.className = "note-status" + (kind ? " " + kind : "");
-        if (kind === "ok") window.showToast?.("Pengaturan kelakuan tersimpan", "success");
+        if (kind === "ok") window.showToast?.(__t("beh.savedToast"), "success");
         else if (kind === "err") window.showToast?.(msg, "error");
       }
 
@@ -4164,7 +4174,7 @@
       if (els.save) {
         els.save.addEventListener("click", async () => {
           els.save.disabled = true;
-          setSaveStatus("menyimpan…");
+          setSaveStatus(__t("sys.saving"));
           const ev = readForm();
           applyLive(ev);
           try {
@@ -4175,14 +4185,14 @@
             });
             const d = await r.json().catch(() => ({}));
             if (!r.ok || !d.ok) throw new Error(d.error || "HTTP " + r.status);
-            setSaveStatus("tersimpan", "ok");
+            setSaveStatus(__t("sys.saved"), "ok");
 
             if (d.events) {
               Object.assign(EVENTS, d.events);
               paintForm();
             }
           } catch (e) {
-            setSaveStatus("gagal: " + e.message, "err");
+            setSaveStatus(__t("sys.errGeneric", { msg: e.message }), "err");
           } finally {
             els.save.disabled = false;
           }
@@ -4196,13 +4206,9 @@
         const left = q - elapsed;
         if (els.countdown) {
           if (left > 0)
-            els.countdown.textContent =
-              "Masa tenang: sisa " +
-              fmtMs(left) +
-              " (karakter belum bicara sendiri).";
+            els.countdown.textContent = __t("beh.quietLeftLong", { t: fmtMs(left) });
           else
-            els.countdown.textContent =
-              "Masa tenang selesai — karakter bisa bereaksi sendiri.";
+            els.countdown.textContent = __t("beh.quietDoneLong");
         }
       }
       if (countdownTimer) clearInterval(countdownTimer);
@@ -4219,15 +4225,15 @@
       if (!elP || !elM || !elQ) return;
       const fmtMs = (ms) => {
         ms = Math.max(0, Math.round(ms));
-        if (ms < 1000) return "0 dtk";
+        if (ms < 1000) return "0 " + __t("live.sec");
         const s = Math.round(ms / 1000);
-        if (s < 60) return s + " dtk";
+        if (s < 60) return s + " " + __t("live.sec");
         const m = Math.floor(s / 60),
           r = s % 60;
-        if (m < 60) return r ? m + " mnt " + r + " dtk" : m + " mnt";
+        if (m < 60) return r ? m + " " + __t("live.min") + " " + r + " " + __t("live.sec") : m + " " + __t("live.min");
         const h = Math.floor(m / 60),
           mr = m % 60;
-        return mr ? h + " jam " + mr + " mnt" : h + " jam";
+        return mr ? h + " " + __t("live.hour") + " " + mr + " " + __t("live.min") : h + " " + __t("live.hour");
       };
       function render() {
         const st =
@@ -4236,21 +4242,23 @@
             : null;
 
         const p = st ? st.presenceState : null;
-        elP.textContent =
-          (p === true ? "hadir" : p === false ? "pergi" : "tidak tahu");
+        elP.textContent = __t(
+          p === true ? "live.presence.here" : p === false ? "live.presence.away" : "live.presence.unknown",
+        );
 
         const mood =
           st && st.userMood && st.userMood !== "normal"
             ? st.userMood
             : "netral";
         const src = st && st.moodSource ? " (" + st.moodSource + ")" : "";
-        elM.textContent = "mood: " + mood + src;
+        elM.textContent = __t("live.moodVal", { mood, src });
 
         const q = st ? Number(st.quietMs) || 0 : 0;
         const start = window.__agentStartApprox || Date.now();
         const left = q - (Date.now() - start);
-        elQ.textContent =
-          "masa tenang: " + (left > 0 ? "sisa " + fmtMs(left) : "selesai");
+        elQ.textContent = __t("live.quietVal", {
+          state: left > 0 ? __t("live.quietLeft", { t: fmtMs(left) }) : __t("live.quietDone"),
+        });
       }
       setInterval(render, 1000);
       render();
@@ -4409,7 +4417,7 @@
         "Lepas semua pose preset yang sedang menempel (param, part, ekspresi) dan kembalikan kendali ke animasi idle.";
       resetBtn.addEventListener("click", () => {
         if (!state.model) {
-          setSheetStatus("load model dulu", "err");
+          setSheetStatus(__t("sheet.loadFirstShort"), "err");
           return;
         }
         const n = releasePresetPose();
@@ -4423,8 +4431,7 @@
       resetRow.appendChild(resetBtn);
       const resetHint = document.createElement("span");
       resetHint.className = "preset-reset-hint";
-      resetHint.textContent =
-        "membatalkan semua Terap/Coba yang sedang menempel";
+      resetHint.textContent = __t("sheet.resetHint");
       resetRow.appendChild(resetHint);
       box.appendChild(resetRow);
 
@@ -4432,7 +4439,7 @@
       if (!items.length) {
         const p = document.createElement("div");
         p.className = "preset-empty";
-        p.textContent = 'Belum ada preset kategori "' + sheetCatFilter + '".';
+        p.textContent = __t("sheet.catEmpty", { cat: sheetCatFilter });
         box.appendChild(p);
         return;
       }
@@ -4446,34 +4453,31 @@
         nm.className = "p-name";
         nm.textContent = p.name;
         if (p.renamedFrom)
-          nm.title =
-            'Otomatis diganti nama dari "' +
-            p.renamedFrom +
-            '" karena bentrok dengan motion bawaan.';
+          nm.title = __t("sheet.renamedTitle", { from: p.renamedFrom });
         row.appendChild(nm);
 
         const badge = document.createElement("span");
         badge.className = "p-badge";
         badge.textContent = isAI
           ? p.suggestion
-            ? "tertutup AI"
-            : "saran AI"
-          : "milikmu";
+            ? __t("sheet.badge.aiClosed")
+            : __t("sheet.badge.aiSuggestion")
+          : __t("sheet.badge.mine");
         badge.title = isAI
           ? p.suggestion
-            ? "Saran AI, tapi kamu sudah punya preset dengan nama sama — punyamu yang dipakai."
-            : "Saran AI. Belum aktif sampai kamu tekan Pakai."
-          : "Preset milikmu (aktif).";
+            ? __t("sheet.badge.aiClosedTip")
+            : __t("sheet.badge.aiSuggestionTip")
+          : __t("sheet.badge.mineTip");
         row.appendChild(badge);
 
         if (!isAI) {
           const applyBtn = document.createElement("button");
           applyBtn.type = "button";
           applyBtn.className = "p-act";
-          applyBtn.textContent = "Terap";
+          applyBtn.textContent = __t("sheet.apply");
           applyBtn.addEventListener("click", () => {
             if (!state.model) {
-              setSheetStatus("load model dulu", "err");
+              setSheetStatus(__t("sheet.loadFirstShort"), "err");
               return;
             }
             releasePresetPreview();
@@ -4490,12 +4494,12 @@
           const tryBtn = document.createElement("button");
           tryBtn.type = "button";
           tryBtn.className = "p-act";
-          tryBtn.textContent = "Coba";
+          tryBtn.textContent = __t("sheet.tryBtn");
           tryBtn.title =
             "Pratinjau pose ini tanpa menguncinya sebagai preset aktif.";
           tryBtn.addEventListener("click", () => {
             if (!state.model) {
-              setSheetStatus("load model dulu", "err");
+              setSheetStatus(__t("sheet.loadFirstShort"), "err");
               return;
             }
             releasePresetPreview();
@@ -4523,7 +4527,7 @@
             };
             paintDraft();
             renderPresetSliders(state.lastSheet || loadCharacterSheet());
-            setPresetStatus("dimuat untuk diedit", "");
+            setPresetStatus(__t("pe.loadedForEdit"), "");
             openPresetEditor();
           });
           row.appendChild(editBtn);
@@ -4531,18 +4535,18 @@
           const delBtn = document.createElement("button");
           delBtn.type = "button";
           delBtn.className = "p-act danger";
-          delBtn.textContent = "Hapus";
+          delBtn.textContent = __t("sheet.del");
           delBtn.addEventListener("click", async () => {
-            if (!confirm('Hapus preset "' + p.name + '" (' + p.category + ")?"))
+            if (!confirm(__t("sheet.delPresetConfirm", { name: p.name, cat: p.category })))
               return;
             delBtn.disabled = true;
-            setSheetStatus("menghapus…");
+            setSheetStatus(__t("sys.deleting"));
             try {
               await deleteUserPreset(p.category, p.name);
-              setSheetStatus("dihapus: " + p.name, "ok");
+              setSheetStatus(__t("sheet.deleted", { name: p.name }), "ok");
               refreshSheetUI();
             } catch (e) {
-              setSheetStatus("gagal: " + e.message, "err");
+              setSheetStatus(__t("sys.errGeneric", { msg: e.message }), "err");
               delBtn.disabled = false;
             }
           });
@@ -4551,16 +4555,16 @@
           const useBtn = document.createElement("button");
           useBtn.type = "button";
           useBtn.className = "p-act";
-          useBtn.textContent = "Pakai";
+          useBtn.textContent = __t("sheet.use");
           useBtn.addEventListener("click", async () => {
             useBtn.disabled = true;
-            setSheetStatus("menyetujui saran…");
+            setSheetStatus(__t("sheet.approving"));
             try {
               await applyAISuggestion(p.category, p.name);
-              setSheetStatus("saran dipakai: " + p.name, "ok");
+              setSheetStatus(__t("sheet.used", { name: p.name }), "ok");
               refreshSheetUI();
             } catch (e) {
-              setSheetStatus("gagal: " + e.message, "err");
+              setSheetStatus(__t("sys.errGeneric", { msg: e.message }), "err");
               useBtn.disabled = false;
             }
           });
@@ -4982,9 +4986,9 @@
       if (!api || !api.saveParamNote) return;
       try {
         await api.saveParamNote(paramId, value);
-        setPnStatus(row, "tersimpan", "ok");
+        setPnStatus(row, __t("sys.saved"), "ok");
       } catch (e) {
-        setPnStatus(row, "gagal: " + e.message, "err");
+        setPnStatus(row, __t("sys.errGeneric", { msg: e.message }), "err");
       }
     }
 
@@ -5009,15 +5013,15 @@
           count++;
         } catch (e) {
           failed++;
-          setPnStatus(row, "gagal: " + e.message, "err");
+          setPnStatus(row, __t("sys.errGeneric", { msg: e.message }), "err");
         }
       }
       if (pnSaveStatus) {
         if (failed) {
-          pnSaveStatus.textContent = count + " tersimpan, " + failed + " gagal";
+          pnSaveStatus.textContent = __t("pn.savedPartial", { ok: count, fail: failed });
           pnSaveStatus.className = "note-status err";
         } else {
-          pnSaveStatus.textContent = count + " catatan tersimpan";
+          pnSaveStatus.textContent = __t("pn.savedAll", { n: count });
           pnSaveStatus.className = "note-status ok";
         }
       }
@@ -5115,7 +5119,7 @@
       if (!params.length && !parts.length) {
         const p = document.createElement("div");
         p.className = "pn-empty";
-        p.textContent = "Belum ada sheet. Inspeksi model dulu.";
+        p.textContent = __t("sheet.emptyPlain");
         presetSliders.appendChild(p);
         return;
       }
@@ -5262,7 +5266,7 @@
         releasePresetPreview();
         paintDraft();
         renderPresetSliders(state.lastSheet || loadCharacterSheet());
-        setPresetStatus("editor dikosongkan", "");
+        setPresetStatus(__t("pe.cleared"), "");
         if (shEls.captureInfo) {
           shEls.captureInfo.textContent = "";
           shEls.captureInfo.className = "note-status";
@@ -5287,7 +5291,7 @@
             chk.message + ' Usul: "' + chk.suggestion + '"',
             "err",
           );
-        else setPresetStatus("nama boleh dipakai", "ok");
+        else setPresetStatus(__t("pe.nameOk"), "ok");
       };
       shEls.name.addEventListener("input", preflight);
       shEls.cat.addEventListener("change", preflight);
@@ -5298,7 +5302,7 @@
         const name = shEls.name ? shEls.name.value.trim() : "";
         const category = shEls.cat ? shEls.cat.value : "properti";
         if (!name) {
-          setPresetStatus("nama preset wajib diisi", "err");
+          setPresetStatus(__t("pe.nameRequired"), "err");
           return;
         }
 
@@ -5320,7 +5324,7 @@
           return;
         }
         shEls.save.disabled = true;
-        setPresetStatus("menyimpan…");
+        setPresetStatus(__t("sys.saving"));
         try {
           const saved = await saveUserPreset({
             name,
@@ -5328,12 +5332,12 @@
             values: draft.values,
             parts: draft.parts,
           });
-          setPresetStatus("tersimpan: " + saved.name, "ok");
+          setPresetStatus(__t("pe.savedNamed", { name: saved.name }), "ok");
           sheetCatFilter = saved.category;
           releasePresetPreview();
           refreshSheetUI();
         } catch (e) {
-          setPresetStatus("gagal: " + e.message, "err");
+          setPresetStatus(__t("sys.errGeneric", { msg: e.message }), "err");
         } finally {
           shEls.save.disabled = false;
         }
@@ -5343,7 +5347,7 @@
     if (shEls.analyze) {
       shEls.analyze.addEventListener("click", async () => {
         shEls.analyze.disabled = true;
-        setSheetStatus("menganalisa… (bisa belasan detik)", "busy");
+        setSheetStatus(__t("sheet.analyzing"), "busy");
 
         const [labels, presets] = await Promise.allSettled([
           triggerAIParamClassification(),
@@ -5383,7 +5387,7 @@
         try {
           const sheet = await fetchSheetFile();
           if (!sheet) {
-            shEls.reloadStatus.textContent = "tidak ada file sheet di server";
+            shEls.reloadStatus.textContent = __t("sheet.noFileOnServer");
             shEls.reloadStatus.className = "note-status err";
             return;
           }
@@ -5403,10 +5407,10 @@
             paintDraft();
             renderPresetSliders(sheet);
           }
-          shEls.reloadStatus.textContent = "dimuat ulang dari file ✓";
+          shEls.reloadStatus.textContent = __t("sheet.reloaded");
           shEls.reloadStatus.className = "note-status ok";
         } catch (e) {
-          shEls.reloadStatus.textContent = "gagal: " + e.message;
+          shEls.reloadStatus.textContent = __t("sys.errGeneric", { msg: e.message });
           shEls.reloadStatus.className = "note-status err";
         } finally {
           shEls.reloadFile.disabled = false;
@@ -5492,7 +5496,7 @@
               return;
             }
             window.__live2dAgent.setExpression(e.Name, 1);
-            setSheetStatus("ekspresi dipasang: " + e.Name, "");
+            setSheetStatus(__t("sheet.exprApplied", { name: e.Name }), "");
           });
           row.appendChild(testBtn);
           adEls.list.appendChild(row);
@@ -5515,12 +5519,12 @@
       adEls.save.addEventListener("click", async () => {
         adEls.save.disabled = true;
         if (adEls.status) {
-          adEls.status.textContent = "menyimpan…";
+          adEls.status.textContent = __t("sys.saving");
           adEls.status.className = "note-status";
         }
         const folder = currentModelFolder();
         if (!folder) {
-          if (adEls.status) adEls.status.textContent = "load model dulu";
+          if (adEls.status) adEls.status.textContent = __t("sheet.loadFirstShort");
           adEls.save.disabled = false;
           return;
         }
@@ -5550,7 +5554,7 @@
           }
         } catch (e) {
           if (adEls.status) {
-            adEls.status.textContent = "gagal: " + e.message;
+            adEls.status.textContent = __t("sys.errGeneric", { msg: e.message });
             adEls.status.className = "note-status err";
           }
         } finally {
@@ -7233,7 +7237,7 @@
     }
     const greet = $("#greeting-bubble");
     if (greet)
-      greet.textContent = "Halo! Aku " + name + "~ Ada yang bisa kubantu? 😊";
+      greet.textContent = __t("chat.greetName", { name });
   }
 
   function currentModelConfig() {

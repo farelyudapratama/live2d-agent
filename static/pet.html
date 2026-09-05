@@ -48,17 +48,22 @@
 <div id="status">pet</div>
 <div id="bubble"><span id="bubble-text"></span></div>
 <div id="pet-ui" data-tauri-drag-region>
-  <button class="btn" id="b-wave">Sapa</button>
-  <button class="btn" id="b-talk">Bicara</button>
-  <button class="btn" id="b-through" hidden>Klik tembus</button>
-  <button class="btn" id="b-close">Tutup</button>
+  <button class="btn" id="b-wave" data-i18n="petWindow.greet">Sapa</button>
+  <button class="btn" id="b-talk" data-i18n="petWindow.talk">Bicara</button>
+  <button class="btn" id="b-through" hidden data-i18n="petWindow.ctOff">Klik tembus</button>
+  <button class="btn" id="b-close" data-i18n="petWindow.close">Tutup</button>
 </div>
 <script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/live2dcubismcore.min.js"></script>
 <script src="js/pixi-live2d-0.4.0.js"></script>
+<!-- Core i18n (khusus pet — app utama memuatnya di dalam bundle.js). Self-exec:
+     menyweep atribut data-i18n* di atas sekaligus membaca localStorage, jadi
+     bahasa pet mengikuti bahasa app utama (origin sama). -->
+<script src="js/i18n.js?v=1"></script>
 <script>
 (function () {
   const API = location.origin;
+  const t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const qs = new URLSearchParams(location.search);
   const state = { model: null, app: null, bubbleTimer: null, idleTimer: null, dir: 1 };
 
@@ -71,7 +76,7 @@
   }
 
   async function boot() {
-    document.getElementById("status").textContent = "memuat model…";
+    document.getElementById("status").textContent = t("petWindow.loadingModel");
     let path = qs.get("model");
     if (!path) {
       try {
@@ -85,7 +90,7 @@
         }
       } catch (e) {}
     }
-    if (!path) { document.getElementById("status").textContent = "tidak ada model"; return; }
+    if (!path) { document.getElementById("status").textContent = t("petWindow.noModel"); return; }
     // registerTicker adalah static di Live2DModel, bukan di namespace live2d —
     // memanggilnya lewat PIXI.live2d melempar TypeError dan boot() berhenti
     // sebelum canvas dibuat, jadi jendela pet tampil kosong.
@@ -110,7 +115,7 @@
     model.scale.set(s);
     model.x = (window.innerWidth - natW * s) / 2;
     model.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
-    document.getElementById("status").textContent = "pet aktif";
+    document.getElementById("status").textContent = t("petWindow.active");
     startIdleLife();
   }
 
@@ -142,9 +147,9 @@
     });
     // sapa berkala kecil
     const lines = [
-      "Jangan lupa istirahat ya~ 👀", "Kamu kelihatan sibuk banget…",
-      "Halo! Aku di sini kalau butuh 💫", "*menyaksikanmu bekerja*",
-      "Sebentar lagi jam makan siang?", "Semangat! 💪",
+      t("petWindow.idle1"), t("petWindow.idle2"),
+      t("petWindow.idle3"), t("petWindow.idle4"),
+      t("petWindow.idle5"), t("petWindow.idle6"),
     ];
     state.idleTimer = setInterval(() => {
       if (Math.random() < 0.5) bubble(lines[Math.floor(Math.random() * lines.length)]);
@@ -161,10 +166,10 @@
 
   document.getElementById("b-wave").addEventListener("click", () => {
     motionOrExpression("wave");
-    bubble("Halo juga! 👋");
+    bubble(t("petWindow.waveBack"));
   });
   document.getElementById("b-talk").addEventListener("click", () => {
-    const lines = ["Hari ini mau ngapain?", "Butuh bantuan? Buka mode Assistant di app utama ya.", "Aku cuma pet kecil, tapi aku setia 🐾"];
+    const lines = [t("petWindow.talk1"), t("petWindow.talk2"), t("petWindow.talk3")];
     bubble(lines[Math.floor(Math.random() * lines.length)]);
   });
 
@@ -181,7 +186,7 @@
     const b = document.getElementById("b-through");
     if (b) {
       b.classList.toggle("active", on);
-      b.textContent = on ? "Klik tembus: ON" : "Klik tembus";
+      b.textContent = on ? t("petWindow.ctOn") : t("petWindow.ctOff");
     }
   }
 
@@ -230,7 +235,7 @@
     if (e.key === "Escape") document.getElementById("b-close").click();
   });
 
-  boot().catch((e) => { document.getElementById("status").textContent = "gagal: " + e.message; })();
+  boot().catch((e) => { document.getElementById("status").textContent = t("sys.errGeneric", { msg: e.message }); })();
 })();
 </script>
 </body>

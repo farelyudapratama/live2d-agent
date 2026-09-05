@@ -5,6 +5,8 @@
  */
 (function () {
   const API = location.origin;
+  // i18n: window.__i18n dipasang bundle.js (dimuat sebelum file ini).
+  const __t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -117,8 +119,8 @@
       const persona = ($("#vt-persona") || {}).value || "ceria dan ramah";
       const isDono = ev.type === "donation";
       const prompt = isDono
-        ? `Penonton bernama ${ev.user} baru saja donasi ${ev.amount || ""} dengan pesan: "${ev.text}". Ucapkan terima kasih hangat yang khas (1-2 kalimat).`
-        : `Penonton bernama ${ev.user} bilang di live chat: "${ev.text}". Balas singkat (1 kalimat) yang fun dan personal.`;
+        ? __t("vt.donatePrompt", { user: ev.user, amount: ev.amount || "", text: ev.text })
+        : __t("vt.chatPrompt", { user: ev.user, text: ev.text });
       try {
         const reply = await askLLM(
           [{ role: "user", content: prompt }],
@@ -129,7 +131,7 @@
           speak(reply);
         }
       } catch (e) {
-        line({ type: "system", user: "system", text: "AI gagal balas: " + e.message });
+        line({ type: "system", user: "system", text: __t("vt.aiFail", { msg: e.message }) });
       }
     }
 
@@ -170,7 +172,7 @@
     const onStop = async () => {
       stopped = true;
       try { await post("/api/vtuber/stop"); } catch (e) {}
-      status.textContent = "tidak aktif";
+      status.textContent = __t("vt.inactive");
       status.style.color = "";
     };
     const onProviderChange = () => {
@@ -225,13 +227,13 @@
         try {
           const hist = await fetch(API + "/api/assistant/history").then((r) => r.json());
           if (hist.length) {
-            line("tool", "Sesi dipulihkan (" + hist.length + " pesan — termasuk dari CLI/sesi sebelumnya).");
+            line("tool", __t("as.sessionRestored", { n: hist.length }));
             for (const m of hist.slice(-20)) line(m.role === "tool" ? "tool" : m.role, m.content);
           }
         } catch (e) {}
-        line("tool", "Assistant aktif. Folder kerja: project ini. Minta apa saja…");
+        line("tool", __t("as.activeDefault"));
       })
-      .catch((e) => line("tool", "gagal start: " + e.message));
+      .catch((e) => line("tool", __t("as.startFail", { msg: e.message })));
 
     function line(role, text) {
       const row = el("div", "as-line " + role, text);
@@ -251,7 +253,7 @@
           box.appendChild(el("div", "", "Izinkan " + ap.tool + "?"));
           box.appendChild(el("div", "as-line tool", JSON.stringify(ap.args).slice(0, 220)));
           const row = el("div", "as-ap-row");
-          const ok = el("button", "mini-btn", "Izinkan");
+          const ok = el("button", "mini-btn", __t("as.allow"));
           const no = el("button", "mini-btn", "Tolak");
           ok.addEventListener("click", async () => {
             try {
@@ -262,7 +264,7 @@
           });
           no.addEventListener("click", async () => {
             try { await post("/api/assistant/approve", { id: ap.id, approve: false }); } catch (e) {}
-            line("tool", "Ditolak user.");
+            line("tool", __t("as.denied"));
             refresh();
           });
           row.appendChild(ok); row.appendChild(no);
@@ -277,7 +279,7 @@
       if (!text) return;
       input.value = "";
       line("user", text);
-      line("tool", "…memproses (tools bisa beberapa langkah)…");
+      line("tool", __t("as.processing"));
       try {
         // set workdir sekali di awal
         const wd = ($("#as-workdir") || {}).value;
@@ -297,7 +299,7 @@
     const onKey = (e) => { if (e.key === "Enter") send(); };
     const onStop = async () => {
       try { await post("/api/assistant/stop"); } catch (e) {}
-      line("tool", "Runtime agent dimatikan. Panel ini tetap bisa dipakai — kirim pesan untuk menyalakan lagi.");
+      line("tool", __t("as.stopped"));
     };
     $("#btn-as-send").addEventListener("click", onSend);
     input.addEventListener("keydown", onKey);
@@ -328,15 +330,15 @@
       try {
         const st = await fetch(API + "/api/mode").then((r) => r.json());
         if (!st.pet?.running) {
-          status.textContent = "belum terbuka";
+          status.textContent = __t("pet.notOpen");
           throughOn = false;
         } else if (st.pet.shell) {
           status.textContent =
             (st.pet.shell === "tauri" ? "shell Tauri" : "shell Chrome/Edge") +
-            (st.pet.clickThrough ? " — klik tembus ON" : "") +
-            (st.pet.shell === "tauri" ? "" : " (tanpa klik-tembus)");
+            (st.pet.clickThrough ? __t("pet.clickThroughOn") : "") +
+            (st.pet.shell === "tauri" ? "" : __t("pet.noClickThrough"));
         } else {
-          status.textContent = "jendela pet terbuka";
+          status.textContent = __t("pet.windowOpen");
         }
         paintThrough();
       } catch (e) { status.textContent = ""; }
@@ -344,15 +346,15 @@
     function paintThrough() {
       const b = $("#pet-through");
       if (b) {
-        b.textContent = throughOn ? "Klik Tembus: ON" : "Klik Tembus";
+        b.textContent = throughOn ? __t("pet.clickThroughOnBtn") : __t("pet.clickThrough");
         b.classList.toggle("active", throughOn);
       }
     }
     const onLaunch = async () => {
-      status.textContent = "membuka jendela…";
+      status.textContent = __t("pet.opening");
       try {
         const d = await post("/api/pet/launch");
-        status.textContent = d.how ? "jendela pet dibuka (" + d.how + ")" : "terbuka";
+        status.textContent = d.how ? __t("pet.openedHow", { how: d.how }) : __t("pet.opened");
         checkStatus();
       } catch (e) { status.textContent = "gagal: " + e.message; }
     };

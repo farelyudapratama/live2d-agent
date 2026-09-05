@@ -22,6 +22,9 @@
 
   const $ = (s) => document.querySelector(s);
   const L2D = () => window.__live2dAgent;
+
+  // i18n: window.__i18n dipasang bundle.js (dimuat sebelum file ini).
+  const __t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const DSL = () => window.MotionDSL;
 
   const PREVIEW_ID = '__ms_preview__';
@@ -81,14 +84,14 @@
     renderUndoButtons();
   }
   function undo() {
-    if (!state.undoStack.length) { setStatus('tidak ada yang bisa dibatalkan'); return; }
+    if (!state.undoStack.length) { setStatus(__t('ms.undoEmpty')); return; }
     state.redoStack.push(JSON.stringify(state.draft));
     state.draft = JSON.parse(state.undoStack.pop());
     state.selected = null;
     renderAll(); applyScrubPose();
   }
   function redo() {
-    if (!state.redoStack.length) { setStatus('tidak ada yang bisa diulang'); return; }
+    if (!state.redoStack.length) { setStatus(__t('ms.redoEmpty')); return; }
     state.undoStack.push(JSON.stringify(state.draft));
     state.draft = JSON.parse(state.redoStack.pop());
     state.selected = null;
@@ -301,7 +304,7 @@
       const tr = trackFor(id, false);
       state.selected = tr.keys.length ? { param: id, index: 0 } : null;
       renderAll();
-      setStatus('track "' + id + '" sudah ada');
+      setStatus(__t('ms.trackExists', { id }));
       return;
     }
     pushUndo();
@@ -315,7 +318,7 @@
     const idx = addKey(id, state.scrubT, Number.isFinite(cur) ? cur : (p ? p.def : 0));
     state.selected = { param: id, index: idx };
     renderAll(); applyScrubPose();
-    setStatus('track "' + id + '" ditambahkan');
+    setStatus(__t('ms.trackAdded', { id }));
   }
 
   // ── Render: timeline ─────────────────────────────────────────────
@@ -474,7 +477,7 @@
       del.className = 'ms-track-x';
       del.type = 'button';
       del.textContent = '✕';
-      del.title = 'Hapus track ' + tr.param;
+      del.title = __t('ms.delTrackTip', { param: tr.param });
       del.addEventListener('click', () => {
         pushUndo();
         const l2d = L2D();
@@ -509,7 +512,7 @@
     };
 
     if (!key) {
-      lbl.textContent = 'Belum ada keyframe dipilih';
+      lbl.textContent = __t('ms.noKeySel');
       tIn.value = ''; vIn.value = '0';
       if (vNum) vNum.value = '';
       if (vOut) vOut.textContent = '';
@@ -606,7 +609,7 @@
     sel.innerHTML = '';
     if (!state.userMotions.length) {
       const o = document.createElement('option');
-      o.value = ''; o.textContent = '(belum ada gerakan milikmu)';
+      o.value = ''; o.textContent = __t('ms.libEmpty');
       sel.appendChild(o);
     }
     for (const m of state.userMotions) {
@@ -681,14 +684,14 @@
     const l2d = L2D();
     if (!l2d || !l2d.registerUserMotion || !state.draft) return;
     const usable = state.draft.tracks.filter(t => t.kind === 'param' && t.keys.length);
-    if (!usable.length) { setStatus('belum ada keyframe untuk diputar', 'err'); return; }
+    if (!usable.length) { setStatus(__t('ms.noKeysToPlay'), 'err'); return; }
     // Editor sedang menahan parameter pada posisi playhead. Kalau tidak dilepas,
     // tulisan editor dan tulisan runtime bertumpuk pada frame yang sama dan
     // yang terakhir menang secara acak — motion terlihat macet di satu pose.
     releaseAllDriven();
     const probe = Object.assign({}, state.draft, { id: PREVIEW_ID, aiEnabled: false });
     const r = l2d.registerUserMotion(probe);
-    if (!r.ok) { setStatus('gagal: ' + r.error, 'err'); return; }
+    if (!r.ok) { setStatus(__t('sys.errGeneric', { msg: r.error }), 'err'); return; }
     const startT = state.scrubT;
     const loop = !!state.draft.loop;
     // totalMs HARUS identik dengan computePlaybackPlan runtime:
@@ -728,7 +731,7 @@
         state.scrubT = loop ? Math.min(startT, durSec) : durSec;
         applyScrubPose();
         renderPlayheads();
-        setStatus('selesai diputar');
+        setStatus(__t('ms.played'));
       },
     });
     state.playing = okPlay;
@@ -796,9 +799,9 @@
     const out = dsl.rolesToParamTracks(asset, roleMap, ranges);
     const leftover = (out.tracks || []).filter(t => t.kind !== 'param').length;
     if (leftover) {
-      setStatus('' + leftover + ' track lama tak punya padanan parameter di model ini — dibiarkan utuh', 'err');
+      setStatus(__t('ms.tracksNoMatch', { n: leftover }), 'err');
     } else {
-      setStatus('motion lama dikonversi ke track parameter — periksa lalu Simpan');
+      setStatus(__t('ms.converted'));
     }
     return out;
   }
@@ -853,14 +856,14 @@
     // Track kosong dibuang di sini (bukan saat key terakhir dihapus): user
     // sering mengosongkan track untuk menatanya ulang.
     d.tracks = (d.tracks || []).filter(t => t.keys && t.keys.length);
-    if (!d.tracks.length) { setStatus('tambahkan minimal satu keyframe dulu', 'err'); return; }
+    if (!d.tracks.length) { setStatus(__t('ms.needKeyframe'), 'err'); return; }
 
     const l2d = L2D();
     const reg = l2d && l2d.registerUserMotion ? l2d.registerUserMotion(d) : { ok: false, error: 'modul motion tidak termuat' };
-    if (!reg.ok) { setStatus('gagal: ' + reg.error, 'err'); return; }
+    if (!reg.ok) { setStatus(__t('sys.errGeneric', { msg: reg.error }), 'err'); return; }
 
     const exists = state.userMotions.some(m => m.id === d.id);
-    setStatus('menyimpan…');
+    setStatus(__t('sys.saving'));
     try {
       const r = await fetch(API + '/api/motions' + (exists ? '/' + encodeURIComponent(d.id) : ''), {
         method: exists ? 'PUT' : 'POST',
@@ -874,17 +877,17 @@
       loadDraft(d.id);
       try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
       renderRegistryList();
-      setStatus('tersimpan — AI sudah bisa memakainya', 'ok');
+      setStatus(__t('ms.savedOk'), 'ok');
     } catch (e) {
-      setStatus('gagal simpan: ' + e.message, 'err');
+      setStatus(__t('ms.saveFail', { msg: e.message }), 'err');
     }
   }
 
   async function deleteDraft() {
     const d = state.draft;
-    if (!d || !d.id) { setStatus('belum ada yang bisa dihapus'); return; }
-    if (!state.userMotions.some(m => m.id === d.id)) { loadDraft(''); setStatus('draft dikosongkan'); return; }
-    if (!confirm('Hapus gerakan "' + (d.name || d.id) + '"? Tindakan ini tidak bisa dibatalkan.')) return;
+    if (!d || !d.id) { setStatus(__t('ms.nothingToDelete')); return; }
+    if (!state.userMotions.some(m => m.id === d.id)) { loadDraft(''); setStatus(__t('ms.draftCleared')); return; }
+    if (!confirm(__t('ms.delConfirm', { name: d.name || d.id }))) return;
     try {
       const r = await fetch(API + '/api/motions/' + encodeURIComponent(d.id) + '?model=' + encodeURIComponent(modelKey()), { method: 'DELETE' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -895,9 +898,9 @@
       loadDraft(state.userMotions.length ? state.userMotions[0].id : '');
       try { window.__agent && window.__agent.invalidateCapabilityProfile && window.__agent.invalidateCapabilityProfile(); } catch (e) {}
       renderRegistryList();
-      setStatus('dihapus', 'ok');
+      setStatus(__t('ms.deleted'), 'ok');
     } catch (e) {
-      setStatus('gagal hapus: ' + e.message, 'err');
+      setStatus(__t('ms.delFail', { msg: e.message }), 'err');
     }
   }
 
@@ -911,7 +914,7 @@
     state.dirty = true;
     state.undoStack.length = 0; state.redoStack.length = 0;
     renderAll();
-    setStatus('duplikat dibuat — tekan Simpan untuk menyimpannya');
+    setStatus(__t('ms.dupMade'));
   }
 
   // ── Daftar gerakan di tab Motion (semua sumber) ──────────────────
@@ -924,7 +927,7 @@
     if (!list.length) {
       const p = document.createElement('p');
       p.className = 'hint';
-      p.textContent = 'Belum ada data — muat model dulu.';
+      p.textContent = __t('ms.noData');
       host.appendChild(p);
       return;
     }
@@ -943,7 +946,7 @@
       const play = document.createElement('button');
       play.className = 'mini-btn ms-icon';
       play.textContent = '▶';
-      play.title = 'Coba gerakan ini';
+      play.title = __t('ms.tryTip');
       play.addEventListener('click', () => {
         if (l2d && l2d.playMotion) l2d.playMotion(a.id, { priority: 100 });
       });
@@ -952,7 +955,7 @@
         const edit = document.createElement('button');
         edit.className = 'mini-btn ms-icon';
         edit.textContent = 'Edit';
-        edit.title = 'Edit di Motion Studio';
+        edit.title = __t('ms.editTip');
         edit.addEventListener('click', async () => { await openStudio(); loadDraft(a.id); });
         card.appendChild(edit);
       }
@@ -983,7 +986,7 @@
     const head = pop ? pop.querySelector('.pn-popup-head') : null;
     if (!pop || !head) return;
     head.classList.add('drag-handle');
-    head.title = 'Tahan & geser untuk memindahkan — dobel-klik: posisi awal';
+    head.title = __t('ms.headTip');
     let drag = null;
     let lastSave = 0;
     const savePos = (x, y, w, h, force) => {
@@ -1074,7 +1077,7 @@
     const l2d = L2D();
     if (!l2d || !l2d.isReady || !l2d.isReady()) {
       const st = $('#motion-open-status');
-      if (st) st.textContent = 'model belum siap — tunggu sebentar';
+      if (st) st.textContent = __t('ms.modelNotReady');
       return;
     }
     pop.classList.remove('hidden');
@@ -1114,7 +1117,7 @@
     if (l2d && l2d.unfreezeForEdit) l2d.unfreezeForEdit();
     if (state.dirty) {
       const st = $('#motion-open-status');
-      if (st) st.textContent = 'ada perubahan belum disimpan';
+      if (st) st.textContent = __t('ms.unsavedChanges');
     }
   }
 
@@ -1124,9 +1127,9 @@
     collectMeta();
     const d = state.draft;
     if (!d || !d.tracks.some(t => t.keys && t.keys.length)) {
-      setStatus('butuh minimal satu keyframe untuk dianalisa', 'err'); return;
+      setStatus(__t('ms.needKeyframeAnalyze'), 'err'); return;
     }
-    setStatus('menganalisa…');
+    setStatus(__t('ms.analyzing'));
     try {
       const r = await fetch(API + '/api/motions/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1142,9 +1145,9 @@
         d.emotionCompatibility = data.emotionCompatibility;
       }
       renderMeta();
-      setStatus('saran AI diisi — periksa lalu tekan Simpan kalau setuju', 'ok');
+      setStatus(__t('ms.aiFilled'), 'ok');
     } catch (e) {
-      setStatus('analisa gagal: ' + e.message, 'err');
+      setStatus(__t('ms.analyzeFail', { msg: e.message }), 'err');
     }
   }
 
@@ -1168,8 +1171,8 @@
     const box = $('#ms-gen-box');
     const input = $('#ms-gen-input');
     const prompt = promptArg || (input ? input.value : '');
-    if (!prompt || !prompt.trim()) { toggleGenBox(true); setStatus('tulis dulu gerakan yang mau dibuat', 'err'); return; }
-    setStatus('membuat gerakan — AI memilih parameter & keyframe…');
+    if (!prompt || !prompt.trim()) { toggleGenBox(true); setStatus(__t('ms.describeFirst'), 'err'); return; }
+    setStatus(__t('ms.generating'));
     try {
       const r = await fetch(API + '/api/motions/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1192,10 +1195,10 @@
       renderAll(); applyScrubPose();
       // langsung preview: user lihat gerakannya seketika
       try { playPreview(); } catch (e) {}
-      setStatus('"' + (gen.name || 'draft') + '" dibuat (' + (gen.tracks || []).length + ' track, AI pilih parameternya) — Simpan kalau cocok', 'ok');
+      setStatus(__t('ms.generated', { name: gen.name || 'draft', n: (gen.tracks || []).length }), 'ok');
       if (box) box.classList.add('hidden');
     } catch (e) {
-      setStatus('gagal membuat: ' + e.message, 'err');
+      setStatus(__t('ms.genFail', { msg: e.message }), 'err');
     }
   }
 
@@ -1228,18 +1231,18 @@
     on('#motion-studio-close', 'click', closeStudio);
 
     on('#ms-lib', 'change', (e) => {
-      if (state.dirty && !confirm('Ada perubahan belum disimpan. Tetap pindah?')) { renderLibrary(); return; }
+      if (state.dirty && !confirm(__t('ms.confirmSwitch'))) { renderLibrary(); return; }
       releaseAllDriven();
       loadDraft(e.target.value);
     });
     on('#ms-new', 'click', () => {
-      if (state.dirty && !confirm('Ada perubahan belum disimpan. Buat baru?')) return;
+      if (state.dirty && !confirm(__t('ms.confirmNew'))) return;
       releaseAllDriven();
       state.draft = blankDraft();
       state.selected = null; state.scrubT = 0; state.dirty = false;
       state.undoStack.length = 0; state.redoStack.length = 0;
       renderAll();
-      setStatus('gerakan baru — pilih parameter di Tambah Track Parameter');
+      setStatus(__t('ms.newMotion'));
     });
     on('#ms-dup', 'click', duplicateDraft);
     on('#ms-del', 'click', deleteDraft);

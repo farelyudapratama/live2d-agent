@@ -280,6 +280,14 @@ export async function assistantAsk(
       if (!tool) { pushMsg(rt, { role: "assistant", content: reply }); pushMsg(rt, { role: "tool", content: "Tool tidak dikenal: " + toolName }); continue; }
       if (tool.needsApproval) {
         const id = "ap_" + Math.random().toString(36).slice(2, 8);
+        // Cap antrean izin: runtime sekarang hidup lama (layanan mandiri).
+        // Approval yang diabaikan user dulu menumpuk di Map tanpa batas —
+        // yang tertua dibuang, dan model diberi tahu lewat riwayat.
+        while (rt.approvals.size >= 8) {
+          const oldest = rt.approvals.keys().next().value as string;
+          rt.approvals.delete(oldest);
+          pushMsg(rt, { role: "tool", content: "Permintaan izin lama kedaluwarsa (antrean penuh) — minta lagi kalau masih perlu." });
+        }
         rt.approvals.set(id, { id, tool: toolName, args: toolArgs, ts: Date.now() });
         pushMsg(rt, { role: "assistant", content: reply });
         pushMsg(rt, { role: "tool", content: "MENUNGGU PERSETUJUAN: " + toolName + " " + JSON.stringify(toolArgs).slice(0, 300) + " (id " + id + ")" });

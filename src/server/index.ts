@@ -342,14 +342,24 @@ async function handleAssistantAskStream(req: Request): Promise<Response> {
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     async start(ctrl) {
-      const send = (obj: unknown) => ctrl.enqueue(enc.encode("data: " + JSON.stringify(obj) + "\n\n"));
+      // Klien bisa putus di tengah (CLI ditutup / tab ditutup) — enqueue ke
+      // stream yang sudah mati melempar TypeError yang sebelumnya menjalar
+      // sampai menggagalkan ask yang sebenarnya berjalan baik. Setelah
+      // klien hilang, event diam-diam dibuang; tugas tetap selesai dan
+      // riwayat tetap tersimpan.
+      let clientGone = false;
+      const send = (obj: unknown) => {
+        if (clientGone) return;
+        try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(obj) + "\n\n")); }
+        catch { clientGone = true; }
+      };
       try {
         const r = await assistantAsk(String(body?.text || ""), config, (e) => send(e));
         send({ type: "done", ...r });
       } catch (e: any) {
         send({ type: "done", ok: false, error: e.message });
       } finally {
-        ctrl.close();
+        try { ctrl.close(); } catch {}
       }
     },
   });

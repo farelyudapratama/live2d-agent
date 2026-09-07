@@ -12,10 +12,15 @@ import { MAX_HISTORY, HISTORY_CHAR_BUDGET } from "./state";
 import type { Runtime } from "./state";
 import { emitEvent } from "./bus";
 
-/** Batas karakter per hasil tool yang ditulis ke history. */
+/** Batas karakter per hasil tool yang ditulis ke history.
+ *  Pemotongan line-boundary-aware: berhenti di akhir baris terakhir yang
+ *  muat, bukan di tengah karakter — diff/log tidak putus di tengah hunk. */
 export function clipToolResult(text: string, max = 4000): string {
   const t = String(text ?? "");
-  return t.length > max ? t.slice(0, max) + "\n…(terpotong, " + t.length + " char)" : t;
+  if (t.length <= max) return t;
+  const cut = t.lastIndexOf("\n", max);
+  const head = cut > 0 ? t.slice(0, cut) : t.slice(0, max);
+  return head + "\n…(terpotong, " + t.length + " char)";
 }
 
 function historyChars(rt: Runtime): number {

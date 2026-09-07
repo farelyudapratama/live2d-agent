@@ -23,6 +23,7 @@ import * as LipSync from "./speech/lip-sync";
 import * as i18n from "./i18n/index";
 import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
+import { startAssistantPanel } from "./agent/panel/panel";
 
 if (typeof window !== "undefined") {
   (window as any).MotionDSL = MotionDSL;
@@ -34,6 +35,9 @@ if (typeof window !== "undefined") {
   // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
   // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.
   (window as any).__i18n = i18n;
+  // Panel agent (mode Assistant) — dipanggil mode-runtime.js saat tab
+  // assistant aktif. Remake tampilan ala ZCode tinggal di sini (TS).
+  (window as any).__agentPanel = { start: startAssistantPanel };
   i18n.init();
   console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain + i18n)");
 }

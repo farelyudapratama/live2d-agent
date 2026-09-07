@@ -168,7 +168,10 @@
         <p class="hint" data-i18n="vt.hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
       </div>
 
-      <!-- ═══ MODE: AI ASSISTANT (agent lokal) ═══ -->
+      <!-- ═══ MODE: AI ASSISTANT (agent lokal — transcript ala ZCode) ═══
+           Isi panel (status pill, transcript, kartu tool/approval, plan,
+           memory) dibangun window.__agentPanel dari bundle.js ke #as-root.
+           Yang statis di sini hanya kerangka + tombol. -->
       <div id="mode-assistant" class="mode-panel hidden">
         <div class="section-title" data-i18n="as.title">AI Assistant — Agent Lokal</div>
         <div class="as-workdir">
@@ -177,15 +180,13 @@
         </div>
         <div class="note-row">
           <button id="as-stop" class="mini-btn" data-i18n="as.stop">Matikan Agent</button>
+          <button id="as-reset" class="mini-btn" data-i18n-title="as.resetTip" data-i18n="as.reset">Reset</button>
           <button id="as-memory" class="mini-btn" data-i18n="as.memoryBtn">Lihat Memory</button>
           <span class="hint" data-i18n="as.hint1">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
         </div>
-        <div id="as-plan" class="as-plan hidden"></div>
-        <div id="as-memory-box" class="as-plan hidden"></div>
-        <div id="as-log" class="as-log"></div>
-        <div id="as-approvals"></div>
+        <div id="as-root" class="as-root"></div>
         <div class="chat-input">
-          <input type="text" id="as-input" data-i18n-ph="as.inputPh" placeholder="Minta apa? mis. baca struktur folder…" />
+          <textarea id="as-input" rows="1" data-i18n-ph="as.inputPh" placeholder="Minta apa? mis. baca struktur folder…"></textarea>
           <button id="btn-as-send" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
         </div>
         <p class="hint" data-i18n="as.hint2">Tools aman (lihat folder, baca file) jalan otomatis. Menulis file &amp; menjalankan perintah butuh persetujuanmu di panel ini.</p>

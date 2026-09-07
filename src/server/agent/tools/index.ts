@@ -15,6 +15,8 @@ export type ToolDef = {
   /** Parameter JSON untuk schema prompt. */
   params: Record<string, string>;
   level: ToolLevel;
+  /** Argumen aman untuk bus/SSE/history. Argumen asli tetap untuk eksekusi. */
+  publicArgs?: (args: any) => any;
   run: (ctx: ToolCtx, args: any) => string | Promise<string>;
 };
 
@@ -32,6 +34,7 @@ import { toolSearchCode, toolGitDiff } from "./search";
 import { updatePlanTool } from "./plan";
 import { rememberTool, recallTool } from "./memory";
 import { spawnSubagentTool } from "./subagent";
+import { browserTools } from "./browser";
 
 export const TOOLS: ToolDef[] = [
   {
@@ -94,10 +97,22 @@ export const TOOLS: ToolDef[] = [
   rememberTool,
   recallTool,
   spawnSubagentTool,
+  ...browserTools,
 ];
 
 export function toolByName(name: string): ToolDef | undefined {
   return TOOLS.find((t) => t.name === name);
+}
+
+/** Argumen yang boleh masuk UI, bus, dan history; default mempertahankan bentuk lama. */
+export function publicToolArgs(tool: ToolDef | string, args: any): any {
+  const def = typeof tool === "string" ? toolByName(tool) : tool;
+  if (!def?.publicArgs) return args;
+  try {
+    return def.publicArgs(args);
+  } catch {
+    return {};
+  }
 }
 
 /** Baris prompt untuk system prompt agent. */

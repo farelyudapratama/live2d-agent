@@ -12,7 +12,7 @@ import type { AsEvent } from "../assistant-events";
 import { pushMsg, noteFileTouched, pushUndo } from "./state";
 import { snapshotFile } from "./undo";
 import { safePath } from "./tools/fs";
-import { TOOLS, toolByName } from "./tools/index";
+import { TOOLS, publicToolArgs, toolByName } from "./tools/index";
 import { trackToolSeq } from "./tools/plan";
 import { planLabel } from "./plan";
 import type { ToolCtx } from "./tools/index";
@@ -231,8 +231,9 @@ export async function agentAsk(
       }
       seenCalls.add(callKey);
 
-      emitEvent("tool_call_start", detected.name + " " + JSON.stringify(detected.args).slice(0, 100));
-      emit({ type: "tool_call", name: detected.name, args: detected.args });
+      const publicArgs = publicToolArgs(tool, detected.args);
+      emitEvent("tool_call_start", detected.name + " " + JSON.stringify(publicArgs).slice(0, 100));
+      emit({ type: "tool_call", name: detected.name, args: publicArgs });
 
       if (tool.level === "mutating") {
         // PERMISSION GATE — pause loop sampai user memutuskan.
@@ -246,10 +247,10 @@ export async function agentAsk(
         pushMsg(rt, { role: "assistant", content: stripToolDirective(reply, TOOL_NAMES) });
         pushMsg(rt, {
           role: "tool",
-          content: "MENUNGGU PERSETUJUAN: " + detected.name + " " + JSON.stringify(detected.args).slice(0, 300) + " (id " + id + ")",
+          content: "MENUNGGU PERSETUJUAN: " + detected.name + " " + JSON.stringify(publicArgs).slice(0, 300) + " (id " + id + ")",
         });
         emitEvent("permission_request", detected.name);
-        emit({ type: "approval", id, tool: detected.name, args: detected.args });
+        emit({ type: "approval", id, tool: detected.name, args: publicArgs });
         final = stripToolDirective(reply, TOOL_NAMES) + "\n\n⏳ Aku butuh izinmu untuk " + detected.name + " — cek panel Assistant.";
         break;
       }

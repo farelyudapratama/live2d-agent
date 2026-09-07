@@ -3,9 +3,10 @@
  * independen ke loop terpisah (read-only, tanpa nesting, maks 4 paralel).
  * Panggilan dengan array tasks dijalankan paralel dalam SATU tool call.
  */
-import { runSubagentBatch, MAX_PARALLEL } from "../subagent";
 import type { ToolCtx, ToolDef } from "./index";
 import type { ConfigManager } from "../../../shared/config";
+
+const MAX_PARALLEL = 4;
 
 let configRef: ConfigManager | null = null;
 
@@ -17,6 +18,7 @@ export function setSubagentConfig(config: ConfigManager): void {
 export async function toolSpawnSubagent(ctx: ToolCtx, args: any): Promise<string> {
   if (!ctx.rt) return "ERROR: runtime tidak tersedia";
   if (!configRef) return "ERROR: konfigurasi subagent belum siap";
+  const { runSubagentBatch } = await import("../subagent");
   const tasksRaw = Array.isArray(args?.tasks) ? args.tasks : [args];
   const calls = tasksRaw
     .map((t: any) => ({

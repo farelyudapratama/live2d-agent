@@ -160,7 +160,7 @@ describe("server API parity (dispatcher-level)", () => {
     expect(Array.isArray(json.notes.filesTouched)).toBe(true);
     // Metadata level tool (badge auto/izin) — additive, dari registry TOOLS.
     expect(Array.isArray(json.tools)).toBe(true);
-    expect(json.tools.length).toBeGreaterThanOrEqual(12);
+    expect(json.tools.length).toBeGreaterThanOrEqual(21);
     const wc = json.tools.find((t: any) => t.name === "write_file");
     expect(wc).toMatchObject({ level: "mutating" });
     const rd = json.tools.find((t: any) => t.name === "read_file");

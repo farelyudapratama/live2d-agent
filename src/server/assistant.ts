@@ -16,7 +16,7 @@ import { stripToolDirective } from "./agent/parse";
 import { readEvents, emitEvent } from "./agent/bus";
 import { narrate } from "./persona/narrator";
 import { cleanForSpeech } from "./persona/clean";
-import { TOOLS } from "./agent/tools/index";
+import { TOOLS, publicToolArgs } from "./agent/tools/index";
 import { setSubagentConfig } from "./agent/tools/subagent";
 import { memoryList, memoryDelete } from "./agent/memory";
 import { undoList, revertUndo } from "./agent/undo";
@@ -49,7 +49,10 @@ export function assistantStatus() {
     busy: rt?.busy || false,
     workDir: rt?.workDir || null,
     historyCount: rt?.history.length || 0,
-    pendingApprovals: rt ? Array.from(rt.approvals.values()) : [],
+    pendingApprovals: rt ? Array.from(rt.approvals.values(), (ap) => ({
+      ...ap,
+      args: publicToolArgs(ap.tool, ap.args),
+    })) : [],
     /** Rencana kerja aktif (update_plan) — untuk kotak progress di panel. */
     plan: rt?.plan || [],
     /** File yang tersentuh sesi ini (notes) — untuk tab Review panel. */

@@ -194,6 +194,7 @@ export class BrowserManager {
     const target = history.entries[history.currentIndex - 1];
     if (!target) throw new Error("tidak ada riwayat sebelumnya");
     await this.requireClient().send("Page.navigateToHistoryEntry", { entryId: target.id });
+    this.invalidateSnapshot();
   }
 
   async forward(): Promise<void> {
@@ -201,6 +202,7 @@ export class BrowserManager {
     const target = history.entries[history.currentIndex + 1];
     if (!target) throw new Error("tidak ada riwayat berikutnya");
     await this.requireClient().send("Page.navigateToHistoryEntry", { entryId: target.id });
+    this.invalidateSnapshot();
   }
 
   async reload(): Promise<void> {
@@ -219,10 +221,10 @@ export class BrowserManager {
     return formatInspect(snapshot, cursor, maxChars);
   }
 
-  async click(ref: string): Promise<void> {
+  async click(snapshotId: string, ref: string): Promise<void> {
     const client = this.requireClient();
     await this.verifyCurrentPage();
-    const node = this.resolveNode(ref);
+    const node = this.resolveNode(snapshotId, ref);
     if (!node.backendDOMNodeId) throw new Error("elemen tidak punya target DOM");
     const model = await client.send<{ model?: { border?: number[]; content?: number[] } }>(
       "DOM.getBoxModel", { backendNodeId: node.backendDOMNodeId },
@@ -236,10 +238,10 @@ export class BrowserManager {
     await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
   }
 
-  async type(ref: string, value: string, pressEnter = false): Promise<void> {
+  async type(snapshotId: string, ref: string, value: string, pressEnter = false): Promise<void> {
     const client = this.requireClient();
     await this.verifyCurrentPage();
-    const node = this.resolveNode(ref);
+    const node = this.resolveNode(snapshotId, ref);
     if (node.sensitive) throw new Error("pengisian password/rahasia tidak diizinkan");
     if (!node.backendDOMNodeId) throw new Error("elemen tidak punya target DOM");
     await client.send("DOM.focus", { backendNodeId: node.backendDOMNodeId });
@@ -367,9 +369,12 @@ export class BrowserManager {
     }
   }
 
-  private resolveNode(ref: string) {
+  private resolveNode(snapshotId: string, ref: string) {
     if (!this.currentSnapshotId) throw new SnapshotReferenceError("stale", "inspect halaman sebelum memakai ref");
-    return this.snapshots.resolve(ref, { snapshotId: this.currentSnapshotId, url: this.url });
+    if (snapshotId !== this.currentSnapshotId) {
+      throw new SnapshotReferenceError("stale", "snapshot browser sudah stale setelah navigasi/inspect baru");
+    }
+    return this.snapshots.resolve(ref, { snapshotId, url: this.url });
   }
 
   private requireClient(): ClientLike {

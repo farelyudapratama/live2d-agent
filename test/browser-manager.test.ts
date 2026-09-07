@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BrowserManager, browserEngine, choosePageTarget, parseDevToolsActivePort } from "../src/server/browser/manager";
+import { normalizeAxTree, SnapshotReferenceError } from "../src/server/browser/snapshot";
 import type { BrowserUrlDecision } from "../src/server/browser/policy";
 
 describe("browser manager helpers", () => {
@@ -52,6 +53,30 @@ describe("browser manager helpers", () => {
     expect(checks).toBe(2);
     expect(sent.at(-1)).toEqual({ method: "Page.navigate", params: { url: "https://example.com/" } });
     expect(sent.some((item) => item.method === "Page.getFrameTree")).toBe(true);
+  });
+
+  it("menolak snapshotId lama saat click meski ref masih tersimpan", async () => {
+    const client = {
+      closed: false,
+      send: async <T>(method: string): Promise<T> => {
+        if (method === "Page.getFrameTree") return { frameTree: { frame: { url: "https://example.com/" } } } as T;
+        return {} as T;
+      },
+      on: () => () => {}, close: () => {},
+    };
+    const manager = new BrowserManager({
+      executable: "C:\\Chrome\\chrome.exe", createClient: () => client,
+      inspectUrl: async () => ({ ok: true, url: "https://example.com/", origin: "https://example.com", privateNetwork: false }),
+    });
+    (manager as any).client = client;
+    (manager as any).url = "https://example.com/";
+    const snapshot = normalizeAxTree(
+      [{ role: { value: "button" }, name: { value: "OK" }, backendDOMNodeId: 1 }],
+      { url: "https://example.com/", title: "" }, { makeId: (() => { let n = 0; return () => String(++n); })() },
+    );
+    (manager as any).snapshots.put(snapshot);
+    (manager as any).currentSnapshotId = snapshot.snapshotId;
+    expect(manager.click("bs_lama", snapshot.nodes[0].ref)).rejects.toBeInstanceOf(SnapshotReferenceError);
   });
 
   it("memvalidasi DevToolsActivePort", () => {

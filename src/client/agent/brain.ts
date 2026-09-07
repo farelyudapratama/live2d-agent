@@ -402,6 +402,9 @@ Contoh pendek:
     if (this.history.length > HISTORY_LIMIT * 2)
       this.history.splice(0, this.history.length - HISTORY_LIMIT * 2);
     setThinking(true);
+    // Fase mikir: alih pandang ke atas-samping (intent "think"); balik
+    // menghadap user otomatis saat mulai bicara (lockAI) atau lewat timer.
+    l2d()?.setGazeIntent?.("think", { hold: 7000 });
     try {
       const resp = await fetch(API + "/api/chat", {
         method: "POST",
@@ -459,6 +462,8 @@ Contoh pendek:
       } catch {}
     this.busy = true;
     setThinking(true);
+    // Sama seperti chat(): saat "menyadari" event, pandangan melamun dulu.
+    l2d()?.setGazeIntent?.("think", { hold: 7000 });
     try {
       const system =
         this.buildSystemPrompt("") +

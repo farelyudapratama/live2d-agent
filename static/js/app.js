@@ -100,6 +100,13 @@
     fidgetT: 0,
     fidgetSeed: Math.random() * 1000,
 
+    // Pandangan berbasis intent: default "menghadap user", alih pandang hanya
+    // sebagai ekspresi yang disengaja (mikir, malu, dsb) lalu pulang.
+    gazeIntent: null,
+    gazeReturnTimer: null,
+    lookUserAt: 0,
+    aiPoseDirectiveAt: 0,
+
     lookFrame: { eyeX: 0, eyeY: 0, w: 1, h: 1 },
     idleMotionTimer: null,
     activeEmotion: "normal",
@@ -636,12 +643,12 @@
       const E1 = Math.sin(t * 0.35) * 0.35 + Math.sin(t * 1.3 + 0.5) * 0.2;
       const E2 =
         Math.sin(t * 0.45 + 2.0) * 0.22 +
-        (state.talking ? Math.sin(t * 3.1) * 0.2 : 0);
+        (state.talking ? Math.sin(t * 3.1) * 0.1 : 0);
       const breath = Math.sin(t * 1.1) * 0.5 + 0.5;
       const tiltLife =
         Math.sin(t * 0.4 + 0.7) * (state.talking ? 7 : 4) + state.impulse * 8;
       const bodyLeanLife = Math.sin(t * 0.6) * 4 + Math.sin(t * 1.4) * 1.5;
-      const talkHead = state.talking ? Math.sin(t * 9.0) * 5 : 0;
+      const talkHead = state.talking ? Math.sin(t * 9.0) * 2 : 0;
 
       let bAx, bAy, bEx, bEy, bMf, bBx, bBy, bBz;
       // Saat layer motion aktif (motionRuntime), POSE DIMILIKI motion:
@@ -659,7 +666,7 @@
         const P = state.aiPose;
         const frozen = !!state.frozen;
         const ft = state.fidgetT + state.fidgetSeed;
-        const amp = frozen ? 0 : 1 + liveliness * 1.6;
+        const amp = frozen ? 0 : 0.45 + liveliness * 0.3;
         bAx = (P.ax || 0) + (frozen ? 0 : Math.sin(ft * 0.6) * 2 * amp);
         bAy = (P.ay || 0) + (frozen ? 0 : Math.sin(ft * 0.45) * 1.5 * amp);
         bEx = (P.ex || 0) + (frozen ? 0 : E1 * 0.4);
@@ -690,7 +697,7 @@
         const P = state.aiPose;
         state.fidgetT += dt;
         const ft = state.fidgetT + state.fidgetSeed;
-        const amp = frozen ? 0 : 1 + liveliness * 1.6;
+        const amp = frozen ? 0 : 0.45 + liveliness * 0.3;
         const fx = frozen
           ? 0
           : (Math.sin(ft * 0.6) * 9 + Math.sin(ft * 1.7) * 3) * amp;
@@ -858,6 +865,7 @@
 
     canvas.addEventListener("mousemove", (e) => {
       if (state.isDragging || !state.model || state.aiLock) return;
+      state.lookUserAt = Date.now();
       const m = state.model;
 
       const eyeLocalX = state.lookFrame.eyeX || m.width / m.scale.x / 2;
@@ -2107,7 +2115,7 @@
 
   // Mesin suara global (dari /api/config). provider "browser" = speechSynthesis;
   // selain itu bicara lewat /api/tts yang meneruskan ke provider remote.
-  let TTS_CFG = { provider: "browser", endpoint: "", apiKey: "", voice: "", model: "" };
+  let TTS_CFG = { provider: "browser", endpoint: "", apiKey: "", voice: "", model: "", hematRequest: false };
 
   let EVENTS = {
     idleSpeak: true,
@@ -2142,7 +2150,7 @@
       const r = await fetch(API + "/api/config");
       const d = await r.json();
       TTS_CFG = Object.assign(
-        { provider: "browser", endpoint: "", apiKey: "", voice: "", model: "" },
+        { provider: "browser", endpoint: "", apiKey: "", voice: "", model: "", hematRequest: false },
         d.tts || {},
       );
       // Config lama: hanya ada endpoint Gradio tanpa provider.
@@ -2244,6 +2252,11 @@
           .toLowerCase();
         const langRe = new RegExp("^" + base, "i");
         const v =
+          // Suara pilihan user (dropdown Suara Sistem) selalu menang —
+          // kosong/voice sudah tidak ada → jatuh ke auto berbasis bahasa.
+          (vcfg.ttsVoiceName
+            ? vs.find((x) => x.name === vcfg.ttsVoiceName)
+            : null) ||
           vs.find(
             (x) =>
               String(x.lang).toLowerCase() ===
@@ -2389,6 +2402,13 @@
     clearTimeout(fallbackTimer);
     // `let` — regroup adaptif mengganti isi segments setelah latensi diukur
     let segments = splitSpeechSegments(text);
+    // Mode hemat request (API yang menagih per request): gabung semua kalimat
+    // jadi paketan besar SEJAK AWAL (±800 karakter ≈ 1 menit audio) — reply
+    // normal cukup 1 request TTS. Konsekuensi: karakter mulai bicara beberapa
+    // detik lebih telat karena menunggu sintesis paket pertama selesai.
+    if (TTS_CFG.hematRequest && segments.length > 1) {
+      segments = regroupByTarget(splitSpeechSegments(text), 800);
+    }
     // Teks pendek → jalur lama (satu request), tanpa overhead pipeline.
     if (segments.length <= 1) {
       try {
@@ -2453,7 +2473,7 @@
         // per-kalimat (audio ±3 dtk), prefetch tak akan pernah kejar →
         // gabung kalimat berikutnya sampai durasi audionya ≥ latensi.
         const latencySec = (performance.now() - t0) / 1000;
-        if (latencySec > 4 && segments.length > 1) {
+        if (!TTS_CFG.hematRequest && latencySec > 4 && segments.length > 1) {
           // ~13 char/dtk bicara Indonesia, 1.35 margin keamanan.
           const target = clamp(
             Math.round(latencySec * 13 * 1.35),
@@ -3445,6 +3465,7 @@
       rate: $("#cfg-tts-rate"),
       rateOut: $("#cfg-tts-rate-out"),
       lang: $("#cfg-tts-lang"),
+      sysVoice: $("#cfg-tts-sysvoice"),
       ttsProvider: $("#cfg-tts-provider"),
       ttsEndpoint: $("#cfg-tts-endpoint"),
       ttsKey: $("#cfg-tts-key"),
@@ -3454,6 +3475,7 @@
       ttsModelFree: $("#cfg-tts-model-free"),
       ttsStyle: $("#cfg-tts-style"),
       ttsStylePick: $("#cfg-tts-style-pick"),
+      ttsHemat: $("#cfg-tts-hemat"),
       btn: $("#btn-save-cfg"),
       test: $("#btn-test-voice"),
       status: $("#cfg-status"),
@@ -3506,6 +3528,7 @@
         }
         cfgEls.lang.value = c.ttsLang;
       }
+      if (cfgEls.sysVoice) cfgEls.sysVoice.value = c.ttsVoiceName || "";
 
       bgImageDraft = undefined;
       if (cfgEls.bgColor) cfgEls.bgColor.value = c.bgColor || "#0d0d10";
@@ -3523,6 +3546,7 @@
         ttsPitch: cfgEls.pitch ? Number(cfgEls.pitch.value) : undefined,
         ttsRate: cfgEls.rate ? Number(cfgEls.rate.value) : undefined,
         ttsLang: cfgEls.lang ? cfgEls.lang.value : undefined,
+        ttsVoiceName: cfgEls.sysVoice ? cfgEls.sysVoice.value : undefined,
         bgColor: cfgEls.bgColor ? cfgEls.bgColor.value : undefined,
         bgDim: cfgEls.bgDim ? Number(cfgEls.bgDim.value) : undefined,
 
@@ -3654,6 +3678,7 @@
               draft.voice ||
               draft.model ||
               draft.style ||
+              draft.hematRequest !== !!TTS_CFG.hematRequest ||
               draft.provider !== (TTS_CFG.provider || "browser");
             if (remoteTouched) {
               if (!draft.apiKey) delete draft.apiKey;
@@ -3672,6 +3697,7 @@
                   apiKey: "",
                   voice: "",
                   model: "",
+                  hematRequest: false,
                 },
                 d.tts || {},
               );
@@ -3745,6 +3771,7 @@
         voice: ttsVoiceValue(),
         model: ttsModelValue(),
         style: cfgEls.ttsStyle ? cfgEls.ttsStyle.value.trim() : "",
+        hematRequest: cfgEls.ttsHemat ? !!cfgEls.ttsHemat.checked : false,
       };
     }
 
@@ -3904,6 +3931,7 @@
           : "kosongkan bila tidak perlu";
       }
       if (cfgEls.ttsStyle) cfgEls.ttsStyle.value = cfg.style || "";
+      if (cfgEls.ttsHemat) cfgEls.ttsHemat.checked = !!cfg.hematRequest;
       paintTTSVisibility();
       refreshTTSOptions();
     }
@@ -3960,6 +3988,51 @@
         paintTTSVisibility();
         refreshTTSOptions();
       });
+      if (cfgEls.ttsHemat)
+        cfgEls.ttsHemat.addEventListener("change", () =>
+          setCfgStatus(__t("cfg.notSaved"), ""),
+        );
+
+      // ── Suara Sistem (Web Speech): dropdown semua voice ter-install ──
+      // Daftar voice datang ASINKRON (Chrome mengisinya belakangan), jadi
+      // isi ulang tiap event voiceschanged dan pilih ulang nilai tersimpan.
+      function refreshSystemVoices() {
+        const sel = cfgEls.sysVoice;
+        if (!sel || typeof speechSynthesis === "undefined") return;
+        const vs = (speechSynthesis.getVoices() || [])
+          .slice()
+          .sort(
+            (a, b) =>
+              String(a.lang).localeCompare(String(b.lang)) ||
+              String(a.name).localeCompare(String(b.name)),
+          );
+        sel.innerHTML = "";
+        const auto = document.createElement("option");
+        auto.value = "";
+        auto.textContent = __t("cfg.sysVoiceAuto");
+        sel.appendChild(auto);
+        for (const v of vs) {
+          const o = document.createElement("option");
+          o.value = v.name;
+          o.textContent = v.name + " — " + v.lang;
+          sel.appendChild(o);
+        }
+        const want =
+          (state.modelConfig && state.modelConfig.ttsVoiceName) || "";
+        sel.value = want;
+        if (sel.value !== want) sel.value = ""; // voice hilang dari sistem
+      }
+      if (cfgEls.sysVoice && typeof speechSynthesis !== "undefined") {
+        refreshSystemVoices();
+        if (speechSynthesis.addEventListener)
+          speechSynthesis.addEventListener(
+            "voiceschanged",
+            refreshSystemVoices,
+          );
+        cfgEls.sysVoice.addEventListener("change", () =>
+          setCfgStatus(__t("cfg.notSaved"), ""),
+        );
+      }
       if (cfgEls.ttsVoice)
         cfgEls.ttsVoice.addEventListener("change", () => {
           if (
@@ -5614,6 +5687,7 @@
     ttsRate: 1,
     ttsPitch: 1.15,
     ttsLang: "id-ID",
+    ttsVoiceName: "",
 
     displayName: "",
 
@@ -6275,6 +6349,7 @@
         bodyX: 0, bodyY: 0, bodyZ: 0,
         mouthForm: 0, breath: 0.45,
       };
+      state.aiPoseDirectiveAt = 0;
     } catch (e) {}
 
     // 4) Nada/gaya dari gesture terakhir + kecepatan animasi kembali normal.
@@ -6659,19 +6734,32 @@
       state.aiLock = true;
       state.fidgetT = 0;
       state.fidgetSeed = Math.random() * 1000;
+      if (state.gazeReturnTimer) {
+        clearTimeout(state.gazeReturnTimer);
+        state.gazeReturnTimer = null;
+      }
 
       const readSafe = (id) =>
         state.caps.params && state.caps.params.has(id) ? readParam(id) : 0;
+      // Mulai bicara = kembali menghadap user (basis kecil acak biar tidak
+      // kaku). Directive [HEAD:]/[EYES:] dari AI tetap bisa menimpa lewat
+      // setAIPose() setelah ini; scheduler intent mundur selama directive segar.
+      const j = (a, b) => a + Math.random() * (b - a);
       state.aiPose = {
-        ax: readParam(roleId("angleX") || "ParamAngleX"),
-        ay: readParam(roleId("angleY") || "ParamAngleY"),
-        ex: readParam(roleId("eyeBallX") || "ParamEyeBallX"),
-        ey: readParam(roleId("eyeBallY") || "ParamEyeBallY"),
+        ax: j(-2, 2),
+        ay: j(-2, 2),
+        ex: j(-0.05, 0.05),
+        ey: j(-0.05, 0.05),
         mouthForm: readParam(roleId("mouthForm") || "ParamMouthForm"),
-        bodyX: readSafe(roleId("bodyAngleX") || "ParamBodyAngleX"),
-        bodyY: readSafe(roleId("bodyAngleY") || "ParamBodyAngleY"),
-        bodyZ: readSafe(roleId("bodyAngleZ") || "ParamBodyAngleZ"),
+        bodyX: readSafe(roleId("bodyAngleX") || "ParamBodyAngleX") * 0.4,
+        bodyY: readSafe(roleId("bodyAngleY") || "ParamBodyAngleY") * 0.4,
+        bodyZ: readSafe(roleId("bodyAngleZ") || "ParamBodyAngleZ") * 0.4,
         breath: 0.45,
+      };
+      state.gazeIntent = {
+        kind: "face-user",
+        startedAt: Date.now(),
+        until: Date.now() + 2000,
       };
 
       startGestureScheduler();
@@ -6689,8 +6777,14 @@
       console.log("[Live2D] AI lock OFF — user control restored");
     },
 
+    // Intent pandangan dari luar (brain.ts: fase mikir, event, dsb).
+    setGazeIntent: (kind, opts) => setGazeIntent(kind, opts),
+
     setAIPose: (pose) => {
       if (!pose || typeof pose !== "object") return;
+      // Directive pose AI masuk → tandai segar; scheduler gaze-intent mundur
+      // beberapa detik supaya tidak menimpa ekspresi yang AI tentukan sendiri.
+      state.aiPoseDirectiveAt = Date.now();
       const P = state.aiPose;
       if (pose.head) {
         if (pose.head.x != null) P.ax = pose.head.x;
@@ -6839,6 +6933,13 @@
       /^[a-zA-Z]{2}(-[a-zA-Z0-9]{2,8})*$/.test(raw.ttsLang)
     ) {
       c.ttsLang = raw.ttsLang;
+    }
+    // Nama voice Web Speech pilihan user (dari dropdown Suara Sistem).
+    // Kosong = otomatis: pickVoice cari berdasarkan bahasa seperti dulu.
+    if (typeof raw.ttsVoiceName === "string") {
+      c.ttsVoiceName = raw.ttsVoiceName
+        .replace(/[\u0000-\u001F\u007F]/g, "")
+        .slice(0, 120);
     }
 
     if (typeof raw.displayName === "string") {
@@ -8375,6 +8476,121 @@
     return pick.name;
   }
 
+  // ── Gaze berbasis intent ────────────────────────────────────────────────
+  // Default menghadap user; alih pandang hanya sebagai ekspresi yang
+  // disengaja (mikir, malu, penasaran) dan SELALU pulang. Semua pose
+  // ABSOLUT di sekitar (0,0) — bukan delta yang menumpuk. Konvensi: X
+  // positif sama sisi kepala & mata, Y positif = ke atas.
+  const GAZE_INTENTS = {
+    "face-user": {
+      hold: [1800, 3200],
+      pose: (R) => ({
+        ax: R(-2, 2),
+        ay: R(-2, 2),
+        ex: R(-0.06, 0.06),
+        ey: R(-0.05, 0.05),
+      }),
+    },
+    glance: {
+      hold: [500, 1100],
+      pose: (R) => {
+        const s = R() < 0.5 ? -1 : 1;
+        return { ax: s * R(4, 9), ay: R(-3, 3), ex: s * R(0.3, 0.55), ey: R(-0.1, 0.1) };
+      },
+    },
+    // Sedang berpikir: mata melayang ke atas-samping, kepala ikut sedikit.
+    think: {
+      hold: [1600, 3000],
+      pose: (R) => {
+        const s = R() < 0.5 ? -1 : 1;
+        return { ax: s * R(4, 9), ay: R(2, 5), ex: s * R(0.35, 0.55), ey: R(0.15, 0.3) };
+      },
+    },
+    // Alih pandang ke bawah-samping: malu, sedih, ragu.
+    "lookaway-down": {
+      hold: [1200, 2400],
+      pose: (R) => {
+        const s = R() < 0.5 ? -1 : 1;
+        return { ax: s * R(8, 15), ay: R(-6, -2), ex: s * R(0.4, 0.7), ey: R(-0.4, -0.15) };
+      },
+    },
+    // Melirik ke atas: kaget, senang, ide muncul.
+    up: {
+      hold: [600, 1200],
+      pose: (R) => ({ ax: R(-4, 4), ay: R(4, 9), ex: R(-0.1, 0.1), ey: R(0.2, 0.4) }),
+    },
+  };
+
+  function playGazePose(p) {
+    const P = state.aiPose;
+    P.ax = clamp(p.ax, -30, 30);
+    P.ay = clamp(p.ay, -22, 22);
+    P.ex = clamp(p.ex, -1, 1);
+    P.ey = clamp(p.ey, -1, 1);
+    state.impulse = Math.min(0.6, state.impulse + 0.1);
+  }
+
+  // Bobot intent mengikuti emosi aktif — konteks yang menentukan.
+  function pickGazeIntent() {
+    const emo = state.activeEmotion || "normal";
+    const r = Math.random();
+    if (emo === "malu" || emo === "sedih") {
+      if (r < 0.38) return "face-user";
+      return r < 0.66 ? "lookaway-down" : "glance";
+    }
+    if (emo === "kaget") {
+      if (r < 0.7) return "face-user";
+      return r < 0.85 ? "up" : "glance";
+    }
+    if (emo === "senang") {
+      if (r < 0.62) return "face-user";
+      return r < 0.8 ? "glance" : "up";
+    }
+    if (r < 0.68) return "face-user";
+    return r < 0.88 ? "glance" : "think";
+  }
+
+  function setGazeIntent(kind, opts) {
+    const def = GAZE_INTENTS[kind];
+    if (!def || !state.model) return false;
+    const R = (a, b) => a + Math.random() * (b - a);
+    const hold = opts?.hold ?? R(def.hold[0], def.hold[1]);
+    const p = def.pose(R);
+    state.gazeIntent = { kind, startedAt: Date.now(), until: Date.now() + hold };
+
+    if (state.aiLock) {
+      playGazePose(p);
+      return true;
+    }
+    // Belum bicara (fase mikir/idle): tulis look targets — cabang idle yang
+    // mengejar. Pulang menghadap user sendiri setelah hold, kecuali mouse
+    // user bergerak lebih dulu (user pegang kendali pandangan).
+    state.look.tax = clamp(p.ax, -30, 30);
+    state.look.tay = clamp(p.ay, -22, 22);
+    state.look.tex = clamp(p.ex, -1, 1);
+    state.look.tey = clamp(p.ey, -1, 1);
+    state.look.tbx = clamp(p.ax, -30, 30) * 0.25;
+    state.look.tby = clamp(p.ay, -22, 22) * 0.25;
+    if (state.gazeReturnTimer) clearTimeout(state.gazeReturnTimer);
+    const startedAt = state.gazeIntent.startedAt;
+    state.gazeReturnTimer = setTimeout(() => {
+      state.gazeReturnTimer = null;
+      if (state.lookUserAt > startedAt) return;
+      state.look.tax = state.look.tay = 0;
+      state.look.tex = state.look.tey = 0;
+      state.look.tbx = state.look.tby = 0;
+      state.gazeIntent = {
+        kind: "face-user",
+        startedAt: Date.now(),
+        until: Date.now() + 1500,
+      };
+    }, hold);
+    return true;
+  }
+
+  // Scheduler saat AI bicara: tiap beberapa detik pilih intent sesuai konteks
+  // (emosi) dan terapkan sebagai pose absolut. Directive AI ([HEAD:]/[EYES:])
+  // lewat setAIPose() tetap menang — scheduler mundur selama directive segar.
   function startGestureScheduler() {
     stopGestureScheduler();
     const tick = () => {
@@ -8389,47 +8605,26 @@
         return;
       }
 
-      const P = state.aiPose;
-      const r = (a, b) => a + Math.random() * (b - a);
-
-      const MIX = {
-        senang: [0.3, 0.55],
-        kaget: [0.45, 0.6],
-        malu: [0.2, 0.85],
-        sedih: [0.15, 0.9],
-        normal: [0.45, 0.8],
-      };
-      const [t1, t2] = MIX[state.activeEmotion] || MIX.normal;
-      const calm =
-        state.activeEmotion === "sedih" || state.activeEmotion === "malu"
-          ? 0.55
-          : 1;
-      const kind = Math.random();
-      if (kind < t1) {
-        P.ax = clamp((P.ax || 0) + r(-16, 16) * calm, -34, 34);
-        P.ay = clamp((P.ay || 0) + r(-10, 10) * calm, -26, 26);
-        P.ex = clamp((P.ex || 0) + r(-0.2, 0.2), -1, 1);
-        P.ey = clamp((P.ey || 0) + r(-0.2, 0.2), -1, 1);
-      } else if (kind < t2) {
-        P.ax = clamp((P.ax || 0) + r(-10, 10), -30, 30);
-        P.ay = clamp((P.ay || 0) + r(-8, 8), -24, 24);
-        if (state.caps.hasBody && roleId("bodyAngleX")) {
-          P.bodyZ = clamp((P.bodyZ || 0) + r(-8, 8), -20, 20);
-        } else {
-          P.bodyZ = clamp((P.bodyZ || 0) + r(-6, 6), -30, 30);
-        }
-      } else {
-        state.energyBoost = Math.min(1.2, state.energyBoost + 0.7);
-        state.impulse = Math.min(1.3, state.impulse + 0.5);
-        P.ax = clamp((P.ax || 0) + r(-12, 12), -34, 34);
-        P.ay = clamp((P.ay || 0) + r(-7, 7), -26, 26);
+      const now = Date.now();
+      if (now - (state.aiPoseDirectiveAt || 0) < 3500) {
+        state.gazeIntent = {
+          kind: "ai-directive",
+          startedAt: now,
+          until: now + 3500,
+        };
+        state.gesture.timer = setTimeout(tick, 900);
+        return;
       }
 
-      if (Math.random() < 0.35) {
-        playEmotionClip(state.activeEmotion);
-      }
+      const kind = pickGazeIntent();
+      const def = GAZE_INTENTS[kind];
+      const R = (a, b) => a + Math.random() * (b - a);
+      const hold = R(def.hold[0], def.hold[1]);
+      state.gazeIntent = { kind, startedAt: now, until: now + hold };
+      playGazePose(def.pose(R));
 
-      if (Math.random() < 0.6) {
+      // Kedip sesekali tetap dipertahankan supaya bicara terasa hidup.
+      if (Math.random() < 0.3) {
         try {
           pokeRoleNorm("eyeLOpen", 0);
           pokeRoleNorm("eyeROpen", 0);
@@ -8440,10 +8635,10 @@
         } catch (e) {}
       }
 
-      const next = 1100 + Math.random() * 1500;
+      const next = 2400 + Math.random() * 2200;
       state.gesture.timer = setTimeout(tick, next);
     };
-    state.gesture.timer = setTimeout(tick, 1200 + Math.random() * 800);
+    state.gesture.timer = setTimeout(tick, 900);
     state.gesture.seed = Math.random() * 1000;
   }
   function stopGestureScheduler() {

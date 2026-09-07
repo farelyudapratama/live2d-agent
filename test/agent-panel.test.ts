@@ -17,6 +17,21 @@ import { diffLines, changeFromTool } from "../src/client/agent/panel/diff";
 import { parseMarkdown, parseInlines } from "../src/client/agent/panel/md";
 import { ChangeRegistry, TermLog } from "../src/client/agent/panel/registry";
 import { makeActor } from "../src/client/agent/panel/actor";
+import { toolRunIsTerminal } from "../src/client/agent/panel/view";
+
+// ═══════════════════════════════════════════════════════════════
+// Hierarki activity — grup selesai otomatis collapse
+// ═══════════════════════════════════════════════════════════════
+
+describe("toolRunIsTerminal", () => {
+  it("true bila semua tool done/error", () => {
+    expect(toolRunIsTerminal([{ status: "done" }, { status: "error" }])).toBe(true);
+  });
+  it("false bila masih ada running atau grup kosong", () => {
+    expect(toolRunIsTerminal([{ status: "done" }, { status: "running" }])).toBe(false);
+    expect(toolRunIsTerminal([])).toBe(false);
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════
 // stream.ts
@@ -505,6 +520,13 @@ describe("Transcript — tugas berjalan (kartu TASK)", () => {
     const tr2 = new Transcript();
     tr2.syncFromHistory([{ role: "user", content: CONTINUATION_PROMPT }]);
     expect(tr2.currentTask()).toBe("");
+  });
+
+  it("fallback currentTask membaca blok user terakhir bila cache task kosong", () => {
+    const tr = new Transcript();
+    tr.appendUser("tugas dari blok nyata");
+    (tr as any).task = ""; // simulasi hydrate lama/cache terlewat
+    expect(tr.currentTask()).toBe("tugas dari blok nyata");
   });
 });
 

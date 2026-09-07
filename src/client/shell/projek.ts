@@ -44,7 +44,14 @@ export function startProjekRail(): () => void {
 
   let destroyed = false;
   let open = false;
-  try { open = localStorage.getItem(LS_KEY) === "1"; } catch {}
+  try {
+    const saved = localStorage.getItem(LS_KEY);
+    // Layar lebar memakai kolom Project/History secara default; pilihan user
+    // setelah toggle tetap menang pada kunjungan berikutnya.
+    open = saved == null ? window.innerWidth >= 1600 : saved === "1";
+  } catch {
+    open = window.innerWidth >= 1600;
+  }
 
   function setOpen(v: boolean): void {
     open = v;

@@ -14,6 +14,11 @@ import type { MdInline, MdToken } from "./md";
 export type PlanItem = { id?: string; task: string; status: string; note?: string };
 export type TechnicalTab = "review" | "term" | "browser";
 
+/** Grup aktivitas hanya perlu terbuka selama minimal satu tool masih berjalan. */
+export function toolRunIsTerminal(run: Array<{ status: string }>): boolean {
+  return run.length > 0 && run.every((tool) => tool.status !== "running");
+}
+
 export type PanelViewDeps = {
   t: (key: string, vars?: Record<string, string | number>) => string;
   onApprove: (apId: string, approve: boolean) => void;
@@ -121,6 +126,25 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     tabBtns[name] = btn;
     tabsBar.appendChild(btn);
   }
+  // Panel teknis bisa dipadatkan tanpa menghilangkan fungsinya. Pilihan user
+  // persisten; workspace ikut mengecil sehingga ruang kembali ke panggung.
+  const techCollapse = el("button", "as-tech-collapse", "›") as HTMLButtonElement;
+  techCollapse.type = "button";
+  techCollapse.title = t("as.tech.collapse");
+  techCollapse.setAttribute("aria-label", t("as.tech.collapse"));
+  tabsBar.appendChild(techCollapse);
+  const techShell = techRoot?.closest("#agent-tech") as HTMLElement | null;
+  const agentWorkspace = techRoot?.closest("#agent-workspace") as HTMLElement | null;
+  function setTechCollapsed(on: boolean): void {
+    techShell?.classList.toggle("collapsed", on);
+    agentWorkspace?.classList.toggle("tech-collapsed", on);
+    techCollapse.textContent = on ? "‹" : "›";
+    techCollapse.title = t(on ? "as.tech.expand" : "as.tech.collapse");
+    techCollapse.setAttribute("aria-label", techCollapse.title);
+    techCollapse.setAttribute("aria-expanded", on ? "false" : "true");
+    try { localStorage.setItem("live2d.agentTech.collapsed", on ? "1" : "0"); } catch {}
+  }
+  techCollapse.addEventListener("click", () => setTechCollapsed(!techShell?.classList.contains("collapsed")));
 
   const reviewPage = el("div", "as-page as-review");
   const termPage = el("div", "as-page as-term hidden");
@@ -157,6 +181,8 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     techRoot.appendChild(reviewPage);
     techRoot.appendChild(termPage);
     techRoot.appendChild(browserPage);
+    try { setTechCollapsed(localStorage.getItem("live2d.agentTech.collapsed") === "1"); }
+    catch { setTechCollapsed(false); }
   }
   tabBtns.review.classList.add("active");
 
@@ -436,9 +462,15 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     return node;
   }
 
-  // state grup step: key = gabungan id tool; val = {wrapper, body, sig}
-  const stepGroups = new Map<string, { wrap: HTMLElement; body: HTMLElement; sig: string }>();
-  let stepSeq = 0;
+  // State grup step. Grup yang masih bekerja terbuka; begitu semua tool
+  // terminal (done/error) ia auto-collapse agar log tak menggeser TASK/chat.
+  // Setelah user men-toggle manual, pilihan user menang atas auto-collapse.
+  const stepGroups = new Map<string, {
+    wrap: HTMLElement;
+    body: HTMLElement;
+    sig: string;
+    userToggled: boolean;
+  }>();
 
   /**
    * Bungkus run tool jadi grup collapsible. Kartu tool dirender normal di
@@ -450,15 +482,20 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     prev: HTMLElement | null,
     seen: Set<number>,
   ): HTMLElement {
-    const ids = run.map((b) => b.id).join(",");
-    const sig = ids + "|" + run.map((b) => b.status + ":" + b.rev).join(",");
-    let g = stepGroups.get(ids);
+    // Key stabil = id tool pertama. Jumlah child boleh bertambah selama live
+    // tanpa membuat wrapper duplikat; signature tetap memuat seluruh child.
+    const groupKey = String(run[0].id);
+    const sig = run.map((b) => b.id + ":" + b.status + ":" + b.rev).join(",");
+    let g = stepGroups.get(groupKey);
+    const terminal = toolRunIsTerminal(run);
     if (g && g.sig !== sig) {
       // Rebuild dalam: body dikosongkan, kartu child dirender ulang.
       g.body.textContent = "";
       for (const tb of run) renderInto(g.body, tb, seen);
       g.sig = sig;
       updateStepHeader(g.wrap, run);
+      // Grup yang selesai menutup otomatis, kecuali user sudah memilih state.
+      if (!g.userToggled) g.wrap.classList.toggle("closed", terminal);
       return g.wrap;
     }
     if (!g) {
@@ -470,16 +507,20 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
       hd.appendChild(el("span", "as-step-cnt"));
       hd.appendChild(el("span", "as-chev", "▾"));
       const body = el("div", "as-step-bd");
-      hd.addEventListener("click", () => wrap.classList.toggle("closed"));
+      g = { wrap, body, sig: "", userToggled: false };
+      hd.addEventListener("click", () => {
+        wrap.classList.toggle("closed");
+        if (g) g.userToggled = true;
+      });
       wrap.appendChild(hd);
       wrap.appendChild(body);
-      g = { wrap, body, sig: "" };
-      stepGroups.set(ids, g);
+      stepGroups.set(groupKey, g);
       if (prev) prev.after(wrap);
       else tl.insertBefore(wrap, tl.firstChild);
       for (const tb of run) renderInto(body, tb, seen);
       g.sig = sig;
       updateStepHeader(wrap, run);
+      wrap.classList.toggle("closed", terminal);
     }
     return g.wrap;
   }
@@ -503,12 +544,14 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     parent.appendChild(node);
   }
 
-  /** Header grup: status ikut child terakhir, "N langkah". */
+  /** Header grup: status gabungan + jumlah langkah nyata. */
   function updateStepHeader(wrap: HTMLElement, run: Extract<Block, { kind: "tool" }>[]): void {
     const last = run[run.length - 1];
-    wrap.dataset.status = last.status;
+    const terminal = toolRunIsTerminal(run);
+    const hasError = run.some((tool) => tool.status === "error");
+    wrap.dataset.status = hasError ? "error" : last.status;
     (wrap.querySelector(".as-step-ttl") as HTMLElement).textContent =
-      t("as.step.title");
+      t(terminal ? (hasError ? "as.step.failed" : "as.step.completed") : "as.step.title");
     (wrap.querySelector(".as-step-cnt") as HTMLElement).textContent =
       t("as.step.count", { n: run.length });
   }
@@ -588,7 +631,13 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     const tsk = String(task || "").trim();
     const hasPlan = !!(plan && plan.length);
     if (!tsk && !hasPlan) {
-      taskBox.classList.add("hidden");
+      // TASK tetap hadir sebagai orientasi utama, tetapi empty state harus
+      // jujur dan memberi tindakan berikutnya — bukan kartu kosong/fake task.
+      taskBox.classList.remove("hidden");
+      const head = el("div", "as-task-head");
+      head.appendChild(el("span", "as-task-label", t("as.task")));
+      taskBox.appendChild(head);
+      taskBox.appendChild(el("div", "as-task-empty", t("as.task.empty")));
       return;
     }
     taskBox.classList.remove("hidden");

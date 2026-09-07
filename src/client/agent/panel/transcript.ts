@@ -118,7 +118,16 @@ export class Transcript {
 
   /** Tugas berjalan (pesan user terakhir) — untuk kartu TASK hero. */
   currentTask(): string {
-    return this.task;
+    if (this.task.trim()) return this.task;
+    // Defense-in-depth hydrate: bila msgKeys membuat pesan user dilewati saat
+    // sync kedua, TASK tetap bisa diturunkan dari blok transcript yang nyata.
+    for (let i = this.blocks.length - 1; i >= 0; i--) {
+      const block = this.blocks[i];
+      if (block.kind === "user" && block.text.trim() && block.text.trim() !== CONTINUATION_PROMPT) {
+        return block.text;
+      }
+    }
+    return "";
   }
 
   /** Garis sistem singkat (status sesi, error lokal, dsb.). */

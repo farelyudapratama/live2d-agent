@@ -320,7 +320,7 @@ a:hover { text-decoration: underline; }
 #stage {
   position: relative;
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: 340px;
   border-radius: var(--r-xl);
   overflow: hidden;
   background: #07090C;
@@ -639,6 +639,45 @@ a:hover { text-decoration: underline; }
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+/* Technical pane bisa diciutkan saat detail tidak dibutuhkan. Di desktop,
+   combined workspace ikut mengecil sehingga ruang kembali ke stage; inline
+   resize lama dipertahankan dan kembali berlaku saat pane dibuka lagi. */
+#agent-tech.collapsed {
+  flex-basis: 38px;
+  min-width: 38px;
+  width: 38px;
+  padding: 8px 5px;
+  overflow: hidden;
+}
+#agent-tech.collapsed .as-tab,
+#agent-tech.collapsed .as-page {
+  display: none !important;
+}
+#agent-tech.collapsed .as-tabs {
+  justify-content: center;
+  border-bottom: 0;
+}
+.as-tech-collapse {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 15px/1 var(--font-ui);
+}
+.as-tech-collapse:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--ink-3);
+}
+@media (min-width: 1500px) {
+  #agent-workspace.agent-wide.tech-collapsed { flex-basis: 558px !important; }
 }
 
 .sb-header {
@@ -2820,6 +2859,11 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1.4;
   color: var(--text);
 }
+.as-task-empty {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
 .as-task-list {
   display: flex;
   flex-direction: column;
@@ -3656,11 +3700,14 @@ input[type="range"]::-moz-range-thumb {
    selektor global — kelas dipasang di <body> oleh projek.ts. */
 body.sb-resizing #agent-workspace { transition: none; }
 
-@media (max-width: 1279px) {
+/* Empat kolom hanya layak saat lebar cukup. Pada 1280–1499px, panel teknis
+   tetap fungsional tetapi ditumpuk di bawah conversation agar Live2D tidak
+   diperas menjadi strip sempit. */
+@media (max-width: 1499px) {
   #sb-gutter { display: none; }
   #agent-workspace { flex-basis: 372px; }
   #agent-workspace.agent-wide {
-    flex-basis: 520px;
+    flex-basis: 540px;
     flex-direction: column;
   }
   #agent-workspace.agent-wide #sidebar {
@@ -3674,7 +3721,21 @@ body.sb-resizing #agent-workspace { transition: none; }
     min-width: 0;
     max-height: 38dvh;
   }
+  /* Dalam layout bertumpuk, collapse menjadi bar horizontal 38px — bukan
+     rail vertikal sempit yang menyisakan ruang kosong di kanan. */
+  #agent-tech.collapsed {
+    flex: 0 0 38px;
+    width: auto;
+    min-width: 0;
+    min-height: 38px;
+    max-height: 38px;
+    padding: 6px 8px;
+  }
+  #agent-tech.collapsed .as-tabs {
+    justify-content: flex-end;
+  }
 }
+
 
 /* ── Status & utilitas ──────────────────────────────────────────── */
 

@@ -399,7 +399,7 @@ async function callStreamWithOneRetry(conn: Connection, messages: ChatMessage[],
 // gerak, dan user bisa memakai "yang murah untuk gerak, yang pintar untuk
 // teks". Role kanonik SENGAJA kecil — tambah role baru berarti menambah
 // entri di sini + satu checkbox di UI, bukan sistem baru.
-export const LLM_ROLES = ["chat", "motion", "sheet"];
+export const LLM_ROLES = ["chat", "motion", "sheet", "assistant"];
 
 /** Bersihkan field `roles`: buang non-string, trim/lowercase, dedupe,
  *  drop role tak dikenal (dengan warning — jangan gagalkan boot). */

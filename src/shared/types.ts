@@ -46,7 +46,9 @@ export interface Config {
   // "gradio" | "openai" | "elevenlabs" | "gemini" | "custom". endpoint/apiKey
   // hanya untuk provider remote; apiKey disimpan plaintext di config.json
   // (sama seperti connections) dan DIMASK saat dikirim ke UI.
-  tts: { provider?: string; endpoint: string; apiKey?: string; voice?: string; model?: string; style?: string };
+  // format: bentuk audio yang diminta dari server OpenAI-compat (default "mp3";
+  // pakai "wav" untuk server yang tak mendukung mp3, mis. supertonic serve).
+  tts: { provider?: string; endpoint: string; apiKey?: string; voice?: string; model?: string; style?: string; hematRequest?: boolean; format?: "mp3" | "wav" | "flac" | "ogg" };
   events: EventConfig;
   camera: CameraConfig;
   motion: MotionConfig;

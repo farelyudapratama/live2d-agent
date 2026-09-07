@@ -83,13 +83,34 @@ export function startAssistantPanel(): () => void {
   function drawPages(tab: "chat" | "review" | "term"): void {
     if (tab === "review") {
       view.renderReview(registry.list(), {
-        canRevert: false, // Fase 4: tombol Revert via /api/assistant/revert
-        onRevert: () => {},
+        canRevert: true,
+        onRevert: (path: string) => { void revertByPath(path); },
         onRefresh: () => { refreshStatus(); drawPages("review"); },
       });
     } else if (tab === "term") {
       view.renderTerm(termLog.list());
     }
+  }
+
+  /** Revert file ke kondisi sebelum mutasi agent (via /api/assistant/revert). */
+  async function revertByPath(path: string): Promise<void> {
+    try {
+      const entries: Array<{ id: string; path: string; reverted: boolean }> =
+        await fetch(API + "/api/assistant/undo").then((r) => r.json()).then((d) => d.entries || []);
+      const rec = entries.find((e) => e.path === path && !e.reverted);
+      if (!rec) {
+        transcript.status(t("as.review.revertNone", { path }), "warn");
+        render();
+        return;
+      }
+      const d = await postJson(API + "/api/assistant/revert", { id: rec.id });
+      transcript.status(d.message || t("as.review.revertDone", { path }), "ok");
+    } catch (e: any) {
+      transcript.status("✗ " + (e?.message || e), "err");
+    }
+    render();
+    refreshStatus();
+    drawPages(view.activeTab());
   }
 
   async function fetchStatus(): Promise<StatusResp> {

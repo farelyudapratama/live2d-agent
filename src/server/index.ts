@@ -15,7 +15,7 @@ import { execSync } from "child_process";
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive } from "./vtuber";
-import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, initAssistant } from "./assistant";
+import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { appRoot } from "../shared/paths";
 
@@ -228,6 +228,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);
   if(method==="POST" && path==="/api/assistant/ask-stream") return handleAssistantAskStream(req);
   if(method==="POST" && path==="/api/assistant/approve") return handleAssistantApprove(req);
+  if(method==="POST" && path==="/api/assistant/approve-stream") return handleAssistantApproveStream(req);
   if(method==="POST" && path==="/api/assistant/quip") return handleAssistantQuip(req);
   if(method==="GET" && path==="/api/assistant/memory") return json({ entries: assistantMemoryList() });
   if(method==="POST" && path==="/api/assistant/memory/forget") {
@@ -237,6 +238,16 @@ async function handleAPI(req: Request): Promise<Response|null> {
   }
   if(method==="POST" && path==="/api/assistant/reset") { assistantReset(); return json({ok:true}); }
   if(method==="GET" && path==="/api/assistant/status") return json(assistantStatus());
+  if(method==="GET" && path==="/api/assistant/undo") return json({ entries: assistantUndoList() });
+  if(method==="POST" && path==="/api/assistant/revert") {
+    const body = await readBody(req);
+    try {
+      const msg = assistantRevert(String(body?.id || ""));
+      return json({ ok: true, message: msg });
+    } catch (e: any) {
+      return json({ ok: false, error: String(e?.message || e) }, 404);
+    }
+  }
   if(method==="GET" && path==="/api/assistant/events") {
     const since = Number(new URL(req.url, "http://x").searchParams.get("since") || 0);
     return json(assistantEvents(Number.isFinite(since) ? since : 0));
@@ -422,6 +433,44 @@ async function handleAssistantApprove(req: Request): Promise<Response> {
   const body = await readBody(req);
   const r = await assistantResolveApproval(String(body?.id || ""), !!body?.approve, config);
   return json(r, r.ok ? 200 : 400);
+}
+// Approve versi streaming (SSE): hasil tool yang disetujui + lanjutan
+// reasoning setelahnya ikut mengalir (delta/tool_call/tool_result/approval/
+// speak, diakhiri done) — panel browser memakai ini supaya transcript tidak
+// patah di titik approval. Route lama /approve tetap utuh untuk CLI/kompat.
+async function handleAssistantApproveStream(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(ctrl) {
+      // Pola sama dengan handleAssistantAskStream: klien yang hilang tidak
+      // menggagalkan resolve approval — event tinggal dibuang.
+      let clientGone = false;
+      const send = (obj: unknown) => {
+        if (clientGone) return;
+        try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(obj) + "\n\n")); }
+        catch { clientGone = true; }
+      };
+      try {
+        const r = await assistantResolveApproval(
+          String(body?.id || ""), !!body?.approve, config,
+          (e) => send(e),
+        );
+        send({ type: "done", ...r });
+      } catch (e: any) {
+        send({ type: "done", ok: false, error: e.message });
+      } finally {
+        try { ctrl.close(); } catch {}
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 async function handlePetClickThrough(req: Request): Promise<Response> {
   const body = await readBody(req);

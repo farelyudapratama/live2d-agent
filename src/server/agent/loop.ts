@@ -9,7 +9,9 @@ import { llmForRole, llmForRoleStream } from "../../shared/llm-client";
 import type { ConfigManager } from "../../shared/config";
 import type { Runtime } from "./state";
 import type { AsEvent } from "../assistant-events";
-import { pushMsg, noteFileTouched } from "./state";
+import { pushMsg, noteFileTouched, pushUndo } from "./state";
+import { snapshotFile } from "./undo";
+import { safePath } from "./tools/fs";
 import { TOOLS, toolByName } from "./tools/index";
 import { trackToolSeq } from "./tools/plan";
 import { planLabel } from "./plan";
@@ -111,6 +113,8 @@ export function detectToolCall(reply: string): { name: string; args: any } | nul
   return null;
 }
 
+const UNDO_TOOLS = new Set(["write_file", "edit_file", "delete_file"]);
+
 async function execTool(rt: Runtime, name: string, args: any): Promise<string> {
   const tool = toolByName(name);
   if (!tool) return "ERROR: tool tidak dikenal: " + name;
@@ -121,8 +125,32 @@ async function execTool(rt: Runtime, name: string, args: any): Promise<string> {
     },
     rt,
   };
+  // Snapshot undo SEBELUM eksekusi (kondisi asli) — path dicek safePath agar
+  // tak pernah membaca di luar workDir. Hanya dicatat bila tool sukses.
+  let undoAbs: string | null = null;
+  if (UNDO_TOOLS.has(name) && args && typeof args === "object" && typeof args.path === "string") {
+    try {
+      undoAbs = safePath(rt.workDir, args.path);
+    } catch {
+      undoAbs = null; // di luar workDir — tool akan gagal sendiri
+    }
+  }
+  const undoPrev = undoAbs !== null ? snapshotFile(undoAbs) : null;
   try {
-    return await tool.run(ctx, args || {});
+    const res = await tool.run(ctx, args || {});
+    if (!/^ERROR/.test(res) && undoAbs !== null) {
+      const existing = rt.undo.find((u) => u.absPath === undoAbs && !u.reverted);
+      if (!existing) {
+        // Rekaman pertama untuk path ini = kondisi ASLI sebelum rantai
+        // mutasi agent — satu-satunya yang revert-nya bermakna.
+        pushUndo(rt, {
+          absPath: undoAbs,
+          relPath: String(args.path).replace(/\\/g, "/"),
+          prevContent: undoPrev,
+        });
+      }
+    }
+    return res;
   } catch (e: any) {
     return "ERROR: " + (e?.message || String(e));
   }
@@ -245,14 +273,18 @@ export async function agentAsk(
   }
 }
 
-/** Eksekusi tool mutating SETELAH user menyetujui (dari facade assistant). */
+/** Eksekusi tool mutating SETELAH user menyetujui (dari facade assistant).
+ *  onEvent opsional: hasil tool diteruskan juga via SSE supaya kartu tool di
+ *  transcript panel terisi dari jalur approval (bukan hanya bus). */
 export async function agentRunApproved(
   rt: Runtime,
   toolName: string,
   args: any,
+  onEvent?: (e: AsEvent) => void,
 ): Promise<string> {
   const result = await execTool(rt, toolName, args);
   pushMsg(rt, { role: "tool", content: "[" + toolName + "] " + clipToolResult(result) });
   emitEvent("tool_call_end", toolName + " → " + result.slice(0, 80));
+  if (onEvent) onEvent({ type: "tool_result", name: toolName, text: result.slice(0, 2000) });
   return result;
 }

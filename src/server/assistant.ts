@@ -18,6 +18,7 @@ import { cleanForSpeech } from "./persona/clean";
 import { TOOLS } from "./agent/tools/index";
 import { setSubagentConfig } from "./agent/tools/subagent";
 import { memoryList, memoryDelete } from "./agent/memory";
+import { undoList, revertUndo } from "./agent/undo";
 
 export type { AsMsg, AsApproval, PlanItem } from "./agent/state";
 export type { AsEvent } from "./assistant-events";
@@ -143,4 +144,17 @@ export async function assistantResolveApproval(
   // lanjutkan reasoning setelah tool dieksekusi — streaming bila onEvent
   // diberikan (approve-stream dari panel), senyap bila tidak (route lama).
   return await assistantAsk("Lanjutkan tugas berdasarkan hasil tool di atas.", config, onEvent);
+}
+
+// ── Undo: daftar snapshot & revert (panel tab Review) ────────────
+
+export function assistantUndoList() {
+  const rt = getRuntime();
+  return rt ? undoList(rt) : [];
+}
+
+export function assistantRevert(id: string): string {
+  const rt = getRuntime();
+  if (!rt) throw new Error("assistant mode tidak aktif");
+  return revertUndo(rt, id);
 }

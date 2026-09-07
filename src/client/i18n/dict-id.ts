@@ -472,6 +472,8 @@ export const DICT_ID: Record<string, string> = {
   "as.term.title": "{n} perintah dijalankan",
   "as.term.empty": "Belum ada perintah yang dijalankan agent.",
   "as.term.running": "…masih berjalan…",
+  "as.review.revertNone": "Tidak ada snapshot untuk {path} (mungkin dari sesi lama/CLI).",
+  "as.review.revertDone": "{path} dikembalikan.",
   "pet.notOpen": "belum terbuka",
   "pet.clickThroughOn": " — klik tembus ON",
   "pet.noClickThrough": " (tanpa klik-tembus)",

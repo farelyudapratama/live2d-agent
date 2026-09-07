@@ -464,6 +464,8 @@ export const DICT_EN: Record<string, string> = {
   "as.term.title": "{n} commands executed",
   "as.term.empty": "No commands executed by the agent yet.",
   "as.term.running": "…still running…",
+  "as.review.revertNone": "No snapshot for {path} (it may be from an old session/CLI).",
+  "as.review.revertDone": "{path} reverted.",
   "pet.notOpen": "not open",
   "pet.clickThroughOn": " — click-through ON",
   "pet.noClickThrough": " (no click-through)",

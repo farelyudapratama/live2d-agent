@@ -24,6 +24,20 @@ export type PlanItem = {
   note?: string;
 };
 
+/** Satu rekaman undo: isi file SEBELUM tool mutasi file berhasil. */
+export type UndoRecord = {
+  id: string;
+  /** Path absolut file saat snapshot. */
+  absPath: string;
+  /** Path relatif (untuk tampilan & pencocokan panel). */
+  relPath: string;
+  /** Isi file sebelum mutasi; null = file belum ada (revert = hapus). */
+  prevContent: string | null;
+  ts: number;
+  /** Disetel true setelah revert (entri tetap sebagai jejak, tak revertable). */
+  reverted?: boolean;
+};
+
 export type Runtime = {
   cfg: any;
   history: AsMsg[];
@@ -47,6 +61,8 @@ export type Runtime = {
   planBlocks: Record<string, number>;
   /** Jumlah ringkasan history yang sudah dilakukan (untuk log/debug). */
   summarizations: number;
+  /** Riwayat snapshot file sebelum mutasi (undo) — cap MAX_UNDO, in-memory. */
+  undo: UndoRecord[];
 };
 
 let runtime: Runtime | null = null;
@@ -54,6 +70,8 @@ let runtime: Runtime | null = null;
 export const MAX_HISTORY = 60;
 /** Budget karakter total riwayat sebelum summarization (~12k token). */
 export const HISTORY_CHAR_BUDGET = 30000;
+/** Cap rekaman undo (FIFO) — isi file disimpan in-memory saja. */
+export const MAX_UNDO = 20;
 
 export function getRuntime(): Runtime | null {
   return runtime;
@@ -80,6 +98,7 @@ export function makeRuntime(cfg: any, workDir: string, history: AsMsg[]): Runtim
     lastVerifyAt: 0,
     planBlocks: {},
     summarizations: 0,
+    undo: [],
   };
 }
 
@@ -127,4 +146,21 @@ export function noteFileTouched(rt: Runtime, path: string): void {
   const p = String(path || "").replace(/\\/g, "/");
   if (p && !rt.notes.filesTouched.includes(p)) rt.notes.filesTouched.push(p);
   if (rt.notes.filesTouched.length > 30) rt.notes.filesTouched.splice(0, rt.notes.filesTouched.length - 30);
+}
+
+/**
+ * Catat snapshot undo SATU file (isi saat ini di disk). Dipanggil execTool
+ * SETELAH tool mutasi file sukses. Return rekamannya (atau null bila path
+ * kosong). Cap MAX_UNDO — terlama dibuang.
+ */
+export function pushUndo(rt: Runtime, rec: Omit<UndoRecord, "id" | "ts">): UndoRecord | null {
+  if (!rec.relPath) return null;
+  const full: UndoRecord = {
+    ...rec,
+    id: "un_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+    ts: Date.now(),
+  };
+  rt.undo.push(full);
+  if (rt.undo.length > MAX_UNDO) rt.undo.splice(0, rt.undo.length - MAX_UNDO);
+  return full;
 }

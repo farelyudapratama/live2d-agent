@@ -351,6 +351,21 @@ export function startAssistantPanel(): () => void {
   const onStop = () => { stopAgent(); };
   const onReset = () => { if (confirm(t("as.resetTip"))) resetAgent(); };
   const onMem = () => { toggleMemory(); };
+  // Rail projek memindahkan sesi (switch/new/delete) → hydrate ulang
+  // transcript & status ke sesi yang baru (runtime server sama, tak dimatikan).
+  const onSessionChanged = () => {
+    if (liveAsk) return; // sedang streaming — poll status menyusul sendiri
+    transcript = new Transcript();
+    registry.clear();
+    termLog.clear();
+    view.clearTranscript();
+    void (async () => {
+      await syncHistory();
+      transcript.status(t("as.sess.loaded"), "ok");
+      render();
+      refreshStatus();
+    })();
+  };
 
   sendBtn?.addEventListener("click", onSend);
   input?.addEventListener("keydown", onKey);
@@ -358,6 +373,7 @@ export function startAssistantPanel(): () => void {
   stopBtn?.addEventListener("click", onStop);
   resetBtn?.addEventListener("click", onReset);
   memBtn?.addEventListener("click", onMem);
+  window.addEventListener("agent:session-changed", onSessionChanged);
 
   // ── Boot ────────────────────────────────────────────────────────
   (async () => {
@@ -402,6 +418,7 @@ export function startAssistantPanel(): () => void {
     stopBtn?.removeEventListener("click", onStop);
     resetBtn?.removeEventListener("click", onReset);
     memBtn?.removeEventListener("click", onMem);
+    window.removeEventListener("agent:session-changed", onSessionChanged);
     rootEl.textContent = "";
   };
 }

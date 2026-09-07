@@ -24,6 +24,7 @@ import * as i18n from "./i18n/index";
 import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
 import { startAssistantPanel } from "./agent/panel/panel";
+import { startProjekRail } from "./shell/projek";
 
 if (typeof window !== "undefined") {
   (window as any).MotionDSL = MotionDSL;
@@ -38,6 +39,9 @@ if (typeof window !== "undefined") {
   // Panel agent (mode Assistant) — dipanggil mode-runtime.js saat tab
   // assistant aktif. Remake tampilan ala ZCode tinggal di sini (TS).
   (window as any).__agentPanel = { start: startAssistantPanel };
+  // Rail projek shell (activity bar kiri) — start sekali di boot app.
+  (window as any).__shellProjek = { start: startProjekRail };
+  try { startProjekRail(); } catch {}
   i18n.init();
   console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain + i18n)");
 }

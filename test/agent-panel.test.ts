@@ -1,0 +1,519 @@
+/**
+ * test/agent-panel.test.ts — Unit test panel agent hasil remake (ala ZCode).
+ * Menguji bagian murni: parser SSE + protokol fallback, reducer transcript
+ * (supresi live/follow, metamorfosis approval, hydrate), dan direktur akting
+ * (mapping per-event + cooldown).
+ */
+import { describe, it, expect } from "bun:test";
+import { drainSse, decideFallback } from "../src/client/agent/panel/stream";
+import type { AsSseEvent } from "../src/client/agent/panel/stream";
+import {
+  Transcript,
+  CONTINUATION_PROMPT,
+  stripToolLine,
+  parseToolLabel,
+} from "../src/client/agent/panel/transcript";
+import { diffLines, changeFromTool } from "../src/client/agent/panel/diff";
+import { makeActor } from "../src/client/agent/panel/actor";
+
+// ═══════════════════════════════════════════════════════════════
+// stream.ts
+// ═══════════════════════════════════════════════════════════════
+
+describe("drainSse", () => {
+  it("mengurai satu event utuh", () => {
+    const { events, rest } = drainSse('data: {"type":"delta","text":"hi"}\n\n');
+    expect(events).toEqual([{ type: "delta", text: "hi" }]);
+    expect(rest).toBe("");
+  });
+
+  it("menyimpan potongan belum lengkap di rest", () => {
+    const { events, rest } = drainSse('data: {"type":"delta","text":"a"}\n\ndata: {"type":"del');
+    expect(events.length).toBe(1);
+    expect(rest).toBe('data: {"type":"del');
+  });
+
+  it("menggabungkan buffer yang terpotong di tengah event", () => {
+    const a = drainSse('data: {"type":"tool_call","name":"write_fil');
+    expect(a.events.length).toBe(0);
+    const b = drainSse(a.rest + 'e","args":{"path":"x"}}\n\n');
+    expect(b.events).toEqual([{ type: "tool_call", name: "write_file", args: { path: "x" } }]);
+  });
+
+  it("melewati frame rusak tanpa melempar", () => {
+    const { events } = drainSse("data: {rusak\n\ndata: {\"type\":\"delta\",\"text\":\"x\"}\n\n");
+    expect(events).toEqual([{ type: "delta", text: "x" }]);
+  });
+
+  it("mengurai done dengan reply", () => {
+    const { events } = drainSse('data: {"type":"done","ok":true,"reply":"selesai"}\n\n');
+    expect(events[0].type).toBe("done");
+    expect((events[0] as any).reply).toBe("selesai");
+  });
+});
+
+describe("decideFallback (protokol dua-kasus)", () => {
+  it("Kasus B: sudah ada event → follow, jangan kirim ulang", () => {
+    expect(decideFallback({ receivedAnyEvent: true, busyNow: false })).toBe("follow");
+    expect(decideFallback({ receivedAnyEvent: true, busyNow: true })).toBe("follow");
+  });
+
+  it("Kasus A: tanpa event + server tidak busy → resend sekali", () => {
+    expect(decideFallback({ receivedAnyEvent: false, busyNow: false })).toBe("resend");
+  });
+
+  it("Kasus A: tanpa event tapi server busy → follow (request sudah sampai)", () => {
+    expect(decideFallback({ receivedAnyEvent: false, busyNow: true })).toBe("follow");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// transcript.ts
+// ═══════════════════════════════════════════════════════════════
+
+function sse(ev: AsSseEvent) {
+  return ev;
+}
+
+describe("Transcript — mode live (SSE)", () => {
+  it("delta menumpuk jadi blok agent streaming; delta kosong no-op", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "delta", text: "" }));
+    tr.applySse(sse({ type: "delta", text: "Oke, " }));
+    tr.applySse(sse({ type: "delta", text: "kucek." }));
+    const agent = tr.blocks.find((b) => b.kind === "agent") as any;
+    expect(agent.text).toBe("Oke, kucek.");
+    expect(agent.streaming).toBe(true);
+  });
+
+  it("tool_call memangkas baris TOOL: dan membuat kartu running", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "delta", text: "Kucek dulu.\nTOOL: list_dir {}" }));
+    tr.applySse(sse({ type: "tool_call", name: "list_dir", args: {} }));
+    const agent = tr.blocks.find((b) => b.kind === "agent") as any;
+    expect(agent.text).toBe("Kucek dulu.");
+    const tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.name).toBe("list_dir");
+    expect(tool.status).toBe("running");
+    expect(tool.argsText).not.toBeNull();
+  });
+
+  it("tool_result mengisi kartu; prefix ERROR → status error", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "tool_call", name: "read_file", args: { path: "a.ts" } }));
+    tr.applySse(sse({ type: "tool_result", name: "read_file", text: "isi file" }));
+    let tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.result).toBe("isi file");
+    expect(tool.status).toBe("done");
+
+    tr.applySse(sse({ type: "tool_call", name: "run_command", args: { command: "bun test" } }));
+    tr.applySse(sse({ type: "tool_result", name: "run_command", text: "ERROR: exit 1" }));
+    tool = tr.blocks.filter((b) => b.kind === "tool").pop() as any;
+    expect(tool.status).toBe("error");
+  });
+
+  it("approval: blok dibuat sekali per id, dibuang lewat reconcileApprovals", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "tool_call", name: "write_file", args: { path: "x" } }));
+    tr.applySse(sse({ type: "approval", id: "ap_1", tool: "write_file", args: { path: "x" } }));
+    tr.applySse(sse({ type: "approval", id: "ap_1", tool: "write_file", args: { path: "x" } }));
+    expect(tr.blocks.filter((b) => b.kind === "approval").length).toBe(1);
+
+    tr.reconcileApprovals(["ap_1"]);
+    expect(tr.blocks.some((b) => b.kind === "approval")).toBe(true);
+    tr.reconcileApprovals([]);
+    expect(tr.blocks.some((b) => b.kind === "approval")).toBe(false);
+  });
+
+  it("metamorfosis approval klien lain → kartu tool ringkas running", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "approval", id: "ap_2", tool: "run_command", args: { command: "bun test" } }));
+    tr.resolveApprovalVisual("ap_2", true);
+    expect(tr.blocks.some((b) => b.kind === "approval")).toBe(false);
+    const tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.name).toBe("run_command");
+    expect(tool.status).toBe("running");
+    expect(tool.summary).toContain("klien lain");
+  });
+
+  it("done: teks yang mengalir == reply → jadi SATU blok final (dedupe)", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "delta", text: "Selesai. Dua file ditulis." }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "Selesai. Dua file ditulis." }));
+    expect(tr.blocks.filter((b) => b.kind === "final").length).toBe(1);
+    expect(tr.blocks.some((b) => b.kind === "agent")).toBe(false);
+  });
+
+  it("done: reply ⏳ (pause approval) → status, BUKAN bubble final", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "delta", text: "Tulis file ya." }));
+    tr.applySse(sse({ type: "tool_call", name: "write_file", args: {} }));
+    tr.applySse(sse({ type: "approval", id: "ap_3", tool: "write_file", args: {} }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "\n\n⏳ Aku butuh izinmu untuk write_file — cek panel Assistant." }));
+    expect(tr.blocks.some((b) => b.kind === "final")).toBe(false);
+    const st = tr.blocks.find((b) => b.kind === "status") as any;
+    expect(st.variant).toBe("warn");
+  });
+
+  it("done gagal → status error", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "done", ok: false, error: "boom" }));
+    const st = tr.blocks.find((b) => b.kind === "status") as any;
+    expect(st.variant).toBe("err");
+  });
+
+  it("speak → blok speak", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "speak", text: "Sudah beres~" }));
+    expect(tr.blocks.some((b) => b.kind === "speak")).toBe(true);
+  });
+});
+
+describe("Transcript — supresi live/follow (bus)", () => {
+  it("live: tool_call_start/end bus DISUPRESI (padanannya dari SSE)", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    const sig = tr.applyBus({ seq: 1, type: "tool_call_start", label: "list_dir {}", ts: 0 });
+    expect(tr.blocks.filter((b) => b.kind === "tool").length).toBe(0);
+    expect(sig).toEqual([]);
+  });
+
+  it("follow: tool_call_start/end bus dirender sebagai kartu (aktivitas CLI)", () => {
+    const tr = new Transcript();
+    tr.applyBus({ seq: 1, type: "tool_call_start", label: 'list_dir {"path":"."}', ts: 0 });
+    let tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.name).toBe("list_dir");
+    expect(tool.status).toBe("running");
+    tr.applyBus({ seq: 2, type: "tool_call_end", label: "list_dir → 12 entri", ts: 1 });
+    tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.status).toBe("done");
+    expect(tool.result).toBe("12 entri");
+  });
+
+  it("verification & subagent tetap dirender di mode live", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applyBus({ seq: 1, type: "verification_result", label: "gagal: build error", ts: 0 });
+    tr.applyBus({ seq: 2, type: "subagent_spawned", label: "sub1: riset folder", ts: 1 });
+    tr.applyBus({ seq: 3, type: "subagent_completed", label: "sub1: 3 file ditemukan", ts: 2 });
+    const st = tr.blocks.find((b) => b.kind === "status") as any;
+    expect(st.variant).toBe("err");
+    const sub = tr.blocks.find((b) => b.kind === "subagent") as any;
+    expect(sub.name).toBe("sub1");
+    expect(sub.state).toBe("done");
+    expect(tr.blocks.filter((b) => b.kind === "subagent").length).toBe(1);
+  });
+
+  it("plan_updated memberi sinyal refresh-status tanpa blok baru", () => {
+    const tr = new Transcript();
+    const sig = tr.applyBus({ seq: 1, type: "plan_updated", label: "2/5 selesai", ts: 0 });
+    expect(sig).toContain("refresh-status");
+    expect(tr.blocks.length).toBe(0);
+  });
+});
+
+describe("Transcript — hydrate dari /history", () => {
+  it("prompt internal lanjutan approval difilter", () => {
+    const tr = new Transcript();
+    const n = tr.syncFromHistory([
+      { role: "user", content: CONTINUATION_PROMPT },
+      { role: "assistant", content: "Lanjutan selesai." },
+    ]);
+    expect(n).toBe(1);
+    expect(tr.blocks.some((b) => b.kind === "user")).toBe(false);
+  });
+
+  it("tool '[name] hasil' → kartu; MENUNGGU PERSETUJUAN → kartu running", () => {
+    const tr = new Transcript();
+    tr.syncFromHistory([
+      { role: "tool", content: "[read_file] isinya" },
+      { role: "tool", content: "MENUNGGU PERSETUJUAN: write_file {\"path\":\"x\"} (id ap_9)" },
+    ]);
+    const tools = tr.blocks.filter((b) => b.kind === "tool") as any[];
+    expect(tools[0].name).toBe("read_file");
+    expect(tools[0].result).toBe("isinya");
+    expect(tools[1].name).toBe("write_file");
+    expect(tools[1].status).toBe("running");
+  });
+
+  it("dedupe by key: pesan yang sama tidak dirender dua kali", () => {
+    const tr = new Transcript();
+    tr.appendUser("cekin");
+    const n = tr.syncFromHistory([{ role: "user", content: "cekin" }]);
+    expect(n).toBe(0);
+    expect(tr.blocks.filter((b) => b.kind === "user").length).toBe(1);
+  });
+});
+
+describe("stripToolLine & parseToolLabel", () => {
+  it("buang baris TOOL: multi-baris json", () => {
+    expect(stripToolLine("Kalimat.\nTOOL: write_file {\"a\":1}")).toBe("Kalimat.");
+    expect(stripToolLine("TOOL: list_dir {}")).toBe("");
+  });
+  it("parse label bus tool", () => {
+    expect(parseToolLabel('read_file {"path":"x"}').name).toBe("read_file");
+    expect(parseToolLabel("bukan format").name).toBe("tool");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// diff.ts — kalkulasi diff client-side
+// ═══════════════════════════════════════════════════════════════
+
+describe("diffLines", () => {
+  it("identik → tanpa perubahan", () => {
+    const d = diffLines("a\nb\nc", "a\nb\nc");
+    expect(d.added).toBe(0);
+    expect(d.removed).toBe(0);
+    expect(d.hunks.length).toBe(0);
+  });
+
+  it("satu baris diganti → 1 add 1 del dalam satu hunk (konteks ter-trim)", () => {
+    const d = diffLines("a\nb\nc\nd\ne", "a\nb\nC\nd\ne");
+    expect(d.added).toBe(1);
+    expect(d.removed).toBe(1);
+    expect(d.hunks.length).toBe(1);
+    // prefix/suffix sudah dipangkas → hunk hanya del+add, tanpa ctx
+    expect(d.hunks[0].rows.map((r) => r.t).sort()).toEqual(["add", "del"]);
+    // prefix 2 baris (a,b) → hunk mulai di baris ke-3 (1-based)
+    expect(d.hunks[0].bStart).toBe(3);
+  });
+
+  it("konteks di dalam file tetap ada di sekitar perubahan", () => {
+    const oldT = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12";
+    const neuT = "1\nX\n3\n4\n5\n6\n7\n8\n9\n10\nY\n12";
+    const d = diffLines(oldT, neuT);
+    expect(d.hunks.length).toBe(2);
+    // hunk pertama: konteks 2 baris di bawah perubahan (baris 3..4)
+    expect(d.hunks[0].rows.some((r) => r.t === "ctx" && r.text === "3")).toBe(true);
+    // perubahan di baris baru ke-2 (prefix "1" ter-trim dari konteks)
+    expect(d.hunks[0].bStart).toBe(2);
+  });
+
+  it("file besar tapi mirip → diff tetap penuh (trim prefix/suffix)", () => {
+    const big = Array.from({ length: 2500 }, (_, i) => "l" + i).join("\n");
+    const d = diffLines(big, big + "\nextra");
+    expect(d.clipped).toBe(false);
+    expect(d.added).toBe(1);
+  });
+
+  it("dua gugus perubahan jauh → dua hunk", () => {
+    const oldT = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12";
+    const neuT = "1\nX\n3\n4\n5\n6\n7\n8\n9\n10\nY\n12";
+    const d = diffLines(oldT, neuT);
+    expect(d.hunks.length).toBe(2);
+    expect(d.added).toBe(2);
+    expect(d.removed).toBe(2);
+  });
+
+  it("file terlalu besar → clipped, hanya stat", () => {
+    const a1 = Array.from({ length: 1500 }, (_, i) => "a" + i).join("\n");
+    const b1 = Array.from({ length: 1500 }, (_, i) => "b" + i).join("\n");
+    const d = diffLines(a1, b1);
+    expect(d.clipped).toBe(true);
+    expect(d.hunks.length).toBe(0);
+    expect(d.added).toBe(1500);
+    expect(d.removed).toBe(1500);
+  });
+
+  it("teks kosong → full add", () => {
+    const d = diffLines("", "baris1\nbaris2");
+    expect(d.added).toBe(2);
+    expect(d.removed).toBe(0);
+  });
+});
+
+describe("changeFromTool", () => {
+  it("write_file → kind write, full tambahan", () => {
+    const c = changeFromTool("write_file", { path: "a.ts", content: "satu\ndua" });
+    expect(c).not.toBeNull();
+    expect(c!.kind).toBe("write");
+    expect(c!.added).toBe(2);
+  });
+
+  it("edit_file → diff old→new", () => {
+    const c = changeFromTool("edit_file", { path: "b.ts", old: "x\ny", new: "x\nz" });
+    expect(c!.kind).toBe("edit");
+    expect(c!.added).toBe(1);
+    expect(c!.removed).toBe(1);
+  });
+
+  it("delete_file → clipped, removed tak tersedia", () => {
+    const c = changeFromTool("delete_file", { path: "c.ts" });
+    expect(c!.kind).toBe("delete");
+    expect(c!.clipped).toBe(true);
+    expect(c!.hunks.length).toBe(0);
+  });
+
+  it("tool lain / argumen tanpa path → null", () => {
+    expect(changeFromTool("list_dir", { path: "." })).toBeNull();
+    expect(changeFromTool("write_file", {})).toBeNull();
+    expect(changeFromTool("read_file", null)).toBeNull();
+  });
+});
+
+describe("Transcript — pelacakan perubahan per giliran", () => {
+  it("tool_call mutasi membawa change; done → kartu changes lalu reset", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.appendUser("tulis ya");
+    tr.applySse(sse({ type: "tool_call", name: "write_file", args: { path: "a.ts", content: "satu\ndua" } }));
+    tr.applySse(sse({ type: "tool_result", name: "write_file", text: "OK" }));
+    const tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.change).not.toBeNull();
+    expect(tool.change.added).toBe(2);
+
+    tr.applySse(sse({ type: "delta", text: "Beres." }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "Beres." }));
+    const chg = tr.blocks.find((b) => b.kind === "changes") as any;
+    expect(chg).toBeDefined();
+    expect(chg.files.length).toBe(1);
+    expect(chg.files[0].path).toBe("a.ts");
+    expect(chg.added).toBe(2);
+    expect(chg.removed).toBe(0);
+
+    // giliran baru: tracking reset — done tanpa mutasi tidak membuat kartu
+    tr.appendUser("cuma tanya");
+    tr.applySse(sse({ type: "delta", text: "ya" }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "ya" }));
+    expect(tr.blocks.filter((b) => b.kind === "changes").length).toBe(1);
+  });
+
+  it("tool_result ERROR → change dibuang dari kartu & ringkasan", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "tool_call", name: "edit_file", args: { path: "b.ts", old: "x", new: "y" } }));
+    tr.applySse(sse({ type: "tool_result", name: "edit_file", text: "ERROR: old tidak ditemukan" }));
+    const tool = tr.blocks.find((b) => b.kind === "tool") as any;
+    expect(tool.change).toBeNull();
+    tr.applySse(sse({ type: "done", ok: true, reply: "gagal edit" }));
+    expect(tr.blocks.some((b) => b.kind === "changes")).toBe(false);
+  });
+
+  it("dua mutasi pada path sama → ringkasan memakai versi terakhir", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "tool_call", name: "write_file", args: { path: "a.ts", content: "dulu" } }));
+    tr.applySse(sse({ type: "tool_result", name: "write_file", text: "OK" }));
+    tr.applySse(sse({ type: "tool_call", name: "edit_file", args: { path: "a.ts", old: "dulu", new: "satu\ndua\ntiga" } }));
+    tr.applySse(sse({ type: "tool_result", name: "edit_file", text: "OK" }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "ok" }));
+    const chg = tr.blocks.find((b) => b.kind === "changes") as any;
+    expect(chg.files.length).toBe(1);
+    expect(chg.files[0].kind).toBe("edit");
+    expect(chg.added).toBe(3);
+  });
+
+  it("done ⏳ (pause approval) → ringkasan ditunda, tracking lanjut", () => {
+    const tr = new Transcript();
+    tr.beginLive();
+    tr.applySse(sse({ type: "tool_call", name: "write_file", args: { path: "a.ts", content: "x" } }));
+    tr.applySse(sse({ type: "approval", id: "ap_10", tool: "write_file", args: { path: "a.ts" } }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "⏳ butuh izin" }));
+    expect(tr.blocks.some((b) => b.kind === "changes")).toBe(false);
+    // approval disetujui klien lain → change masuk lagi ke tracking giliran
+    tr.resolveApprovalVisual("ap_10", true);
+    tr.applySse(sse({ type: "tool_result", name: "write_file", text: "OK" }));
+    tr.applySse(sse({ type: "done", ok: true, reply: "selesai" }));
+    const chg = tr.blocks.find((b) => b.kind === "changes") as any;
+    expect(chg).toBeDefined();
+    expect(chg.files.length).toBe(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// actor.ts — direktur akting (mapping per-event + cooldown)
+// ═══════════════════════════════════════════════════════════════
+
+function makeTestActor() {
+  const calls: { gaze: string[]; emotion: string[]; spoke: string[]; quips: number } = {
+    gaze: [], emotion: [], spoke: [], quips: 0,
+  };
+  let clock = 100000; // jauh di atas semua cooldown awal (lastQuip/lastMotion = 0)
+  const actor = makeActor({
+    L: {
+      setGazeIntent: (g: string) => calls.gaze.push(g),
+      expressEmotion: (e: string) => calls.emotion.push(e),
+    },
+    t: (k: string) => k,
+    post: async () => { calls.quips++; return { quip: "" }; },
+    speakAsCharacter: (s: string) => calls.spoke.push(s),
+    now: () => clock,
+  });
+  return { actor, calls, tick: (ms: number) => { clock += ms; } };
+}
+
+describe("actor — mapping per-event", () => {
+  it("verification gagal → kesal; lolos → senang tanpa komentar", () => {
+    const { actor, calls, tick } = makeTestActor();
+    actor.onActivity({ type: "verification_result", label: "gagal: build error" });
+    expect(calls.emotion).toContain("kesal");
+    expect(calls.spoke.length).toBe(1); // komentar fallback
+    tick(3000);
+    calls.spoke.length = 0;
+    actor.onActivity({ type: "verification_result", label: "lolos: build bersih" });
+    expect(calls.emotion).toContain("senang");
+    expect(calls.spoke.length).toBe(0); // lolos → tanpa komentar
+  });
+
+  it("plan_revised → gaze think + komentar revised", () => {
+    const { actor, calls, tick } = makeTestActor();
+    actor.onActivity({ type: "plan_revised", label: "tambah item" });
+    expect(calls.gaze).toContain("think");
+    expect(calls.spoke).toContain("as.actor.revised");
+  });
+
+  it("permission_resolved: disetujui → lega; ditolak → TANPA reaksi", () => {
+    const { actor, calls, tick } = makeTestActor();
+    actor.onActivity({ type: "permission_resolved", label: "disetujui: write_file" });
+    expect(calls.emotion).toContain("senang");
+    const emotionAfter = calls.emotion.length;
+    const gazeAfter = calls.gaze.length;
+    tick(3000);
+    actor.onActivity({ type: "permission_resolved", label: "ditolak: delete_file" });
+    expect(calls.emotion.length).toBe(emotionAfter);
+    expect(calls.gaze.length).toBe(gazeAfter);
+  });
+
+  it("subagent_completed → reaksi ringan tanpa komentar; spawned → komentar", () => {
+    const { actor, calls, tick } = makeTestActor();
+    actor.onActivity({ type: "subagent_spawned", label: "sub1: riset" });
+    expect(calls.spoke.length).toBe(1);
+    tick(3000);
+    actor.onActivity({ type: "subagent_completed", label: "sub1: 3 file" });
+    expect(calls.emotion).toContain("senang");
+    expect(calls.spoke.length).toBe(1); // tidak bertambah
+  });
+
+  it("cooldown motion: dua tool beruntun → reaksi kedua ditahan", () => {
+    const { actor, calls, tick } = makeTestActor();
+    actor.onActivity({ type: "tool_call_start", label: "list_dir {}" });
+    const gazeAfterFirst = calls.gaze.length;
+    actor.onActivity({ type: "tool_call_end", label: "list_dir → x" });
+    expect(calls.gaze.length).toBe(gazeAfterFirst); // dalam 2,5 dtk → ditahan
+    tick(2600);
+    actor.onActivity({ type: "tool_call_start", label: "read_file {}" });
+    expect(calls.gaze.length).toBeGreaterThan(gazeAfterFirst);
+  });
+
+  it("quip LLM hanya lewat cooldown 25 dtk", () => {
+    const { actor, calls, tick } = makeTestActor();
+    actor.onActivity({ type: "thinking_start", label: "tugas" });
+    expect(calls.quips).toBe(1);
+    tick(5000);
+    actor.onActivity({ type: "thinking_start", label: "tugas 2" });
+    expect(calls.quips).toBe(1); // masih dalam cooldown
+    tick(26000);
+    actor.onActivity({ type: "thinking_start", label: "tugas 3" });
+    expect(calls.quips).toBe(2);
+  });
+});

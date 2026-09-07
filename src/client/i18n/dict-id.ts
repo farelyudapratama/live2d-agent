@@ -88,6 +88,7 @@ export const DICT_ID: Record<string, string> = {
   // ── as — panel AI Assistant ────────────────────────────────────
   "as.title": "AI Assistant — Agent Lokal",
   "as.workdir": "Folder kerja",
+  "as.workspace": "Workspace",
   "as.workdirPh": "(folder project ini)",
   "as.stop": "Matikan Agent",
   "as.cancel": "Stop Task",
@@ -95,6 +96,7 @@ export const DICT_ID: Record<string, string> = {
   "as.cancelNone": "Tidak ada tugas yang sedang berjalan.",
   "as.hint1": "Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).",
   "as.inputPh": "Minta apa? mis. baca struktur folder…",
+  "as.inputPhName": "Tanya {name}…",
   "as.hint2": "Tools aman (lihat folder, baca file) jalan otomatis. Menulis file & menjalankan perintah butuh persetujuanmu di panel ini.",
 
   // ── pet — panel Desktop Pet ────────────────────────────────────

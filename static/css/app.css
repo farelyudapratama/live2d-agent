@@ -476,6 +476,44 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 
+/* Aktivitas agent di panggung — menghubungkan karakter dengan pekerjaan
+   teknis. Hanya tampil saat busy/approval; idle sengaja sunyi. */
+#stage-agent-chip {
+  position: absolute;
+  left: 10px;
+  top: 50px;
+  z-index: 11;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(460px, calc(100% - 72px));
+  padding: 5px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+#stage-agent-chip .sac-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lamp);
+  animation: ellipsis-dot 1.2s infinite;
+}
+#stage-agent-chip[data-state="approval"] {
+  border-color: var(--coral-border);
+}
+#stage-agent-chip[data-state="approval"] .sac-dot { background: var(--coral); }
+#stage-agent-chip .sac-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Empty state & loader ───────────────────────────────────────── */
 
 .stage-empty {
@@ -2799,7 +2837,47 @@ input[type="range"]::-moz-range-thumb {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
+}
+/* Workspace chrome: satu baris utilitas, bukan form konfigurasi. */
+.as-ws {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.as-ws-label {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.as-ws input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+}
+.as-ws input:focus { background: var(--ink-input); outline: 1px solid var(--line-focus); }
+.as-ws .mini-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
 }
 .as-statusbar {
   display: flex;
@@ -2851,19 +2929,19 @@ input[type="range"]::-moz-range-thumb {
   min-height: 130px;
   overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   background: var(--ink-input);
-  padding: 8px;
+  padding: 5px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
 }
 .as-blk {
-  font-size: 12.5px;
-  line-height: 1.5;
-  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 4px 8px;
   border-radius: var(--r-xs);
-  border-left: 2px solid var(--line);
+  border-left: 1px solid var(--line);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2876,15 +2954,18 @@ input[type="range"]::-moz-range-thumb {
   margin-bottom: 2px;
 }
 .as-blk.as-user {
+  align-self: flex-end;
+  max-width: 84%;
   background: var(--ink-2);
-  border-left-color: var(--line-strong);
+  border: 1px solid var(--line-soft);
+  color: var(--text-dim);
 }
 .as-blk.as-agent {
-  background: var(--ink-1);
+  background: transparent;
   border-left-color: var(--line-soft);
 }
 .as-blk.as-final {
-  background: var(--mint-dim);
+  background: transparent;
   border-left-color: var(--mint);
 }
 .as-blk.as-speak {
@@ -3306,21 +3387,22 @@ input[type="range"]::-moz-range-thumb {
 /* Kelas: .as-tabs, .as-tab, .as-page*, .as-rev*, .as-term* */
 .as-tabs {
   display: flex;
-  gap: 2px;
+  gap: 12px;
   flex: none;
-  border-bottom: 1px solid var(--line);
+  min-height: 25px;
+  border-bottom: 1px solid var(--line-soft);
 }
 .as-tab {
-  padding: 3px 10px;
+  padding: 2px 1px 4px;
   font: inherit;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--muted);
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 1px solid transparent;
   cursor: pointer;
 }
-.as-tab:hover { color: var(--text-dim); background: var(--ink-3); }
+.as-tab:hover { color: var(--text-dim); }
 .as-tab.active {
   color: var(--text);
   border-bottom-color: var(--lamp);
@@ -3330,12 +3412,12 @@ input[type="range"]::-moz-range-thumb {
   min-height: 130px;
   overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   background: var(--ink-input);
-  padding: 8px;
+  padding: 5px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .as-page-bar {
   display: flex;
@@ -3396,33 +3478,65 @@ input[type="range"]::-moz-range-thumb {
 .as-term-row.err .as-term-res { color: var(--coral); }
 .as-term-run { color: var(--muted); font-style: italic; margin-top: 2px; }
 
-/* Input: textarea auto-grow */
-#mode-assistant .chat-input textarea {
+/* Composer: bidang command tunggal; tombol ↑ satu-satunya aksen kuat. */
+.as-composer {
+  flex: none;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--ink-input);
+}
+#mode-assistant .as-composer textarea {
   width: 100%;
   resize: none;
   min-height: 34px;
   max-height: 120px;
+  padding: 5px 3px;
+  border: 0;
+  background: transparent;
   line-height: 1.45;
+  color: var(--text);
 }
+#mode-assistant .as-composer textarea:focus { outline: none; }
+.as-send {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--lamp);
+  border-radius: var(--r-sm);
+  background: var(--lamp);
+  color: var(--ink-on-lamp);
+  font-size: 18px;
+  line-height: 1;
+}
+.as-send:hover { background: var(--lamp-soft); }
+.as-send:disabled { opacity: 0.4; }
 
-/* Quick actions — chip task umum satu-klik di atas composer. */
+/* Quick actions — utility shortcuts, sengaja tenang (bukan CTA pills). */
 .as-quick {
   flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px 10px;
+  padding: 1px 2px;
 }
 .as-quick-chip {
   font: inherit;
-  font-size: 11px;
-  color: var(--text-dim);
-  background: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px 10px;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding: 2px 0;
   cursor: pointer;
 }
-.as-quick-chip:hover { color: var(--text); border-color: var(--line-strong); background: var(--ink-3); }
+.as-quick-chip:hover { color: var(--text-dim); border-bottom-color: var(--line-strong); }
 
 /* ── Gutter resize side panel ───────────────────────────────────── */
 #sb-gutter {

@@ -72,6 +72,12 @@ export function startAssistantPanel(): () => void {
   const workdir = document.getElementById("as-workdir") as HTMLInputElement | null;
   const input = document.getElementById("as-input") as HTMLTextAreaElement | null;
   const sendBtn = document.getElementById("btn-as-send") as HTMLButtonElement | null;
+  // Composer menyebut nama karakter aktif ("Tanya Lumine…") — identitas
+  // berasal dari sb-header, bukan nama hardcode model tertentu.
+  if (input) {
+    const agentName = document.querySelector(".sb-name")?.textContent?.trim() || t("as.agentName");
+    input.placeholder = t("as.inputPhName", { name: agentName });
+  }
   const stopBtn = document.getElementById("as-stop") as HTMLButtonElement | null;
   const cancelBtn = document.getElementById("as-cancel") as HTMLButtonElement | null;
   const resetBtn = document.getElementById("as-reset") as HTMLButtonElement | null;

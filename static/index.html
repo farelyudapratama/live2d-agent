@@ -47,6 +47,13 @@
     <div id="stage">
       <canvas id="live2d-canvas"></canvas>
 
+      <!-- Aktivitas agent konkret di panggung; tampil hanya saat bekerja /
+           menunggu izin supaya karakter terasa bagian dari agent workflow. -->
+      <div id="stage-agent-chip" class="hidden" aria-live="polite">
+        <span class="sac-dot"></span>
+        <span class="sac-text"></span>
+      </div>
+
       <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
            berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
            folder/.zip lewat UI, atau copy manual ke data/model/. -->
@@ -195,17 +202,15 @@
            memory) dibangun window.__agentPanel dari bundle.js ke #as-root.
            Yang statis di sini hanya kerangka + tombol. -->
       <div id="mode-assistant" class="mode-panel hidden">
-        <div class="section-title" data-i18n="as.title">AI Assistant — Agent Lokal</div>
-        <div class="as-workdir">
-          <span class="cfg-label" data-i18n="as.workdir">Folder kerja</span>
+        <!-- Chrome ramping: workspace + kontrol satu baris. Semua ID lama
+             dipertahankan; path penuh tetap editable dan ada di tooltip. -->
+        <div class="as-ws">
+          <span class="as-ws-label" data-i18n="as.workspace">Workspace</span>
           <input id="as-workdir" type="text" data-i18n-ph="as.workdirPh" placeholder="(folder project ini)" />
-        </div>
-        <div class="note-row">
-          <button id="as-cancel" class="mini-btn" data-i18n="as.cancel" disabled>Stop Task</button>
-          <button id="as-stop" class="mini-btn" data-i18n="as.stop">Matikan Agent</button>
-          <button id="as-reset" class="mini-btn" data-i18n-title="as.resetTip" data-i18n="as.reset">Reset</button>
-          <button id="as-memory" class="mini-btn" data-i18n="as.memoryBtn">Lihat Memory</button>
-          <span class="hint" data-i18n="as.hint1">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
+          <button id="as-cancel" class="mini-btn" data-i18n-title="as.cancel" disabled>■</button>
+          <button id="as-stop" class="mini-btn" data-i18n-title="as.stop">×</button>
+          <button id="as-reset" class="mini-btn" data-i18n-title="as.resetTip">↺</button>
+          <button id="as-memory" class="mini-btn" data-i18n-title="as.memoryBtn">M</button>
         </div>
         <div id="as-root" class="as-root"></div>
         <!-- Quick actions: task umum satu-klik (teks = prompt, satu sumber
@@ -216,11 +221,10 @@
           <button class="as-quick-chip" data-i18n="as.quick.review">Review perubahan belum di-commit</button>
           <button class="as-quick-chip" data-i18n="as.quick.summary">Ringkas kerjamu sesi ini</button>
         </div>
-        <div class="chat-input">
+        <div class="chat-input as-composer">
           <textarea id="as-input" rows="1" data-i18n-ph="as.inputPh" placeholder="Minta apa? mis. baca struktur folder…"></textarea>
-          <button id="btn-as-send" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
+          <button id="btn-as-send" class="as-send" data-i18n-title="chat.sendTip" aria-label="Kirim">↑</button>
         </div>
-        <p class="hint" data-i18n="as.hint2">Tools aman (lihat folder, baca file) jalan otomatis. Menulis file &amp; menjalankan perintah butuh persetujuanmu di panel ini.</p>
       </div>
 
       <!-- ═══ MODE: DESKTOP PET ═══ -->

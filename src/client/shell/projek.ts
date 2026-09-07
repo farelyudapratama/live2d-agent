@@ -210,6 +210,49 @@ export function startProjekRail(): () => void {
     statusIv = setInterval(() => { void refreshAgentBadge(); }, 4000);
   }
 
+  // ── Resize side panel (drag gutter; dobel-klik = reset) ─────────
+  const gutter = document.getElementById("sb-gutter");
+  const sidebar = document.getElementById("sidebar");
+  const LS_W = "live2d.sidebar.w";
+  function applySidebarW(px: number | null): void {
+    if (!sidebar) return;
+    if (px == null) sidebar.style.flexBasis = "";
+    else sidebar.style.flexBasis = Math.max(320, Math.min(900, px)) + "px";
+  }
+  function initSidebarW(): void {
+    try {
+      const w = Number(localStorage.getItem(LS_W));
+      if (w >= 320 && w <= 900) applySidebarW(w);
+    } catch {}
+  }
+  if (gutter && sidebar) {
+    let dragging = false;
+    gutter.addEventListener("mousedown", (e) => {
+      dragging = true;
+      document.body.classList.add("sb-resizing"); // matikan transition
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      // Gutter di kiri sidebar → lebar = jarak tepi kanan window → kursor.
+      applySidebarW(window.innerWidth - e.clientX - 10 /* padding .app */);
+    });
+    window.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("sb-resizing");
+      const w = parseInt(sidebar.style.flexBasis, 10);
+      if (w >= 320 && w <= 900) {
+        try { localStorage.setItem(LS_W, String(w)); } catch {}
+      }
+    });
+    gutter.addEventListener("dblclick", () => {
+      applySidebarW(null); // kembali ke default 372/600 (agent-wide)
+      try { localStorage.removeItem(LS_W); } catch {}
+    });
+    initSidebarW();
+  }
+
   setOpen(open);
 
   return function destroyProjekRail() {

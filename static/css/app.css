@@ -3338,6 +3338,37 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1.45;
 }
 
+/* Quick actions — chip task umum satu-klik di atas composer. */
+.as-quick {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.as-quick-chip {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.as-quick-chip:hover { color: var(--text); border-color: var(--line-strong); background: var(--ink-3); }
+
+/* ── Gutter resize side panel ───────────────────────────────────── */
+#sb-gutter {
+  flex: 0 0 6px;
+  align-self: stretch;
+  cursor: col-resize;
+  border-radius: var(--r-xs);
+}
+#sb-gutter:hover { background: var(--ink-3); }
+/* Saat menggeser: transition flex-basis dimatikan (lineal, tanpa lag),
+   selektor global — kelas dipasang di <body> oleh projek.ts. */
+body.sb-resizing #sidebar { transition: none; }
+
 /* ── Status & utilitas ──────────────────────────────────────────── */
 
 .busy { opacity: 0.55; pointer-events: none; }

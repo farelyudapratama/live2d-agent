@@ -397,6 +397,15 @@ export function startAssistantPanel(): () => void {
   const onCancel = () => { void cancelTask(); };
   const onReset = () => { if (confirm(t("as.resetTip"))) resetAgent(); };
   const onMem = () => { toggleMemory(); };
+  // Quick actions: teks chip (sudah diterjemahkan i18n) dikirim apa adanya
+  // sebagai prompt — satu sumber teks, tanpa duplikasi prompt di JS.
+  const onQuick = (e: Event) => {
+    const chip = (e.target as HTMLElement).closest(".as-quick-chip") as HTMLElement | null;
+    if (!chip || !input) return;
+    const text = chip.textContent || "";
+    input.value = text;
+    send(text);
+  };
   // Rail projek memindahkan sesi (switch/new/delete) → hydrate ulang
   // transcript & status ke sesi yang baru (runtime server sama, tak dimatikan).
   const onSessionChanged = () => {
@@ -420,6 +429,7 @@ export function startAssistantPanel(): () => void {
   cancelBtn?.addEventListener("click", onCancel);
   resetBtn?.addEventListener("click", onReset);
   memBtn?.addEventListener("click", onMem);
+  document.getElementById("as-quick")?.addEventListener("click", onQuick);
   window.addEventListener("agent:session-changed", onSessionChanged);
 
   // ── Boot ────────────────────────────────────────────────────────
@@ -466,6 +476,7 @@ export function startAssistantPanel(): () => void {
     cancelBtn?.removeEventListener("click", onCancel);
     resetBtn?.removeEventListener("click", onReset);
     memBtn?.removeEventListener("click", onMem);
+    document.getElementById("as-quick")?.removeEventListener("click", onQuick);
     window.removeEventListener("agent:session-changed", onSessionChanged);
     rootEl.textContent = "";
   };

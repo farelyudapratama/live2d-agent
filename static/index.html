@@ -82,6 +82,10 @@
       <div id="hint" data-i18n="live.hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
     </div>
 
+    <!-- Pegangan resize side panel (drag = ubah lebar #sidebar; dobel-klik =
+         reset ke default). Handler-nya di projek.ts (shell TS). -->
+    <div id="sb-gutter" aria-hidden="true"></div>
+
     <!-- ===================== RAIL OBROLAN (kanan) ===================== -->
     <div id="sidebar">
 
@@ -204,6 +208,14 @@
           <span class="hint" data-i18n="as.hint1">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
         </div>
         <div id="as-root" class="as-root"></div>
+        <!-- Quick actions: task umum satu-klik (teks = prompt, satu sumber
+             via data-i18n — panel mengirim textContent sebagai pesan). -->
+        <div class="as-quick" id="as-quick">
+          <button class="as-quick-chip" data-i18n="as.quick.explore">Jelajahi struktur project</button>
+          <button class="as-quick-chip" data-i18n="as.quick.fix">Cari &amp; perbaiki error (build/test)</button>
+          <button class="as-quick-chip" data-i18n="as.quick.review">Review perubahan belum di-commit</button>
+          <button class="as-quick-chip" data-i18n="as.quick.summary">Ringkas kerjamu sesi ini</button>
+        </div>
         <div class="chat-input">
           <textarea id="as-input" rows="1" data-i18n-ph="as.inputPh" placeholder="Minta apa? mis. baca struktur folder…"></textarea>
           <button id="btn-as-send" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>

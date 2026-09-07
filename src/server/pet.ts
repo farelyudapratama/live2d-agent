@@ -15,6 +15,7 @@ import { spawn, execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 import { appRoot } from "../shared/paths";
+import { findChromium } from "./browser/discovery";
 
 const ROOT = appRoot();
 const STATIC = join(ROOT, "static");
@@ -61,19 +62,6 @@ export function petClose() {
   return { ok: true };
 }
 
-function findChromeEdge(): string | null {
-  const candidates = [
-    process.env.LOCALAPPDATA + "\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    process.env.LOCALAPPDATA + "\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  ];
-  for (const c of candidates) { try { if (c && existsSync(c)) return c; } catch {} }
-  return null;
-}
-
 export function petLaunch(port: number): { ok: boolean; error?: string; how?: string } {
   petClose();
   // Port lewat parameter supaya tidak ada sumber kebenaran kedua (dulu
@@ -95,7 +83,7 @@ export function petLaunch(port: number): { ok: boolean; error?: string; how?: st
   }
 
   // Shell 2: Chrome/Edge --app — fallback nol-build.
-  const exe = findChromeEdge();
+  const exe = findChromium();
   if (!exe) {
     return {
       ok: false,

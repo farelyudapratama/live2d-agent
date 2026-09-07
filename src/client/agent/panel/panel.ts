@@ -21,6 +21,7 @@ import type { AsSseEvent } from "./stream";
 import { ChangeRegistry, TermLog } from "./registry";
 import { makeActor } from "./actor";
 import { createPanelView } from "./view";
+import type { TechnicalTab } from "./view";
 
 const API = location.origin;
 
@@ -48,15 +49,17 @@ function speakAsCharacter(text: string): void {
 export function startAssistantPanel(): () => void {
   const t = getT();
   const root = document.getElementById("as-root");
+  const techRoot = document.getElementById("as-tech-root");
   if (!root) return () => {};
   const rootEl: HTMLElement = root;
+  const techRootEl: HTMLElement | null = techRoot;
 
   let transcript = new Transcript();
   const registry = new ChangeRegistry(); // perubahan file sesi (tab Review)
   const termLog = new TermLog(); // riwayat run_command (tab Terminal)
   /** name → level tool (dari /status; sumber kebenaran = registry server). */
   const toolLevels = new Map<string, "safe" | "mutating">();
-  const view = createPanelView(root, {
+  const view = createPanelView(rootEl, techRootEl, {
     t,
     onApprove: approve,
     onTabChange: drawPages,
@@ -98,8 +101,8 @@ export function startAssistantPanel(): () => void {
     view.render(transcript.blocks);
   };
 
-  /** Gambar halaman tab aktif (Review/Terminal) dari registry & log. */
-  function drawPages(tab: "chat" | "review" | "term"): void {
+  /** Gambar halaman teknis aktif; Browser diisi modul control plane mendatang. */
+  function drawPages(tab: TechnicalTab): void {
     if (tab === "review") {
       view.renderReview(registry.list(), {
         canRevert: true,
@@ -490,5 +493,6 @@ export function startAssistantPanel(): () => void {
     document.getElementById("as-quick")?.removeEventListener("click", onQuick);
     window.removeEventListener("agent:session-changed", onSessionChanged);
     rootEl.textContent = "";
+    if (techRootEl) techRootEl.textContent = "";
   };
 }

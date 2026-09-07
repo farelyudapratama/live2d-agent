@@ -16,7 +16,10 @@
 
   <div class="app">
 
-    <!-- ===================== ACTIVITY BAR (kiri, ikon) ===================== -->
+    <!-- ===================== WORKSPACE KIRI ===================== -->
+    <!-- Activity + rail projek satu kolom shell; ID lama dipertahankan agar
+         wiring mode dan sesi tetap bekerja tanpa adapter DOM. -->
+    <div id="left-workspace">
     <!-- Bar aktivitas ala coding-agent: switcher mode vertikal + tombol rail
          projek. ID mode-switch & tombol data-mode DIPERTAHANKAN — wiring
          mode-runtime.js (setPanel/switchMode) bergantung padanya. -->
@@ -39,6 +42,7 @@
     <!-- Isi (indikator project + riwayat sesi assistant) dibangun
          window.__shellProjek dari bundle.js — di sini hanya kerangka. -->
     <aside id="projek-rail" class="hidden" aria-label="Projek"></aside>
+    </div><!-- /left-workspace -->
 
     <!-- ===================== PANGGUNG (tengah) ===================== -->
     <!-- Panggung berbingkai: karakter hidup di dalamnya. Tidak ada overlay
@@ -89,11 +93,13 @@
       <div id="hint" data-i18n="live.hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
     </div>
 
-    <!-- Pegangan resize side panel (drag = ubah lebar #sidebar; dobel-klik =
+    <!-- Pegangan resize workspace agent (drag = ubah lebar gabungan; dobel-klik =
          reset ke default). Handler-nya di projek.ts (shell TS). -->
     <div id="sb-gutter" aria-hidden="true"></div>
 
-    <!-- ===================== RAIL OBROLAN (kanan) ===================== -->
+    <!-- ===================== WORKSPACE AGENT (kanan) ===================== -->
+    <div id="agent-workspace">
+    <!-- Kolom percakapan; seluruh ID mode lama tetap di #sidebar. -->
     <div id="sidebar">
 
       <!-- Header identitas — avatar/nama/greeting diisi applyCharacterIdentity() saat model dimuat.
@@ -199,8 +205,9 @@
 
       <!-- ═══ MODE: AI ASSISTANT (agent lokal — transcript ala ZCode) ═══
            Isi panel (status pill, transcript, kartu tool/approval, plan,
-           memory) dibangun window.__agentPanel dari bundle.js ke #as-root.
-           Yang statis di sini hanya kerangka + tombol. -->
+           memory) dibangun window.__agentPanel dari bundle.js ke #as-root;
+           tab teknis dibangun ke #as-tech-root di kolom sebelah. Yang statis
+           di sini hanya kerangka + tombol. -->
       <div id="mode-assistant" class="mode-panel hidden">
         <!-- Chrome ramping: workspace + kontrol satu baris. Semua ID lama
              dipertahankan; path penuh tetap editable dan ada di tooltip. -->
@@ -242,7 +249,11 @@
 
       <!-- Drawer backstage: meluncur DI ATAS rail (bukan menggantikan chat).
            Semua ID & struktur pane dipertahankan persis — wiring app.js bergantung padanya. -->
-  </div><!-- /sidebar -->
+    </div><!-- /sidebar -->
+    <section id="agent-tech" class="hidden" aria-label="Assistant technical workspace">
+      <div id="as-tech-root"></div>
+    </section>
+    </div><!-- /agent-workspace -->
       <div id="controls-panel" class="hidden">
         <div class="drawer-head">
           <div class="tabs">

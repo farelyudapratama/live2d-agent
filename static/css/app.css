@@ -162,10 +162,16 @@ a:hover { text-decoration: underline; }
   padding: 10px;
 }
 
-/* ── Activity bar (kiri, ikon) & rail projek ────────────────────── */
-/* Shell 3 kolom ala coding-agent: [activity][projek rail?][stage][sidebar].
-   Kelas: #activity, .act-btn, .act-sep, #projek-rail, .prj-*.
-   Solid + hairline, tanpa blur/gradient (manifesto Matte Studio). */
+/* ── Workspace kiri (activity + rail projek) ─────────────────────── */
+/* Shell 4 kolom: [workspace kiri][stage][gutter][workspace agent].
+   Workspace kiri merapatkan activity dan rail tanpa mengubah ID/wiring lama. */
+#left-workspace {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+}
+
 #activity {
   flex: 0 0 56px;
   display: flex;
@@ -592,11 +598,20 @@ a:hover { text-decoration: underline; }
   animation: spin 0.7s linear infinite;
 }
 
-/* ── Rail obrolan ───────────────────────────────────────────────── */
+/* ── Workspace agent: percakapan + teknis ───────────────────────── */
+#agent-workspace {
+  flex: 0 0 372px;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  transition: flex-basis 0.18s ease;
+}
+#agent-workspace.agent-wide { flex-basis: 860px; }
 
 #sidebar {
   position: relative;
-  flex: 0 0 372px;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -606,6 +621,24 @@ a:hover { text-decoration: underline; }
   background: var(--ink-1);
   border: 1px solid var(--line);
   border-top-color: var(--line-strong);
+}
+
+#agent-tech {
+  flex: 0 0 340px;
+  min-width: 300px;
+  min-height: 0;
+  padding: 12px;
+  border-radius: var(--r-xl);
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+  border-top-color: var(--line-strong);
+}
+#agent-tech.hidden { display: none; }
+#as-tech-root {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .sb-header {
@@ -2823,13 +2856,10 @@ input[type="range"]::-moz-range-thumb {
    src/client/agent/panel/view.ts (bundle.js). .as-plan/.as-mem-row lama
    dipertahankan (dipakai widget plan & memory yang baru). */
 
-#sidebar {
-  transition: flex-basis 0.18s ease, width 0.18s ease;
-}
-/* Rail melebar saat panel agent aktif (mode-runtime menyetel kelas).
-   Karakter tetap terlihat di kiri; transcript dapat ruang lega. */
-#sidebar.agent-wide {
-  flex-basis: 600px;
+/* Workspace agent melebar saat mode Assistant; kolom percakapan dan teknis
+   tetap dua permukaan matte terpisah. */
+#agent-workspace.agent-wide #sidebar {
+  min-width: 360px;
 }
 
 .as-root {
@@ -3383,9 +3413,9 @@ input[type="range"]::-moz-range-thumb {
 /* Kartu tool di dalam grup tanpa border ganda (menempel ke grup). */
 .as-step-bd .as-blk.as-tool { border-radius: var(--r-xs); }
 
-/* ── Tab panel agent: Obrolan / Review / Terminal ───────────────── */
-/* Kelas: .as-tabs, .as-tab, .as-page*, .as-rev*, .as-term* */
-.as-tabs {
+/* ── Tab pane teknis agent: Review / Terminal / Browser ──────────── */
+/* Kelas: .as-tabs, .as-tab, .as-page*, .as-rev*, .as-term*, .as-browser */
+#agent-tech .as-tabs {
   display: flex;
   gap: 12px;
   flex: none;
@@ -3418,6 +3448,11 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+.as-browser { padding: 0; }
+#as-browser-root {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .as-page-bar {
   display: flex;
@@ -3538,7 +3573,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .as-quick-chip:hover { color: var(--text-dim); border-bottom-color: var(--line-strong); }
 
-/* ── Gutter resize side panel ───────────────────────────────────── */
+/* ── Gutter resize workspace agent ──────────────────────────────── */
 #sb-gutter {
   flex: 0 0 6px;
   align-self: stretch;
@@ -3548,7 +3583,27 @@ input[type="range"]::-moz-range-thumb {
 #sb-gutter:hover { background: var(--ink-3); }
 /* Saat menggeser: transition flex-basis dimatikan (lineal, tanpa lag),
    selektor global — kelas dipasang di <body> oleh projek.ts. */
-body.sb-resizing #sidebar { transition: none; }
+body.sb-resizing #agent-workspace { transition: none; }
+
+@media (max-width: 1279px) {
+  #sb-gutter { display: none; }
+  #agent-workspace { flex-basis: 372px; }
+  #agent-workspace.agent-wide {
+    flex-basis: 520px;
+    flex-direction: column;
+  }
+  #agent-workspace.agent-wide #sidebar {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 260px;
+  }
+  #agent-tech {
+    flex: 0 1 38dvh;
+    width: auto;
+    min-width: 0;
+    max-height: 38dvh;
+  }
+}
 
 /* ── Status & utilitas ──────────────────────────────────────────── */
 
@@ -3633,7 +3688,11 @@ body.sb-resizing #sidebar { transition: none; }
     padding: 8px;
     gap: 8px;
   }
-  /* Activity bar jadi baris horizontal di atas; switcher kembali melebar. */
+  /* Workspace kiri jadi baris shell penuh; rail projek tetap di bawah activity. */
+  #left-workspace {
+    flex: 0 0 auto;
+    flex-direction: column;
+  }
   #activity {
     flex: 0 0 auto;
     flex-direction: row;
@@ -3653,13 +3712,24 @@ body.sb-resizing #sidebar { transition: none; }
     flex: 1 1 auto;
     min-height: 44dvh;
   }
-  /* Rail jadi panel bawah. Diberi porsi lebih besar daripada panggung
-     karena di sinilah semua kontrol berada — 48dvh menyisakan area chat
-     setinggi ~90px, terlalu sempit untuk dibaca. */
-  #sidebar {
+  /* Workspace agent jadi panel bawah; teknis tetap di bawah percakapan. */
+  #agent-workspace,
+  #agent-workspace.agent-wide {
     flex: 0 0 auto;
     width: auto;
     max-height: 54dvh;
+    flex-direction: column;
+  }
+  #sidebar {
+    flex: 1 1 auto;
+    width: auto;
+    min-height: 260px;
+    max-height: none;
+    padding: 10px;
+  }
+  #agent-tech {
+    flex: 0 1 38dvh;
+    max-height: 38dvh;
     padding: 10px;
   }
   #chat-log { min-height: 130px; }

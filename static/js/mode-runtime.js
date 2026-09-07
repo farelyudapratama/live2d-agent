@@ -51,8 +51,11 @@
     const panel = $("#mode-" + mode);
     if (panel) panel.classList.remove("hidden");
     $$("#mode-switch button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
-    // Rail melebar hanya saat panel agent aktif (transcript butuh ruang)
-    $("#sidebar").classList.toggle("agent-wide", mode === "assistant");
+    // Workspace agent melebar dan pane teknis hanya hidup di mode Assistant.
+    const workspace = $("#agent-workspace");
+    if (workspace) workspace.classList.toggle("agent-wide", mode === "assistant");
+    const tech = $("#agent-tech");
+    if (tech) tech.classList.toggle("hidden", mode !== "assistant");
     const labels = { chat: "Chat", vtuber: "VTuber", assistant: "Assistant", pet: "Pet" };
     const lbl = $("#mode-label");
     if (lbl) lbl.textContent = labels[mode] || mode;

@@ -231,47 +231,72 @@ export function startProjekRail(): () => void {
     statusIv = setInterval(() => { void refreshAgentBadge(); }, 4000);
   }
 
-  // ── Resize side panel (drag gutter; dobel-klik = reset) ─────────
+  // ── Resize workspace agent gabungan (drag gutter; dobel-klik = reset) ──
   const gutter = document.getElementById("sb-gutter");
-  const sidebar = document.getElementById("sidebar");
-  const LS_W = "live2d.sidebar.w";
-  function applySidebarW(px: number | null): void {
-    if (!sidebar) return;
-    if (px == null) sidebar.style.flexBasis = "";
-    else sidebar.style.flexBasis = Math.max(320, Math.min(900, px)) + "px";
+  const workspace = document.getElementById("agent-workspace");
+  const LS_W = "live2d.agentWorkspace.w";
+  const LEGACY_LS_W = "live2d.sidebar.w";
+  const MIN_DESKTOP_W = 1280;
+  function applyWorkspaceW(px: number | null): void {
+    if (!workspace) return;
+    if (px == null || window.innerWidth < MIN_DESKTOP_W) workspace.style.flexBasis = "";
+    else workspace.style.flexBasis = Math.max(650, Math.min(1200, px)) + "px";
   }
-  function initSidebarW(): void {
+  function storedWorkspaceW(): number | null {
     try {
-      const w = Number(localStorage.getItem(LS_W));
-      if (w >= 320 && w <= 900) applySidebarW(w);
-    } catch {}
+      let raw = localStorage.getItem(LS_W);
+      if (raw == null) {
+        const legacy = Number(localStorage.getItem(LEGACY_LS_W));
+        if (legacy >= 320 && legacy <= 900) {
+          raw = String(Math.max(650, Math.min(1200, legacy + 340)));
+          localStorage.setItem(LS_W, raw);
+          localStorage.removeItem(LEGACY_LS_W);
+        }
+      }
+      const w = Number(raw);
+      return w >= 650 && w <= 1200 ? w : null;
+    } catch {
+      return null;
+    }
   }
-  if (gutter && sidebar) {
+  function initWorkspaceW(): void {
+    applyWorkspaceW(storedWorkspaceW());
+  }
+  if (gutter && workspace) {
     let dragging = false;
+    const onResize = () => {
+      if (window.innerWidth < MIN_DESKTOP_W) {
+        dragging = false;
+        document.body.classList.remove("sb-resizing");
+      }
+      initWorkspaceW();
+    };
     gutter.addEventListener("mousedown", (e) => {
+      if (window.innerWidth < MIN_DESKTOP_W) return;
       dragging = true;
-      document.body.classList.add("sb-resizing"); // matikan transition
+      document.body.classList.add("sb-resizing");
       e.preventDefault();
     });
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
-      // Gutter di kiri sidebar → lebar = jarak tepi kanan window → kursor.
-      applySidebarW(window.innerWidth - e.clientX - 10 /* padding .app */);
+      // Gutter di kiri workspace → lebar = jarak tepi kanan window → kursor.
+      applyWorkspaceW(window.innerWidth - e.clientX - 10 /* padding .app */);
     });
     window.addEventListener("mouseup", () => {
       if (!dragging) return;
       dragging = false;
       document.body.classList.remove("sb-resizing");
-      const w = parseInt(sidebar.style.flexBasis, 10);
-      if (w >= 320 && w <= 900) {
+      const w = parseInt(workspace.style.flexBasis, 10);
+      if (w >= 650 && w <= 1200) {
         try { localStorage.setItem(LS_W, String(w)); } catch {}
       }
     });
     gutter.addEventListener("dblclick", () => {
-      applySidebarW(null); // kembali ke default 372/600 (agent-wide)
+      applyWorkspaceW(null);
       try { localStorage.removeItem(LS_W); } catch {}
     });
-    initSidebarW();
+    window.addEventListener("resize", onResize);
+    initWorkspaceW();
   }
 
   setOpen(open);

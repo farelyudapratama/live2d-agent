@@ -12,12 +12,13 @@ import { parseMarkdown } from "./md";
 import type { MdInline, MdToken } from "./md";
 
 export type PlanItem = { id?: string; task: string; status: string; note?: string };
+export type TechnicalTab = "review" | "term" | "browser";
 
 export type PanelViewDeps = {
   t: (key: string, vars?: Record<string, string | number>) => string;
   onApprove: (apId: string, approve: boolean) => void;
-  /** Dipanggil saat user pindah tab (chat/review/term) — panel re-render halaman. */
-  onTabChange?: (tab: "chat" | "review" | "term") => void;
+  /** Dipanggil saat user pindah tab teknis; transcript selalu tetap terlihat. */
+  onTabChange?: (tab: TechnicalTab) => void;
   /** Level tool ("safe"|"mutating") untuk badge; null = tak diketahui. */
   toolLevel?: (name: string) => "safe" | "mutating" | null;
 };
@@ -93,7 +94,7 @@ function buildMd(tokens: MdToken[]): HTMLElement {
   return root;
 }
 
-export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
+export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null, deps: PanelViewDeps) {
   const t = deps.t;
   // ── Skeleton panel ──────────────────────────────────────────────
   const statusbar = el("div", "as-statusbar");
@@ -107,37 +108,40 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
   const tl = el("div", "as-tl");
   tl.setAttribute("aria-live", "polite");
 
-  // ── Tab: Obrolan / Review / Terminal ───────────────────────────
-  type TabName = "chat" | "review" | "term";
-  let curTab: TabName = "chat";
+  // ── Tab teknis: Review / Terminal / Browser ──────────────────────
+  let curTab: TechnicalTab = "review";
   const tabsBar = el("div", "as-tabs");
-  const tabBtns: Record<TabName, HTMLButtonElement> = {} as any;
-  for (const name of ["chat", "review", "term"] as TabName[]) {
+  const tabBtns: Record<TechnicalTab, HTMLButtonElement> = {} as any;
+  for (const name of ["review", "term", "browser"] as TechnicalTab[]) {
     const btn = el("button", "as-tab") as HTMLButtonElement;
     btn.type = "button";
     btn.dataset.tab = name;
-    btn.textContent = t(name === "chat" ? "as.tab.chat" : name === "review" ? "as.tab.review" : "as.tab.terminal");
+    btn.textContent = t(name === "review" ? "as.tab.review" : name === "term" ? "as.tab.terminal" : "as.tab.browser");
     btn.addEventListener("click", () => setTab(name));
     tabBtns[name] = btn;
     tabsBar.appendChild(btn);
   }
 
-  const reviewPage = el("div", "as-page as-review hidden");
+  const reviewPage = el("div", "as-page as-review");
   const termPage = el("div", "as-page as-term hidden");
+  const browserPage = el("div", "as-page as-browser hidden");
+  const browserMount = el("div");
+  browserMount.id = "as-browser-root";
+  browserPage.appendChild(browserMount);
 
-  function setTab(name: TabName): void {
+  function setTab(name: TechnicalTab): void {
     curTab = name;
-    for (const k of ["chat", "review", "term"] as TabName[]) {
+    for (const k of ["review", "term", "browser"] as TechnicalTab[]) {
       tabBtns[k].classList.toggle("active", k === name);
     }
-    tl.classList.toggle("hidden", name !== "chat");
     reviewPage.classList.toggle("hidden", name !== "review");
     termPage.classList.toggle("hidden", name !== "term");
+    browserPage.classList.toggle("hidden", name !== "browser");
     deps.onTabChange?.(name);
   }
 
-  /** Tab aktif (panel membaca untuk menggambar halaman saat poll). */
-  function activeTab(): "chat" | "review" | "term" {
+  /** Tab teknis aktif (panel membaca untuk menggambar halaman saat poll). */
+  function activeTab(): TechnicalTab {
     return curTab;
   }
 
@@ -147,10 +151,14 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
   root.appendChild(statusbar);
   root.appendChild(taskBox);
   root.appendChild(memBox);
-  root.appendChild(tabsBar);
   root.appendChild(tl);
-  root.appendChild(reviewPage);
-  root.appendChild(termPage);
+  if (techRoot) {
+    techRoot.appendChild(tabsBar);
+    techRoot.appendChild(reviewPage);
+    techRoot.appendChild(termPage);
+    techRoot.appendChild(browserPage);
+  }
+  tabBtns.review.classList.add("active");
 
   // ── Rekonsiliasi transcript ─────────────────────────────────────
   const rendered = new Map<number, { el: HTMLElement; rev: number }>();

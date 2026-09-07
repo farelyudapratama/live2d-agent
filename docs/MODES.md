@@ -17,23 +17,25 @@ membongkar inti lama.
 4. Status gabungan selalu bisa dibaca: `GET /api/mode` →
    `{active, vtuber, assistant, pet}`.
 
-## Shell 3 kolom (2026-09-07)
+## Shell 4 kolom (2026-09-07)
 
-Layout app ala coding-agent: `[activity bar 56px][rail projek 240px toggle][stage flex:1][side panel 372px/600px]`.
+Layout app ala coding-agent: `[activity+projek/history][stage Live2D][conversation][technical pane]`.
 
 - **Activity bar** (`<nav id="activity">`): switcher mode vertikal — id
   `mode-switch` + tombol `data-mode` DIPERTAHANKAN agar wiring
   `mode-runtime.js` tak berubah; tombol projek membuka rail.
-- **Rail projek** (`#projek-rail`, dibangun `src/client/shell/projek.ts` →
-  `window.__shellProjek`): indikator project (basename workdir) + riwayat
-  sesi assistant (lihat seksi Multi-session). Panel control drawer
-  (`#controls-panel`) & popup lain tetap fixed/float di atas semua ini.
-- **Stage** sizing otomatis (`stageSize()` membaca `#stage.clientWidth` —
-  tidak ada aritmetika lebar sidebar di mana pun).
-- **Side panel** = `#sidebar` (id dipertahankan); `agent-wide` (600px) tetap
-  disetel mode-runtime saat mode assistant.
-- Breakpoint `<1024px`: activity bar jadi baris horizontal, rail projek
-  full-width, sidebar bottom-sheet.
+- **Rail projek/history** (`#projek-rail`, dibangun `src/client/shell/projek.ts`
+  → `window.__shellProjek`): indikator project (basename workdir) + riwayat
+  sesi assistant (lihat seksi Multi-session). Activity + rail dibungkus
+  `#left-workspace` sebagai kolom konteks pertama.
+- **Stage Live2D** tetap kolom kedua; sizing otomatis (`stageSize()` membaca
+  `#stage.clientWidth`).
+- **Conversation** = `#sidebar` di dalam `#agent-workspace`; state/TASK,
+  transcript, quick actions, dan composer tetap terlihat.
+- **Technical pane** = `#agent-tech`: tab Review, Terminal, Browser yang
+  benar-benar fungsional. Combined workspace resizable 650–1200px.
+- Breakpoint `<1280px`: technical pane ditumpuk di bawah conversation dan
+  gutter desktop mati; `<1024px`: shell menjadi vertikal.
 
 ## Multi-session assistant (2026-09-07)
 
@@ -74,8 +76,29 @@ migrasi sekali dari `assistant-history.json` lama + arsip `.bak`):
   `approval` (dari `pendingApprovals` — saat loop pause untuk izin,
   `busy=false`, jadi sumbernya bukan busy).
 - Side panel resizable via `#sb-gutter` (drag 320–900px, persist
-  localStorage, dobel-klik = reset); quick actions 4 chip di composer
+  localStorage, dobel-klik = reset); quick actions 4 shortcut di composer
   (teks i18n = prompt, dikirim apa adanya).
+
+### Hierarki Agent Workspace (2026-09-07 (5))
+
+Panel Assistant tidak lagi diperlakukan sebagai form konfigurasi + chat.
+Hierarkinya dikunci menjadi tiga lapisan:
+
+1. **Apa yang agent kerjakan** — state row + kartu TASK hero. Pesan user
+   terakhir (`Transcript.currentTask`) menjadi judul tugas; `status.plan`
+   tampil sebagai checklist live (pending/in-progress/done/failed + progres).
+2. **Apa yang benar-benar dikerjakan** — transcript/activity yang padat,
+   tool/diff/verifikasi, serta tab Review dan Terminal.
+3. **Intervensi user** — quick actions tenang + composer command di bawah.
+
+Chrome lama (judul Assistant, label Folder kerja besar, hint panjang) dibuang;
+workspace + cancel/stop/reset/memory menjadi satu utility row. Composer memakai
+placeholder identitas karakter (`Tanya {name}…`) dan tombol kirim `↑`.
+
+Karakter bukan viewer terpisah: `GET /api/assistant/status` menyertakan field
+additive `lastEvent: {type,label}|null`; `projek.ts` menampilkan
+`#stage-agent-chip` hanya saat busy/approval (`Bekerja — write_file …`) dan
+menyembunyikannya saat idle. Akting ekspresi/pose tetap dari `actor.ts`.
 
 ## AI VTuber (`src/server/vtuber.ts`)
 
@@ -96,12 +119,12 @@ AI via `/api/chat` dengan gaya dari input `#vt-persona` dan cooldown
 ## AI Assistant (`src/server/assistant.ts`)
 
 - Runtime: `{workDir, history (maks 60), approvals Map, busy}`.
-- Tools (registry di `src/server/agent/tools/index.ts`, 12 tool; level = data,
-  bukan if-else di loop): `list_dir`, `read_file`, `search_code`, `git_diff`
-  (level `safe` — jalan otomatis); `write_file`, `edit_file`, `delete_file`,
-  `run_command` (level `mutating` — butuh approval: server membuat id `ap_*`
-  dan MENAHAN eksekusi); plus `update_plan`, `remember`, `recall`,
-  `spawn_subagent` (internal loop).
+- Tools (registry di `src/server/agent/tools/index.ts`, **21 tool**; level = data,
+  bukan if-else di loop): 12 tool coding (`list_dir`, `read_file`, `search_code`,
+  `git_diff`, `write_file`, `edit_file`, `delete_file`, `run_command`,
+  `update_plan`, `remember`, `recall`, `spawn_subagent`) + 9 tool browser CDP
+  (`browser_status/open/navigate/inspect/click/type/history/close/grant_private`).
+  Level `safe` jalan otomatis; `mutating` ditahan server sampai approval user.
 - Protokol LLM: system prompt memerintahkan tool call; balasan model dideteksi
   dengan `detect()` — cari **nama tool yang dikenal** di teks (model memformat
   bebas: `TOOL: nama {json}`, `**Tool: nama**` + fence json, atau `nama {json}`),
@@ -124,8 +147,9 @@ Panel assistant **port ke TS**: `src/client/agent/panel/` (stream / transcript /
 actor / view / panel) di-bundle ke `bundle.js` sebagai `window.__agentPanel`;
 `mode-runtime.js` hanya bridge `start()`. Bentuk:
 
-- **Rail melebar** — `#sidebar.agent-wide` (372 → 600px) saat mode assistant
-  aktif; karakter tetap terlihat di kiri.
+- **Workspace melebar** — `#agent-workspace.agent-wide` menampung kolom
+  conversation + technical pane saat mode assistant; karakter tetap terlihat
+  di kolom stage.
 - **Transcript live** — pertanyaan dikirim via SSE `/api/assistant/ask-stream`
   (delta token, kartu tool + args/hasil, kartu approval, `speak`, `done`),
   bukan lagi `POST /ask` blocking. Approve via `/approve-stream` agar kartu

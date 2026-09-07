@@ -24,7 +24,7 @@ inti logika **TypeScript**, engine UI teruji dijaga guard otomatis.
 - **Akting mengikuti teks** — directive `[EMOTION:] [GESTURE:] [MOTION:] [PROP:] …`
   diparse jadi gerak multi-layer (prioritas + blending + ownership per field), pose dari
   emosi, mata/kepala mengikuti mouse, gaze kontekstual (mikir/malu/senang).
-- **Agent dengan 12 tool** — mode Assistant punya *agentic loop* beneran: planning
+- **Agent dengan 21 tool** — mode Assistant punya *agentic loop* beneran: planning
   ber-verifikasi, tool read-only jalan otomatis, tool pengubah (`write_file`,
   `edit_file`, `delete_file`, `run_command`) wajib approval via kartu izin, memory lintas
   sesi, dan subagent paralel. Tersedia juga sebagai REPL terminal (`bun run agent`).
@@ -34,7 +34,7 @@ inti logika **TypeScript**, engine UI teruji dijaga guard otomatis.
 - **Tiga mode, satu aplikasi** — 🎥 **AI VTuber** (Twitch / YouTube Live / mock + overlay
   OBS Browser Source anti-dobel balasan) · 🧠 **Assistant** (agent ber-tool) · 🐾 **Desktop
   Pet** (shell Tauri: transparan, always-on-top, klik-tembus).
-- **Teruji, bukan cukup jalan** — 228 unit test + 512 assertion guard yang menguji kode
+- **Teruji, bukan cukup jalan** — 336 unit test + 512 assertion guard yang menguji kode
   asli (bukan salinan), termasuk uji invariansi: rig yang sama dalam kosakata Inggris /
   Jepang / Mandarin harus resolve ke role yang sama.
 - **Distribusi rapi** — `bun run dist` menghasilkan folder portable (server di-compile ke
@@ -79,7 +79,7 @@ flowchart LR
     end
     subgraph server["Server Bun (loopback default)"]
         API["index.ts — 40+ route API<br/>+ static + upload"]
-        AGENT["server/agent — agentic loop<br/>12 tool · permission gate<br/>planning · memory · subagent"]
+        AGENT["server/agent — agentic loop<br/>21 tool · permission gate<br/>planning · memory · subagent · browser CDP"]
         MODES["vtuber.ts · assistant.ts · pet.ts"]
         LLM["llm-client.ts — multi-provider<br/>role routing + fallback"]
     end
@@ -103,8 +103,9 @@ potongan saat disentuh). Kode TS client di-bundle oleh `src/build.ts` dan dimuat
 | Lapisan | Lokasi | Karakter |
 |---|---|---|
 | Server — 40+ route, LLM proxy, static, upload | `src/server/index.ts` | TS penuh, teruji unit |
-| Otak agent — prompt, directive, proaktif | `src/client/agent/` + `src/server/agent/` | TS penuh, teruji unit |
-| Panel agent — transcript live ala ZCode | `src/client/agent/panel/` | TS penuh, teruji unit; `mode-runtime.js` hanya bridge |
+| Otak agent — prompt, directive, proaktif | `src/client/agent/` + `src/server/agent/` | TS penuh, 21 tool + approval/memory/session/undo |
+| Browser agent — Edge/Chrome CDP nyata | `src/server/browser/` + `src/client/browser/` | AX/DOM inspect, trusted input, screenshot preview, policy origin |
+| Panel agent — workspace 4 kolom | `src/client/agent/panel/` + `src/client/shell/` | TASK/chat + Review/Terminal/Browser; TS penuh |
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
 | Mode system — VTuber / Assistant / Pet | `src/server/{vtuber,assistant,pet}.ts` | satu mode aktif, teardown sebelum pindah |
 | Release portable — compile + rakit folder | `src/dist.ts` → `dist/Live2D-Agent/` | sidecar shell Tauri |
@@ -125,13 +126,13 @@ native + user) → Runtime (priority + blend + watchdog rAF) → Live2D`.
 | 🎭 **Akting** | directive protokol, pose dari emosi + jitter scaled ke range model, arbitrase motion/gesture multi-layer, gaze intent (tatap user → alih pandang kontekstual), mood webcam inferensi lokal |
 | 🕺 **Gerak** | Motion Studio (keyframe per param), registry 3 sumber (builtin 9 gesture + native `.motion3` + user), playback AI di-dlar maks 2× mengikuti estimasi TTS, buat motion dari teks (draft → preview → approval) |
 | 🎤 **Suara** | TTS 6 provider (Browser/Gradio/OpenAI-compatible/ElevenLabs/Gemini/API kustom), pipeline per-kalimat + prefetch + cache 30 mnt, lip-sync dari amplitudo audio, STT Whisper lokal push-to-talk (anti-echo saat TTS jalan) |
-| 🖥️ **Mode** | VTuber (Twitch IRC anonim / YouTube Live / mock, feed + banner donasi), overlay OBS transparan dengan heartbeat anti-dobel balasan, Assistant agent 12 tool + approval + memory, Pet shell Tauri klik-tembus |
+| 🖥️ **Mode** | VTuber (Twitch IRC anonim / YouTube Live / mock), Assistant agent 21 tool + approval/memory/session/undo, workspace 4 kolom, Browser Edge/Chrome CDP nyata, Pet shell Tauri klik-tembus |
 | 🌐 **Lainnya** | i18n Indonesia/English (deteksi otomatis, parity dijaga test), avatar per model, adopsi `.exp3` tak terdaftar, sheet schema v4 dengan migrasi non-destruktif |
 
 ## 🧪 Kualitas
 
 ```bash
-bun run test         # 228 unit test (bun test) + 512 guard legacy (11 suite)
+bun run test         # 336 unit test (bun test) + 512 guard legacy (11 suite)
 bun run test:unit    # hanya unit test TS
 bun run test:guards  # hanya guard legacy
 bunx tsc --noEmit    # type-check
@@ -148,8 +149,12 @@ LLM di-stub ke `mock`) atau menulis `data/config.json`. Detail filosofi: [`AGENT
 - `/api/*` tak dikenal → 404 JSON, bukan SPA fallback.
 - Inferensi kamera & STT **100% lokal di browser** (transformers.js) — frame/audio tidak
   pernah di-upload.
-- Tool agent pengubah (`write_file`, `run_command`, …) ditahan server sampai user
-  menyetujui di kartu approval — di panel maupun REPL terminal.
+- Tool agent pengubah (`write_file`, `run_command`, browser click/type/navigate, …)
+  ditahan server sampai user menyetujui di kartu approval — di panel maupun REPL.
+- API localhost privileged menolak Origin asing; browser agent hanya HTTP(S),
+  memakai profil terisolasi, dan origin localhost/LAN perlu grant eksplisit.
+- Browser agent memakai Edge/Chrome CDP nyata: model membaca AX/DOM semantik;
+  screenshot hanya preview user (pipeline LLM saat ini text-only).
 
 ## 🧭 Keputusan desain yang disengaja
 

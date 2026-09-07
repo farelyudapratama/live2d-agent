@@ -15,7 +15,7 @@ Runtime **Bun**, inti logika **TypeScript** (`src/`, di-bundle ke
 `static/js/bundle.js`), engine/UI legacy di `static/js/app.js` (±8.600 baris —
 dijaga guard, di-port potongan saat disentuh).
 
-Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop + 12 tool +
+Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop + 21 tool +
 permission gate di `src/server/agent/`) — jangan tertukar: itu kode produk,
 bukan instruksi untukmu.
 
@@ -34,7 +34,7 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 260 unit test (bun test) + 512 guard (11 suite)
+bun run test           # SEMUA: 336 unit test (bun test) + 512 guard (11 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
@@ -116,8 +116,10 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 ```text
 src/server/index.ts          Bun.serve (loopback default) — 40+ route API + static
 src/server/{vtuber,assistant,pet}.ts   runtime 3 mode (satu aktif)
-src/server/agent/            loop, plan, bus, memory, subagent, tools/ (12 tool),
+src/server/agent/            loop, plan, bus, memory, subagent, tools/ (21 tool),
                              sessions (multi-session), undo (snapshot/revert)
+src/server/browser/          Edge/Chrome CDP: policy, discovery, manager,
+                             AX snapshot/ref + trusted input/screenshot
 src/server/persona/          persona narrator
 src/shared/                  types, config, llm-client (role routing), paths
 src/client/animation/        easing, motion-dsl, motion-registry, motion-runtime
@@ -125,6 +127,7 @@ src/client/engine/           motion-taxonomy (klasifikasi klip .motion3.json)
 src/client/agent/            brain + directive-parser → window.__agent
 src/client/agent/panel/      panel agent (remake ala ZCode): stream/transcript/
                              actor/view/panel/diff/md/registry → window.__agentPanel
+src/client/browser/          control plane browser preview/CDP → window.__browserPanel
 src/client/shell/            rail projek shell (sesi & project) → window.__shellProjek
 src/client/i18n/             core i18n zero-dep + kamus id/en
 src/build.ts                 bundle-entry → static/js/bundle.js (IIFE)

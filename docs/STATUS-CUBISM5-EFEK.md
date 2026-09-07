@@ -4,6 +4,42 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-07 (6) — 4 KOLOM + BROWSER NYATA YANG DIKONTROL AGENT
+
+Target final: `[projek/history][Live2D][conversation][technical pane]` dan browser
+harus dapat dilihat serta dimanipulasi oleh user **dan** model. Implementasi
+memakai Edge/Chrome headed dengan profil terisolasi + CDP (`ws` yang sudah ada),
+bukan iframe/proxy palsu:
+
+- **Keamanan lebih dulu** (`68c6fe9`): API localhost privileged menolak Origin
+  asing; same-origin loopback dan CLI/native tanpa Origin tetap berjalan.
+  Browser policy hanya HTTP(S), menolak scheme lokal, private/link-local/cloud
+  metadata, mengecek DNS, dan mewajibkan grant eksplisit per-origin untuk
+  localhost/LAN.
+- **Engine CDP** (`bf23263`): discovery Edge/Chrome bersama (fallback Pet ikut
+  reuse), launch browser terlihat dengan profil `data/browser/profile`, satu
+  tab, navigate/history/focus/close, AX-tree inspect, ref opaque+TTL+stale
+  guard, trusted click/type, screenshot, redaksi password/secret.
+- **9 tool browser agent** (`9deddc3`): `browser_status/open/navigate/inspect/
+  click/type/history/close/grant_private`. Semua aksi mutating lewat approval.
+  `browser_type.text` tidak pernah masuk bus/SSE/history/status; hanya panjang
+  karakter yang publik, sedangkan nilai asli hidup sementara di approval map.
+- **Shell 4 kolom** (`5eecdfc`): conversation tetap di `#sidebar`; Review,
+  Terminal, Browser pindah ke `#agent-tech`; Browser punya mount nyata
+  `#as-browser-root`. Combined workspace resizable 650–1200px; <1280px panel
+  teknis ditumpuk di bawah conversation; Chat tab teknis redundan dihapus.
+- **Control plane Browser** (`6b47740`): address/back/forward/reload,
+  engine/koneksi/grant, preview screenshot bertimestamp, klik preview trusted,
+  focus browser live, close, dan grant origin privat eksplisit. Poll/screenshot
+  hanya saat tab terlihat; object URL dibersihkan. API POST wajib JSON 64 KiB;
+  screenshot `no-store`; type response tidak mengulang teks.
+- Model saat ini text-only, jadi agent melihat halaman lewat accessibility/DOM
+  semantic snapshot; screenshot adalah preview user. Tidak ada klaim multimodal
+  palsu. User dan agent tetap memakai tab browser nyata yang sama.
+- Gate: **336 unit + 512 guard, 0 gagal**; build dan tsc bersih. Manual smoke
+  browser terpasang tetap wajib saat merakit release Windows.
+
+
 ## UPDATE 2026-09-07 (4) — GAP AUDIT UI AGENT: STATUS GLOBAL, BADGE LEVEL, CANCEL, QUICK ACTIONS
 
 User memberi checklist "elemen ideal UI agent" (6 kelompok). Hasil audit:

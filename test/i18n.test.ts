@@ -51,7 +51,7 @@ describe("i18n dictionaries", () => {
 });
 
 describe("i18n markup coverage", () => {
-  for (const file of ["static/index.html", "static/pet.html"]) {
+  for (const file of ["static/index.html", "static/pet.html", "static/vtuber.html"]) {
     test(`${file} — semua kunci data-i18n* dikenal`, () => {
       const missing = htmlKeys(file).filter((k) => !(k in DICT_ID) || !(k in DICT_EN));
       expect(missing).toEqual([]);
@@ -68,7 +68,7 @@ describe("i18n markup coverage", () => {
     // -aria) langsung diikuti tag lain — berarti ada elemen anak yang akan
     // terhapus saat apply() menimpa textContent.
     const dangerous = /<[a-zA-Z]+[^>]*\sdata-i18n="[^"]*"[^>]*>\s*</;
-    for (const file of ["static/index.html", "static/pet.html"]) {
+    for (const file of ["static/index.html", "static/pet.html", "static/vtuber.html"]) {
       const hit = readFileSync(join(REPO, file), "utf8").match(dangerous);
       expect(hit === null, `${file} memuat data-i18n pada elemen beranak: ${hit ? hit[0].slice(0, 90) : ""}`).toBe(true);
     }

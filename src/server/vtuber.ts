@@ -216,3 +216,18 @@ export function vtuberStart(cfg: any): { ok: boolean; error?: string } {
     return { ok: false, error: e.message };
   }
 }
+
+// ── Overlay OBS ──────────────────────────────────────────────────────────────
+// Halaman vtuber.html (Browser Source OBS) mengirim heartbeat berkala. Selama
+// heartbeat segar, app utama menahan balasan otomatisnya supaya balasan tidak
+// dobel (di app utama dan di overlay). Timestamp 0 = belum pernah nyambung.
+let overlayBeat = 0;
+
+export function overlayPing(): { ok: boolean; active: boolean } {
+  overlayBeat = Date.now();
+  return { ok: true, active: true };
+}
+
+export function overlayActive(): boolean {
+  return overlayBeat > 0 && Date.now() - overlayBeat < 8000;
+}

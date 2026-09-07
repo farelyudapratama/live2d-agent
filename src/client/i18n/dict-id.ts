@@ -437,6 +437,7 @@ export const DICT_ID: Record<string, string> = {
   "as.actor.error": "Waduh, kayaknya ada yang macet… coba tanya lagi ya.",
   "as.actor.revised": "Oh, rencananya diubah… oke, aku ikutin lagi.",
   "as.planTitle": "Rencana kerja:",
+  "as.task": "TUGAS",
   "as.plan.progress": "{done}/{total} selesai",
   "as.reset": "Reset",
   "as.resetDone": "Riwayat sesi dikosongkan.",

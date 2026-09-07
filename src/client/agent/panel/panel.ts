@@ -86,7 +86,11 @@ export function startAssistantPanel(): () => void {
   let localApprovals = new Set<string>(); // apId yang panel ini yang menyelesaikan
 
   // ── Util kecil ──────────────────────────────────────────────────
-  const render = () => view.render(transcript.blocks);
+  let currentPlan: any[] = [];
+  const render = () => {
+    view.renderTask(transcript.currentTask(), currentPlan);
+    view.render(transcript.blocks);
+  };
 
   /** Gambar halaman tab aktif (Review/Terminal) dari registry & log. */
   function drawPages(tab: "chat" | "review" | "term"): void {
@@ -326,8 +330,9 @@ export function startAssistantPanel(): () => void {
     // Tombol cancel: aktif saat ada tugas berjalan di runtime (kita/CLI),
     // mati saat idle — tanpa runtime tak ada yang bisa dibatalkan.
     setCancelEnabled(!!st.running && (st.busy || !!liveAsk));
-    // Plan (idempotent re-render)
-    view.renderPlan(st.plan || []);
+    // Kartu TASK (pusat perhatian): tugas berjalan + checklist plan live.
+    currentPlan = st.plan || [];
+    view.renderTask(transcript.currentTask(), currentPlan);
     // Metadata level tool (badge auto/izin) — refresh map bila dikirim.
     if (Array.isArray(st.tools) && st.tools.length) {
       toolLevels.clear();

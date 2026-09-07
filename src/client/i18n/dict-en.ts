@@ -429,6 +429,7 @@ export const DICT_EN: Record<string, string> = {
   "as.actor.error": "Oops, something got stuck… try asking again, okay?",
   "as.actor.revised": "Oh, the plan changed… okay, I'm following again.",
   "as.planTitle": "Working plan:",
+  "as.task": "TASK",
   "as.plan.progress": "{done}/{total} done",
   "as.reset": "Reset",
   "as.resetDone": "Session history cleared.",

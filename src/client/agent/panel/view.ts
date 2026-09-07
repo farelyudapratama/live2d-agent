@@ -141,11 +141,11 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     return curTab;
   }
 
-  const planBox = el("div", "as-plan hidden");
+  const taskBox = el("div", "as-task hidden");
   const memBox = el("div", "as-plan as-membox hidden");
 
   root.appendChild(statusbar);
-  root.appendChild(planBox);
+  root.appendChild(taskBox);
   root.appendChild(memBox);
   root.appendChild(tabsBar);
   root.appendChild(tl);
@@ -570,25 +570,47 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     }
   }
 
-  // ── Widget plan ─────────────────────────────────────────────────
-  function renderPlan(plan: PlanItem[]): void {
-    planBox.textContent = "";
-    if (!plan || !plan.length) {
-      planBox.classList.add("hidden");
+  // ── Kartu TASK (pusat perhatian) ────────────────────────────────
+  /**
+   * Hero card: apa yang agent kerjakan + checklist plan live. Hilang bila
+   * tak ada task & tak ada plan (mode ngobrol biasa) — panel kembali polos.
+   */
+  function renderTask(task: string, plan: PlanItem[]): void {
+    taskBox.textContent = "";
+    const tsk = String(task || "").trim();
+    const hasPlan = !!(plan && plan.length);
+    if (!tsk && !hasPlan) {
+      taskBox.classList.add("hidden");
       return;
     }
-    planBox.classList.remove("hidden");
-    const head = el("div", "as-plan-head");
-    head.appendChild(el("span", "as-plan-ttl", t("as.planTitle")));
-    const done = plan.filter((p) => p.status === "done").length;
-    head.appendChild(el("span", "as-plan-prog", t("as.plan.progress", { done, total: plan.length })));
-    planBox.appendChild(head);
-    for (const p of plan) {
-      const row = el("div", "as-plan-item");
-      row.appendChild(el("span", "st " + p.status, p.status));
-      row.appendChild(el("span", "", p.task + (p.note ? " — " : "")));
-      if (p.note) row.appendChild(el("span", "note", p.note));
-      planBox.appendChild(row);
+    taskBox.classList.remove("hidden");
+    if (tsk) {
+      const head = el("div", "as-task-head");
+      head.appendChild(el("span", "as-task-label", t("as.task")));
+      if (hasPlan) {
+        const done = plan.filter((p) => p.status === "done").length;
+        head.appendChild(el("span", "as-task-prog", t("as.plan.progress", { done, total: plan.length })));
+      }
+      taskBox.appendChild(head);
+      taskBox.appendChild(el("div", "as-task-text", tsk));
+    } else if (hasPlan) {
+      // tanpa task (mis. hydrate lama) — label plan saja
+      const head = el("div", "as-task-head");
+      head.appendChild(el("span", "as-task-label", t("as.planTitle")));
+      const done = plan.filter((p) => p.status === "done").length;
+      head.appendChild(el("span", "as-task-prog", t("as.plan.progress", { done, total: plan.length })));
+      taskBox.appendChild(head);
+    }
+    if (hasPlan) {
+      const list = el("div", "as-task-list");
+      for (const p of plan) {
+        const row = el("div", "as-plan-item");
+        row.appendChild(el("span", "st " + p.status, p.status));
+        row.appendChild(el("span", "", p.task + (p.note ? " — " : "")));
+        if (p.note) row.appendChild(el("span", "note", p.note));
+        list.appendChild(row);
+      }
+      taskBox.appendChild(list);
     }
   }
 
@@ -640,7 +662,7 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     tl.textContent = "";
   }
 
-  return { render, renderPlan, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm };
+  return { render, renderTask, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm };
 }
 
 export type PanelView = ReturnType<typeof createPanelView>;

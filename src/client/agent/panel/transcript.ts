@@ -75,6 +75,8 @@ export class Transcript {
   private textBlockId: number | null = null;
   /** Perubahan file giliran berjalan (keyed by path; ditulis ulang per path). */
   private turnChanges = new Map<string, FileChange>();
+  /** Tugas berjalan = pesan user terakhir (pusat perhatian kartu TASK). */
+  private task = "";
 
   private push(b: any): any {
     const blk: any = { id: nextId++, rev: 1, ...b };
@@ -109,8 +111,14 @@ export class Transcript {
     const t = String(text || "");
     if (!t) return;
     this.turnChanges.clear(); // giliran baru — mulai hitung perubahan dari nol
+    this.task = t;
     this.push({ kind: "user", text: t });
     this.registerMsgKey("user", t);
+  }
+
+  /** Tugas berjalan (pesan user terakhir) — untuk kartu TASK hero. */
+  currentTask(): string {
+    return this.task;
   }
 
   /** Garis sistem singkat (status sesi, error lokal, dsb.). */
@@ -432,6 +440,7 @@ export class Transcript {
       if (this.hasMsgKey(role, content)) continue;
       this.registerMsgKey(role, content);
       if (role === "user") {
+        this.task = content; // tugas terakhir = user terakhir di history
         this.push({ kind: "user", text: content });
       } else if (role === "tool") {
         // Tool yang menunggu izin (sesi dibuka ulang saat approval pending)

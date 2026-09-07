@@ -482,6 +482,32 @@ describe("parseMarkdown", () => {
   });
 });
 
+describe("Transcript — tugas berjalan (kartu TASK)", () => {
+  it("appendUser menyetel currentTask; transcript baru = kosong", () => {
+    const tr = new Transcript();
+    expect(tr.currentTask()).toBe("");
+    tr.appendUser("Bikin fitur auth");
+    expect(tr.currentTask()).toBe("Bikin fitur auth");
+    // giliran berikutnya menimpa
+    tr.appendUser("Sekarang perbaiki test");
+    expect(tr.currentTask()).toBe("Sekarang perbaiki test");
+  });
+
+  it("syncFromHistory: user terakhir di history = tugas berjalan", () => {
+    const tr = new Transcript();
+    tr.syncFromHistory([
+      { role: "user", content: "tugas lama" },
+      { role: "assistant", content: "sudah" },
+      { role: "user", content: "tugas baru" },
+    ]);
+    expect(tr.currentTask()).toBe("tugas baru");
+    // prompt internal lanjutan tidak jadi task
+    const tr2 = new Transcript();
+    tr2.syncFromHistory([{ role: "user", content: CONTINUATION_PROMPT }]);
+    expect(tr2.currentTask()).toBe("");
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════
 // registry.ts — ChangeRegistry (tab Review) & TermLog (tab Terminal)
 // ═══════════════════════════════════════════════════════════════

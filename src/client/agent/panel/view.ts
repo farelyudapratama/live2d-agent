@@ -16,6 +16,8 @@ export type PlanItem = { id?: string; task: string; status: string; note?: strin
 export type PanelViewDeps = {
   t: (key: string, vars?: Record<string, string | number>) => string;
   onApprove: (apId: string, approve: boolean) => void;
+  /** Dipanggil saat user pindah tab (chat/review/term) — panel re-render halaman. */
+  onTabChange?: (tab: "chat" | "review" | "term") => void;
 };
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
@@ -94,13 +96,50 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
   const tl = el("div", "as-tl");
   tl.setAttribute("aria-live", "polite");
 
+  // ── Tab: Obrolan / Review / Terminal ───────────────────────────
+  type TabName = "chat" | "review" | "term";
+  let curTab: TabName = "chat";
+  const tabsBar = el("div", "as-tabs");
+  const tabBtns: Record<TabName, HTMLButtonElement> = {} as any;
+  for (const name of ["chat", "review", "term"] as TabName[]) {
+    const btn = el("button", "as-tab") as HTMLButtonElement;
+    btn.type = "button";
+    btn.dataset.tab = name;
+    btn.textContent = t(name === "chat" ? "as.tab.chat" : name === "review" ? "as.tab.review" : "as.tab.terminal");
+    btn.addEventListener("click", () => setTab(name));
+    tabBtns[name] = btn;
+    tabsBar.appendChild(btn);
+  }
+
+  const reviewPage = el("div", "as-page as-review hidden");
+  const termPage = el("div", "as-page as-term hidden");
+
+  function setTab(name: TabName): void {
+    curTab = name;
+    for (const k of ["chat", "review", "term"] as TabName[]) {
+      tabBtns[k].classList.toggle("active", k === name);
+    }
+    tl.classList.toggle("hidden", name !== "chat");
+    reviewPage.classList.toggle("hidden", name !== "review");
+    termPage.classList.toggle("hidden", name !== "term");
+    deps.onTabChange?.(name);
+  }
+
+  /** Tab aktif (panel membaca untuk menggambar halaman saat poll). */
+  function activeTab(): "chat" | "review" | "term" {
+    return curTab;
+  }
+
   const planBox = el("div", "as-plan hidden");
   const memBox = el("div", "as-plan as-membox hidden");
 
   root.appendChild(statusbar);
   root.appendChild(planBox);
   root.appendChild(memBox);
+  root.appendChild(tabsBar);
   root.appendChild(tl);
+  root.appendChild(reviewPage);
+  root.appendChild(termPage);
 
   // ── Rekonsiliasi transcript ─────────────────────────────────────
   const rendered = new Map<number, { el: HTMLElement; rev: number }>();
@@ -461,6 +500,61 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     }
   }
 
+  // ── Halaman Review (daftar perubahan file sesi) ─────────────────
+  function renderReview(
+    entries: Array<{ path: string; kind: string; added: number; removed: number; measured: boolean }>,
+    opts: { canRevert: boolean; onRevert: (path: string) => void; onRefresh: () => void },
+  ): void {
+    reviewPage.textContent = "";
+    const bar = el("div", "as-page-bar");
+    const ttl = el("span", "as-page-ttl", t("as.review.title", { n: entries.length }));
+    bar.appendChild(ttl);
+    const refresh = el("button", "mini-btn", t("as.review.refresh")) as HTMLButtonElement;
+    refresh.type = "button";
+    refresh.addEventListener("click", () => opts.onRefresh());
+    bar.appendChild(refresh);
+    reviewPage.appendChild(bar);
+    if (!entries.length) {
+      reviewPage.appendChild(el("div", "as-page-empty", t("as.review.empty")));
+      return;
+    }
+    for (const e of entries) {
+      const row = el("div", "as-rev-row");
+      row.appendChild(el("span", "as-chg-kind", e.measured ? e.kind : "touched"));
+      row.appendChild(el("span", "as-rev-path", e.path));
+      const st = el("span", "as-diff-stat");
+      st.appendChild(el("span", "add", "+" + e.added));
+      st.appendChild(el("span", "del", "−" + e.removed));
+      row.appendChild(st);
+      if (opts.canRevert) {
+        const rv = el("button", "mini-btn as-rev-revert", t("as.review.revert")) as HTMLButtonElement;
+        rv.type = "button";
+        rv.addEventListener("click", () => opts.onRevert(e.path));
+        row.appendChild(rv);
+      }
+      reviewPage.appendChild(row);
+    }
+  }
+
+  // ── Halaman Terminal (log run_command) ──────────────────────────
+  function renderTerm(entries: Array<{ cmd: string; result: string | null; error: boolean }>): void {
+    termPage.textContent = "";
+    const bar = el("div", "as-page-bar");
+    bar.appendChild(el("span", "as-page-ttl", t("as.term.title", { n: entries.length })));
+    termPage.appendChild(bar);
+    if (!entries.length) {
+      termPage.appendChild(el("div", "as-page-empty", t("as.term.empty")));
+      return;
+    }
+    for (const e of entries) {
+      const row = el("div", "as-term-row" + (e.error ? " err" : ""));
+      row.appendChild(el("div", "as-term-cmd", "$ " + e.cmd));
+      if (e.result != null) row.appendChild(el("pre", "as-term-res", e.result));
+      else row.appendChild(el("div", "as-term-run", t("as.term.running")));
+      termPage.appendChild(row);
+    }
+  }
+
   // ── Widget plan ─────────────────────────────────────────────────
   function renderPlan(plan: PlanItem[]): void {
     planBox.textContent = "";
@@ -530,7 +624,7 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     tl.textContent = "";
   }
 
-  return { render, renderPlan, renderMemory, hideMemory, setPill, clearTranscript };
+  return { render, renderPlan, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm };
 }
 
 export type PanelView = ReturnType<typeof createPanelView>;

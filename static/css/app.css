@@ -3024,6 +3024,100 @@ input[type="range"]::-moz-range-thumb {
 /* Kartu tool di dalam grup tanpa border ganda (menempel ke grup). */
 .as-step-bd .as-blk.as-tool { border-radius: var(--r-xs); }
 
+/* ── Tab panel agent: Obrolan / Review / Terminal ───────────────── */
+/* Kelas: .as-tabs, .as-tab, .as-page*, .as-rev*, .as-term* */
+.as-tabs {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+}
+.as-tab {
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.as-tab:hover { color: var(--text-dim); background: var(--ink-3); }
+.as-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--lamp);
+}
+.as-page {
+  flex: 1 1 auto;
+  min-height: 130px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--ink-input);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.as-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.as-page-ttl {
+  flex: 1 1 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.as-page-empty { color: var(--muted); font-size: 12px; padding: 8px 2px; }
+.as-rev-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.as-rev-row:hover { background: var(--ink-3); }
+.as-rev-path {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.as-rev-revert { flex: none; }
+.as-term-row {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  background: var(--ink-0);
+  padding: 5px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.as-term-row.err { border-color: var(--coral-border); }
+.as-term-cmd { color: var(--lamp-soft); white-space: pre-wrap; word-break: break-word; }
+.as-term-res {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  background: var(--ink-input);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+}
+.as-term-row.err .as-term-res { color: var(--coral); }
+.as-term-run { color: var(--muted); font-style: italic; margin-top: 2px; }
+
 /* Input: textarea auto-grow */
 #mode-assistant .chat-input textarea {
   width: 100%;

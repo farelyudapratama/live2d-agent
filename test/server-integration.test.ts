@@ -124,6 +124,19 @@ describe("server API parity (dispatcher-level)", () => {
     expect(json).toHaveProperty("clips");
     expect(Array.isArray(json.clips)).toBe(true);
   });
+
+  it("/api/assistant/status selalu berisi shape panel (walau runtime mati)", async () => {
+    const res = await call("GET", "/api/assistant/status");
+    expect(res).not.toBeNull();
+    const json = await (res as Response).json();
+    expect(json).toHaveProperty("running");
+    expect(json).toHaveProperty("busy");
+    expect(json).toHaveProperty("pendingApprovals");
+    expect(json).toHaveProperty("plan");
+    // Field tab Review panel (fase tab) — selalu ada, array berisi string.
+    expect(json).toHaveProperty("notes");
+    expect(Array.isArray(json.notes.filesTouched)).toBe(true);
+  });
 });
 
 describe("static serving security", () => {

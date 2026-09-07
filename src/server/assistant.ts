@@ -12,7 +12,7 @@ import { appRoot } from "../shared/paths";
 import { makeRuntime, getRuntime, setRuntime, loadSession, saveSession, pushMsg } from "./agent/state";
 import { agentAsk, agentRunApproved } from "./agent/loop";
 import { stripToolDirective } from "./agent/parse";
-import { readEvents } from "./agent/bus";
+import { readEvents, emitEvent } from "./agent/bus";
 import { narrate } from "./persona/narrator";
 import { cleanForSpeech } from "./persona/clean";
 import { TOOLS } from "./agent/tools/index";
@@ -44,6 +44,8 @@ export function assistantStatus() {
     pendingApprovals: rt ? Array.from(rt.approvals.values()) : [],
     /** Rencana kerja aktif (update_plan) — untuk kotak progress di panel. */
     plan: rt?.plan || [],
+    /** File yang tersentuh sesi ini (notes) — untuk tab Review panel. */
+    notes: { filesTouched: rt ? rt.notes.filesTouched.slice() : [] },
   };
 }
 
@@ -122,17 +124,23 @@ export async function assistantResolveApproval(
   id: string,
   approve: boolean,
   config: ConfigManager,
+  onEvent: (e: any) => void = assistantAskNoop,
 ): Promise<{ ok: boolean; error?: string; reply?: string; speak?: string }> {
   const rt = getRuntime();
   if (!rt) return { ok: false, error: "assistant mode tidak aktif" };
   const ap = rt.approvals.get(id);
   if (!ap) return { ok: false, error: "approval tidak ditemukan" };
   rt.approvals.delete(id);
+  // Event bus permission_resolved: tipe sudah dideklarasikan di bus.ts tapi
+  // belum pernah di-emit — kini dipakai supaya panel/pet menutup kartu izin
+  // secara reaktif (bukan menunggu poll status berikutnya).
+  emitEvent("permission_resolved", (approve ? "disetujui: " : "ditolak: ") + ap.tool);
   if (!approve) {
     pushMsg(rt, { role: "tool", content: "User MENOLAK " + ap.tool + " — batalkan rencana itu dan tanyakan alternatif." });
     return { ok: true, reply: "Ditolak. Aku batalkan." };
   }
-  await agentRunApproved(rt, ap.tool, ap.args);
-  // lanjutkan reasoning setelah tool dieksekusi
-  return await assistantAsk("Lanjutkan tugas berdasarkan hasil tool di atas.", config);
+  await agentRunApproved(rt, ap.tool, ap.args, onEvent !== assistantAskNoop ? onEvent : undefined);
+  // lanjutkan reasoning setelah tool dieksekusi — streaming bila onEvent
+  // diberikan (approve-stream dari panel), senyap bila tidak (route lama).
+  return await assistantAsk("Lanjutkan tugas berdasarkan hasil tool di atas.", config, onEvent);
 }

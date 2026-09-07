@@ -15,6 +15,7 @@ import {
 } from "../src/client/agent/panel/transcript";
 import { diffLines, changeFromTool } from "../src/client/agent/panel/diff";
 import { parseMarkdown, parseInlines } from "../src/client/agent/panel/md";
+import { ChangeRegistry, TermLog } from "../src/client/agent/panel/registry";
 import { makeActor } from "../src/client/agent/panel/actor";
 
 // ═══════════════════════════════════════════════════════════════
@@ -478,6 +479,78 @@ describe("parseMarkdown", () => {
   it("snake_case dan asterisk di tengah kata tidak jadi italic", () => {
     const inl = parseInlines("snake_case_var dan a*b*c tetap text");
     expect(inl.every((x) => x.t === "text")).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// registry.ts — ChangeRegistry (tab Review) & TermLog (tab Terminal)
+// ═══════════════════════════════════════════════════════════════
+
+describe("ChangeRegistry", () => {
+  it("rekam mutasi sukses; ERROR membuang path terkait", () => {
+    const r = new ChangeRegistry();
+    r.record("write_file", { path: "a.ts", content: "x\ny" });
+    r.record("edit_file", { path: "b.ts", old: "1", new: "2" });
+    r.fail("edit_file", { path: "b.ts" });
+    const list = r.list();
+    expect(list.length).toBe(1);
+    expect(list[0]).toMatchObject({ path: "a.ts", kind: "write", added: 2, measured: true });
+  });
+
+  it("path sama ditulis ulang → satu entri versi terakhir", () => {
+    const r = new ChangeRegistry();
+    r.record("write_file", { path: "a.ts", content: "dulu" });
+    r.record("edit_file", { path: "a.ts", old: "dulu", new: "kini" });
+    const list = r.list();
+    expect(list.length).toBe(1);
+    expect(list[0].kind).toBe("edit");
+  });
+
+  it("mergeTouched: path server tak terukur → entri 'touched'; jadi terukur saat dicatat", () => {
+    const r = new ChangeRegistry();
+    r.mergeTouched(["cli-only.ts", "a.ts"]);
+    let list = r.list();
+    expect(list.length).toBe(2);
+    expect(list.find((e) => e.path === "cli-only.ts")).toMatchObject({ kind: "touched", measured: false });
+
+    r.record("write_file", { path: "a.ts", content: "z" });
+    list = r.list();
+    expect(list.find((e) => e.path === "a.ts")).toMatchObject({ kind: "write", measured: true });
+    expect(list.length).toBe(2); // touched "a.ts" tak dobel
+  });
+
+  it("tool non-mutasi & args rusak diabaikan", () => {
+    const r = new ChangeRegistry();
+    r.record("list_dir", { path: "." });
+    r.record("write_file", null);
+    expect(r.list().length).toBe(0);
+  });
+});
+
+describe("TermLog", () => {
+  it("start→end mengisi entri; ERROR menandai error", () => {
+    const t = new TermLog();
+    t.start("bun test");
+    t.start("bun run build");
+    t.end("ERROR: exit 1");
+    const list = t.list();
+    expect(list.length).toBe(2);
+    expect(list[0]).toMatchObject({ cmd: "bun test", result: null });
+    expect(list[1]).toMatchObject({ cmd: "bun run build", result: "ERROR: exit 1", error: true });
+  });
+
+  it("end tanpa entri berjalan → entri '(lanjutan)'", () => {
+    const t = new TermLog();
+    t.end("hasil yatim");
+    expect(t.list()).toEqual([{ cmd: "(lanjutan)", result: "hasil yatim", error: false }]);
+  });
+
+  it("cap 80 entri — terlama dibuang", () => {
+    const t = new TermLog();
+    for (let i = 0; i < 85; i++) t.start("cmd-" + i);
+    const list = t.list();
+    expect(list.length).toBe(80);
+    expect(list[0].cmd).toBe("cmd-5");
   });
 });
 

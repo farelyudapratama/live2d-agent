@@ -8,6 +8,7 @@
  * Kontrak API TIDAK berubah: index.ts, panel web, dan CLI tetap sama.
  */
 import type { ConfigManager } from "../shared/config";
+import { appRoot } from "../shared/paths";
 import { makeRuntime, getRuntime, setRuntime, loadSession, saveSession, pushMsg } from "./agent/state";
 import { agentAsk, agentRunApproved } from "./agent/loop";
 import { stripToolDirective } from "./agent/parse";

@@ -36,8 +36,12 @@ AI via `/api/chat` dengan gaya dari input `#vt-persona` dan cooldown
 ## AI Assistant (`src/server/assistant.ts`)
 
 - Runtime: `{workDir, history (maks 60), approvals Map, busy}`.
-- Tools: `list_dir`, `read_file` (aman — jalan otomatis), `write_file`,
-  `run_shell` (butuh approval — server membuat id `ap_*` dan MENAHAN eksekusi).
+- Tools (registry di `src/server/agent/tools/index.ts`, 12 tool; level = data,
+  bukan if-else di loop): `list_dir`, `read_file`, `search_code`, `git_diff`
+  (level `safe` — jalan otomatis); `write_file`, `edit_file`, `delete_file`,
+  `run_command` (level `mutating` — butuh approval: server membuat id `ap_*`
+  dan MENAHAN eksekusi); plus `update_plan`, `remember`, `recall`,
+  `spawn_subagent` (internal loop).
 - Protokol LLM: system prompt memerintahkan tool call; balasan model dideteksi
   dengan `detect()` — cari **nama tool yang dikenal** di teks (model memformat
   bebas: `TOOL: nama {json}`, `**Tool: nama**` + fence json, atau `nama {json}`),
@@ -47,8 +51,9 @@ AI via `/api/chat` dengan gaya dari input `#vt-persona` dan cooldown
   dan loop lanjut (maks 6 turn) sampai jawaban final.
 - Approval: `POST /api/assistant/approve {id, approve}` — mengeksekusi tool
   lalu melanjutkan reasoning; menolak memasukkan pesan "User MENOLAK".
-- Sandbox: `safePath` mengunci path di dalam folder kerja; `run_shell` timeout
-  30 dtk, output dipangkas 12 KB. Tetap: shell = akses penuh mesin — hanya
+- Sandbox: `safePath` mengunci path di dalam folder kerja; `run_command`
+  asinkron dengan timeout 30 dtk, output dipangkas 12 KB (server tetap
+  responsif selama perintah jalan). Tetap: shell = akses penuh mesin — hanya
   izinkan perintah yang kamu pahami.
 
 ## Desktop Pet (`src/server/pet.ts` + `static/pet.html`)

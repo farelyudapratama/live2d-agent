@@ -1,22 +1,27 @@
+# dependencies
 node_modules/
+
+# build output — static/js/app.js (legacy) TETAP di-track (parity guard),
+# bundle + i18n adalah hasil build dari src/
 dist/
-data/config.json
-data/config.json.bak
-data/assistant-history.json
-data/motions/
-data/model/
-# bundle is build output — keep app.js (legacy parity) tracked
 static/js/bundle.js
-*.tmp
-.DS_Store
-data/sheets/
-*.log
-# Tauri pet shell — build artifacts only; sources are tracked
-agent-shell/target/
-agent-shell/gen/
-# ZCode CLI state lokal (rencana sesi, artifact)
-.zcode/# build artifacts i18n (setara bundle.js)
 static/js/i18n.js
 
-# ZCode CLI state lokal
+# data user & aset berlisensi — tidak pernah masuk repo (privasi + lisensi;
+# lihat README "Data user"). Dulu piecemeal, _param_todo.json lolos — kini utuh.
+data/
+
+# state runtime agent (ingatan tool remember — lokal saja)
+.agent-memory/
+
+# state CLI lokal (rencana sesi, artifact)
 .zcode/
+
+# shell Tauri — build artifacts only; sources are tracked
+agent-shell/target/
+agent-shell/gen/
+
+# lain-lain
+*.tmp
+*.log
+.DS_Store

@@ -21,6 +21,9 @@ import { emitEvent } from "./bus";
 
 export const MAX_ITERATIONS = 25;
 
+/** Nama semua tool terdaftar — untuk stripToolDirective (filter baris tool-call). */
+const TOOL_NAMES = TOOLS.map((t) => t.name);
+
 export type AskResult = { ok: boolean; error?: string; reply?: string };
 
 function buildSystem(lang: string, workDir: string): string {
@@ -186,13 +189,13 @@ export async function agentAsk(
       const tool = toolByName(detected.name);
       const callKey = detected.name + " " + JSON.stringify(detected.args);
       if (!tool) {
-        pushMsg(rt, { role: "assistant", content: stripToolDirective(reply) });
+        pushMsg(rt, { role: "assistant", content: stripToolDirective(reply, TOOL_NAMES) });
         pushMsg(rt, { role: "tool", content: "ERROR: tool tidak dikenal: " + detected.name });
         continue;
       }
       if (seenCalls.has(callKey)) {
         // Anti-stuck: tool identik dua kali → paksa finalisasi.
-        final = stripToolDirective(reply) || "(berhenti setelah duplikasi tool)";
+        final = stripToolDirective(reply, TOOL_NAMES) || "(berhenti setelah duplikasi tool)";
         break;
       }
       seenCalls.add(callKey);
@@ -209,28 +212,28 @@ export async function agentAsk(
           pushMsg(rt, { role: "tool", content: "Permintaan izin lama kedaluwarsa (antrean penuh) — minta lagi kalau masih perlu." });
         }
         rt.approvals.set(id, { id, tool: detected.name, args: detected.args, ts: Date.now() });
-        pushMsg(rt, { role: "assistant", content: stripToolDirective(reply) });
+        pushMsg(rt, { role: "assistant", content: stripToolDirective(reply, TOOL_NAMES) });
         pushMsg(rt, {
           role: "tool",
           content: "MENUNGGU PERSETUJUAN: " + detected.name + " " + JSON.stringify(detected.args).slice(0, 300) + " (id " + id + ")",
         });
         emitEvent("permission_request", detected.name);
         emit({ type: "approval", id, tool: detected.name, args: detected.args });
-        final = stripToolDirective(reply) + "\n\n⏳ Aku butuh izinmu untuk " + detected.name + " — cek panel Assistant.";
+        final = stripToolDirective(reply, TOOL_NAMES) + "\n\n⏳ Aku butuh izinmu untuk " + detected.name + " — cek panel Assistant.";
         break;
       }
 
       const result = await execTool(rt, detected.name, detected.args);
       trackToolSeq(rt, detected.name);
-      pushMsg(rt, { role: "assistant", content: stripToolDirective(reply) });
+      pushMsg(rt, { role: "assistant", content: stripToolDirective(reply, TOOL_NAMES) });
       pushMsg(rt, { role: "tool", content: "[" + detected.name + "] " + clipToolResult(result) });
       emitEvent("tool_call_end", detected.name + " → " + result.slice(0, 80));
       emit({ type: "tool_result", name: detected.name, text: result.slice(0, 2000) });
     }
     if (!final && rt.destroyed) final = "(dihentikan)";
     if (!final) final = "(berhenti tanpa jawaban setelah " + MAX_ITERATIONS + " langkah — coba pecah tugasnya)";
-    pushMsg(rt, { role: "assistant", content: stripToolDirective(final) });
-    const finalText = stripToolDirective(final);
+    pushMsg(rt, { role: "assistant", content: stripToolDirective(final, TOOL_NAMES) });
+    const finalText = stripToolDirective(final, TOOL_NAMES);
     emitEvent("final_answer", (rt.plan.length ? "[" + planLabel(rt.plan) + "] " : "") + finalText.slice(0, 120));
     return { ok: true, reply: finalText };
   } catch (e: any) {

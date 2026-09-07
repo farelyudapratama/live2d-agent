@@ -18,7 +18,18 @@ export type PanelViewDeps = {
   onApprove: (apId: string, approve: boolean) => void;
   /** Dipanggil saat user pindah tab (chat/review/term) — panel re-render halaman. */
   onTabChange?: (tab: "chat" | "review" | "term") => void;
+  /** Level tool ("safe"|"mutating") untuk badge; null = tak diketahui. */
+  toolLevel?: (name: string) => "safe" | "mutating" | null;
 };
+
+/** Badge level tool di header kartu: "auto" (mint) / "izin" (amber). */
+function levelBadge(t: PanelViewDeps["t"], toolLevel: PanelViewDeps["toolLevel"], name: string): HTMLElement | null {
+  const lvl = toolLevel?.(name);
+  if (!lvl) return null;
+  const b = el("span", "as-lvl" + (lvl === "safe" ? " safe" : " mutating"),
+    t(lvl === "safe" ? "as.lvl.safe" : "as.lvl.mutating"));
+  return b;
+}
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -272,6 +283,8 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
         hd.type = "button";
         hd.appendChild(el("span", "as-dot"));
         hd.appendChild(el("span", "as-tool-name", b.name));
+        const lvBadge = levelBadge(t, deps.toolLevel, b.name);
+        if (lvBadge) hd.appendChild(lvBadge);
         if (b.summary) hd.appendChild(el("span", "as-tool-sum", b.summary));
         hd.appendChild(el("span", "as-chev", "▾"));
         const bd = el("div", "as-tool-bd");
@@ -305,6 +318,8 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
         const hd = el("div", "as-appr-hd");
         hd.appendChild(el("span", "as-appr-ttl", t("as.approve.title")));
         hd.appendChild(el("span", "as-tool-name", b.tool));
+        const apBadge = levelBadge(t, deps.toolLevel, b.tool);
+        if (apBadge) hd.appendChild(apBadge);
         w.appendChild(hd);
         const argsText = (() => {
           try {

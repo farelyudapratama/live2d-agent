@@ -50,6 +50,9 @@ export function assistantStatus() {
     plan: rt?.plan || [],
     /** File yang tersentuh sesi ini (notes) — untuk tab Review panel. */
     notes: { filesTouched: rt ? rt.notes.filesTouched.slice() : [] },
+    /** Metadata level tool (safe/mutating) — badge "auto"/"izin" di panel.
+     *  Sumber kebenaran tetap registry TOOLS; client tidak menduplikasi. */
+    tools: TOOLS.map((t) => ({ name: t.name, level: t.level })),
   };
 }
 

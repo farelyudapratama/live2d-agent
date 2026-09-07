@@ -31,6 +31,7 @@ type StatusResp = {
   pendingApprovals?: Array<{ id: string; tool: string; args: any }>;
   plan?: any[];
   notes?: { filesTouched?: string[] };
+  tools?: Array<{ name: string; level: "safe" | "mutating" }>;
 };
 
 function getT() {
@@ -53,7 +54,14 @@ export function startAssistantPanel(): () => void {
   let transcript = new Transcript();
   const registry = new ChangeRegistry(); // perubahan file sesi (tab Review)
   const termLog = new TermLog(); // riwayat run_command (tab Terminal)
-  const view = createPanelView(root, { t, onApprove: approve, onTabChange: drawPages });
+  /** name → level tool (dari /status; sumber kebenaran = registry server). */
+  const toolLevels = new Map<string, "safe" | "mutating">();
+  const view = createPanelView(root, {
+    t,
+    onApprove: approve,
+    onTabChange: drawPages,
+    toolLevel: (name) => toolLevels.get(name) ?? null,
+  });
   const actor = makeActor({
     L: (window as any).__live2dAgent,
     t,
@@ -295,6 +303,11 @@ export function startAssistantPanel(): () => void {
     );
     // Plan (idempotent re-render)
     view.renderPlan(st.plan || []);
+    // Metadata level tool (badge auto/izin) — refresh map bila dikirim.
+    if (Array.isArray(st.tools) && st.tools.length) {
+      toolLevels.clear();
+      for (const tl of st.tools) toolLevels.set(tl.name, tl.level);
+    }
     // Tab Review: gabung filesTouched server (sesi CLI) + terukur client
     registry.mergeTouched(st.notes?.filesTouched || []);
     drawPages(view.activeTab());

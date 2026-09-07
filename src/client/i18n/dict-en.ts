@@ -439,6 +439,8 @@ export const DICT_EN: Record<string, string> = {
   "as.status.busyOther": "working (other client)",
   "as.status.thinking": "thinking…",
   "as.status.approval": "waiting for your approval…",
+  "as.lvl.safe": "auto",
+  "as.lvl.mutating": "approval",
   "as.stream.dropped": "stream connection dropped — watching from the server…",
   "as.approve.title": "Needs approval:",
   "as.deny": "Deny",

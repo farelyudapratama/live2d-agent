@@ -2877,6 +2877,21 @@ input[type="range"]::-moz-range-thumb {
 .as-tool[data-status="done"] .as-dot { background: var(--mint); }
 .as-tool[data-status="error"] .as-dot { background: var(--coral); }
 .as-tool-name { color: var(--text); flex: none; }
+/* Badge level tool: "auto" (mint, jalan sendiri) / "izin" (amber, butuh
+   persetujuan) — user paham kenapa sesuatu auto vs diminta izin. */
+.as-lvl {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  padding: 0 4px;
+  color: var(--muted);
+}
+.as-lvl.safe { color: var(--mint); border-color: var(--mint-dim); }
+.as-lvl.mutating { color: var(--lamp-soft); border-color: var(--accent-border); }
 .as-tool-sum {
   color: var(--muted);
   overflow: hidden;

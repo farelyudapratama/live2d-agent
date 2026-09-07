@@ -474,6 +474,7 @@ export const DICT_ID: Record<string, string> = {
   "as.term.running": "…masih berjalan…",
   "as.review.revertNone": "Tidak ada snapshot untuk {path} (mungkin dari sesi lama/CLI).",
   "as.review.revertDone": "{path} dikembalikan.",
+  "shell.projek.tip": "Projek & riwayat sesi",
   "pet.notOpen": "belum terbuka",
   "pet.clickThroughOn": " — klik tembus ON",
   "pet.noClickThrough": " (tanpa klik-tembus)",

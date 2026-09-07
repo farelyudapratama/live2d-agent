@@ -466,6 +466,7 @@ export const DICT_EN: Record<string, string> = {
   "as.term.running": "…still running…",
   "as.review.revertNone": "No snapshot for {path} (it may be from an old session/CLI).",
   "as.review.revertDone": "{path} reverted.",
+  "shell.projek.tip": "Project & session history",
   "pet.notOpen": "not open",
   "pet.clickThroughOn": " — click-through ON",
   "pet.noClickThrough": " (no click-through)",

@@ -16,7 +16,31 @@
 
   <div class="app">
 
-    <!-- ===================== PANGGUNG (kiri) ===================== -->
+    <!-- ===================== ACTIVITY BAR (kiri, ikon) ===================== -->
+    <!-- Bar aktivitas ala coding-agent: switcher mode vertikal + tombol rail
+         projek. ID mode-switch & tombol data-mode DIPERTAHANKAN — wiring
+         mode-runtime.js (setPanel/switchMode) bergantung padanya. -->
+    <nav id="activity" aria-label="Mode">
+      <div class="mode-switch" id="mode-switch" role="tablist">
+        <button data-mode="chat" class="active" data-i18n-title="top.tabTip.chat" data-i18n="top.tab.chat">Chat</button>
+        <button data-mode="vtuber" data-i18n-title="top.tabTip.vtuber" data-i18n="top.tab.vtuber">VTuber</button>
+        <button data-mode="assistant" data-i18n-title="top.tabTip.assistant" data-i18n="top.tab.assistant">Assistant</button>
+        <button data-mode="pet" data-i18n-title="top.tabTip.pet" data-i18n="top.tab.pet">Pet</button>
+      </div>
+      <div class="act-sep"></div>
+      <button id="btn-projek-rail" class="act-btn" data-i18n-title="shell.projek.tip" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        </svg>
+      </button>
+    </nav>
+
+    <!-- ===================== RAIL PROJEK (toggle) ===================== -->
+    <!-- Isi (indikator project + riwayat sesi assistant) dibangun
+         window.__shellProjek dari bundle.js — di sini hanya kerangka. -->
+    <aside id="projek-rail" class="hidden" aria-label="Projek"></aside>
+
+    <!-- ===================== PANGGUNG (tengah) ===================== -->
     <!-- Panggung berbingkai: karakter hidup di dalamnya. Tidak ada overlay
          cahaya / blur di atas canvas — apa pun yang menutupi canvas WebGL
          memaksa recomposite tiap frame. -->
@@ -74,14 +98,8 @@
         <button id="btn-toggle-controls" data-i18n-title="top.toggleControlsTip">⚙</button>
       </div>
 
-      <!-- Mode switcher: satu mode aktif; pindah mode = runtime lama dihancurkan -->
-      <div class="mode-switch" id="mode-switch" role="tablist">
-        <button data-mode="chat" class="active" data-i18n-title="top.tabTip.chat" data-i18n="top.tab.chat">Chat</button>
-        <button data-mode="vtuber" data-i18n-title="top.tabTip.vtuber" data-i18n="top.tab.vtuber">VTuber</button>
-        <button data-mode="assistant" data-i18n-title="top.tabTip.assistant" data-i18n="top.tab.assistant">Assistant</button>
-        <button data-mode="pet" data-i18n-title="top.tabTip.pet" data-i18n="top.tab.pet">Pet</button>
-        <span id="mode-label" class="mode-label" data-i18n="top.tab.chat">Chat</span>
-      </div>
+      <!-- Mode switcher pindah ke #activity (bar aktivitas kiri) —
+           id/tombolnya dipindah utuh supaya wiring mode-runtime tetap. -->
 
       <div id="mode-chat" class="mode-panel">
       <!-- Chat history -->

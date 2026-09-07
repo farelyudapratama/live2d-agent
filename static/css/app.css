@@ -162,6 +162,151 @@ a:hover { text-decoration: underline; }
   padding: 10px;
 }
 
+/* ── Activity bar (kiri, ikon) & rail projek ────────────────────── */
+/* Shell 3 kolom ala coding-agent: [activity][projek rail?][stage][sidebar].
+   Kelas: #activity, .act-btn, .act-sep, #projek-rail, .prj-*.
+   Solid + hairline, tanpa blur/gradient (manifesto Matte Studio). */
+#activity {
+  flex: 0 0 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  border-radius: var(--r-xl);
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+  border-top-color: var(--line-strong);
+}
+.act-btn {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.act-btn:hover { color: var(--text-dim); background: var(--ink-3); }
+.act-btn.active {
+  color: var(--lamp);
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+.act-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+
+#projek-rail {
+  flex: 0 0 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 10px;
+  border-radius: var(--r-xl);
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+  border-top-color: var(--line-strong);
+  overflow-y: auto;
+}
+#projek-rail.hidden { display: none; }
+.prj-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.prj-card {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--ink-2);
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text-dim);
+}
+.prj-card:hover { border-color: var(--line-strong); color: var(--text); }
+.prj-card .name {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prj-card .path {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prj-sess {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.prj-sess-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+}
+.prj-sess-item:hover { background: var(--ink-3); }
+.prj-sess-item.active {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+  color: var(--text);
+}
+.prj-sess-item .nm {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prj-sess-item .meta {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.prj-sess-item .del {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.prj-sess-item .del:hover { color: var(--coral); background: var(--coral-soft); }
+.prj-empty { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+
 /* ── Panggung ───────────────────────────────────────────────────── */
 
 /* Border atas dibuat setingkat lebih terang: bevel gratis, tanpa
@@ -2388,10 +2533,13 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ── Mode: switcher & panel ─────────────────────────────────────── */
-
+/* Switcher kini vertikal di activity bar (shell 3 kolom) — ikon-saja:
+   tombol memuat label teks yang disembunyikan, mode terbaca dari
+   tooltip + warna aktif. */
 .mode-switch {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 2px;
   padding: 3px;
   border-radius: var(--r-md);
@@ -2399,32 +2547,33 @@ input[type="range"]::-moz-range-thumb {
   border: 1px solid var(--line);
 }
 .mode-switch button {
-  padding: 0 10px;
-  height: 26px;
+  width: 40px;
+  height: 34px;
+  padding: 0;
   display: grid;
   place-items: center;
   border-radius: var(--r-xs);
-  font-size: 11.5px;
-  font-weight: 500;
+  font-size: 0; /* label teks disembunyikan (ikon via ::first-letter?) —
+                   pakai singkatan 2 huruf pertama */
+  line-height: 1;
   color: var(--muted);
   border: 1px solid transparent;
+  overflow: hidden;
+}
+.mode-switch button::before {
+  content: attr(data-mode);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 .mode-switch button:hover { color: var(--text-dim); }
 .mode-switch button.active {
-  color: var(--text);
-  background: var(--ink-3);
+  color: var(--lamp);
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
 }
-.mode-label {
-  margin-left: auto;
-  padding-right: 6px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 88px;
-}
+.mode-label { display: none; }
 .mode-panel {
   display: flex;
   flex-direction: column;
@@ -3209,6 +3358,22 @@ input[type="range"]::-moz-range-thumb {
     flex-direction: column;
     padding: 8px;
     gap: 8px;
+  }
+  /* Activity bar jadi baris horizontal di atas; switcher kembali melebar. */
+  #activity {
+    flex: 0 0 auto;
+    flex-direction: row;
+    justify-content: flex-start;
+    padding: 6px 8px;
+  }
+  .act-sep { width: 1px; height: 24px; margin: 0 4px; }
+  .mode-switch { flex-direction: row; }
+  .mode-switch button { width: auto; padding: 0 10px; font-size: 11.5px; }
+  .mode-switch button::before { content: none; }
+  /* Rail projek jadi blok full-width di bawah activity bar. */
+  #projek-rail {
+    flex: 0 0 auto;
+    max-height: 30dvh;
   }
   #stage {
     flex: 1 1 auto;

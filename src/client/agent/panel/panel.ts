@@ -73,6 +73,7 @@ export function startAssistantPanel(): () => void {
   const input = document.getElementById("as-input") as HTMLTextAreaElement | null;
   const sendBtn = document.getElementById("btn-as-send") as HTMLButtonElement | null;
   const stopBtn = document.getElementById("as-stop") as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById("as-cancel") as HTMLButtonElement | null;
   const resetBtn = document.getElementById("as-reset") as HTMLButtonElement | null;
   const memBtn = document.getElementById("as-memory") as HTMLButtonElement | null;
 
@@ -133,9 +134,15 @@ export function startAssistantPanel(): () => void {
     } catch {}
   }
 
+  /** Cancel aktif saat ada tugas berjalan (stream kita / klien lain). */
+  function setCancelEnabled(on: boolean): void {
+    if (cancelBtn) cancelBtn.disabled = !on;
+  }
+
   function setInputEnabled(on: boolean): void {
     if (input) input.disabled = !on;
     if (sendBtn) sendBtn.disabled = !on;
+    setCancelEnabled(on || !!liveAsk);
   }
 
   // ── Stream: ask & approve (protokol dua-kasus) ──────────────────
@@ -269,6 +276,21 @@ export function startAssistantPanel(): () => void {
     render();
   }
 
+  /** Cancel tugas berjalan (runtime tetap hidup). Bila tugas milik panel ini,
+   *  SSE di-abort — protokol Kasus B (decideFallback) mencegah resend. */
+  async function cancelTask(): Promise<void> {
+    let accepted = false;
+    try {
+      const d = await postJson(API + "/api/assistant/cancel", {});
+      accepted = !!d.accepted;
+    } catch {}
+    liveAsk?.abort.abort();
+    transcript.status(accepted ? t("as.cancelSent") : t("as.cancelNone"), "warn");
+    render();
+    setCancelEnabled(false);
+    refreshStatus();
+  }
+
   async function resetAgent(): Promise<void> {
     try { await postJson(API + "/api/assistant/reset", {}); } catch {}
     transcript = new Transcript();
@@ -301,6 +323,9 @@ export function startAssistantPanel(): () => void {
         : st.busy ? "busyOther"
         : "idle",
     );
+    // Tombol cancel: aktif saat ada tugas berjalan di runtime (kita/CLI),
+    // mati saat idle — tanpa runtime tak ada yang bisa dibatalkan.
+    setCancelEnabled(!!st.running && (st.busy || !!liveAsk));
     // Plan (idempotent re-render)
     view.renderPlan(st.plan || []);
     // Metadata level tool (badge auto/izin) — refresh map bila dikirim.
@@ -369,6 +394,7 @@ export function startAssistantPanel(): () => void {
     input.style.height = Math.min(input.scrollHeight, 120) + "px";
   };
   const onStop = () => { stopAgent(); };
+  const onCancel = () => { void cancelTask(); };
   const onReset = () => { if (confirm(t("as.resetTip"))) resetAgent(); };
   const onMem = () => { toggleMemory(); };
   // Rail projek memindahkan sesi (switch/new/delete) → hydrate ulang
@@ -391,6 +417,7 @@ export function startAssistantPanel(): () => void {
   input?.addEventListener("keydown", onKey);
   input?.addEventListener("input", onInputGrow);
   stopBtn?.addEventListener("click", onStop);
+  cancelBtn?.addEventListener("click", onCancel);
   resetBtn?.addEventListener("click", onReset);
   memBtn?.addEventListener("click", onMem);
   window.addEventListener("agent:session-changed", onSessionChanged);
@@ -436,6 +463,7 @@ export function startAssistantPanel(): () => void {
     input?.removeEventListener("keydown", onKey);
     input?.removeEventListener("input", onInputGrow);
     stopBtn?.removeEventListener("click", onStop);
+    cancelBtn?.removeEventListener("click", onCancel);
     resetBtn?.removeEventListener("click", onReset);
     memBtn?.removeEventListener("click", onMem);
     window.removeEventListener("agent:session-changed", onSessionChanged);

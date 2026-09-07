@@ -65,6 +65,9 @@ export type Runtime = {
   undo: UndoRecord[];
   /** Sesi aktif (assistant-sessions.json) — untuk persist multi-session. */
   sessionId: string;
+  /** Permintaan cancel kooperatif (POST /api/assistant/cancel) — dicek loop
+   *  antar-langkah; tool yang sedang jalan selesai dulu (run_command ≤30 dtk). */
+  cancelRequested: boolean;
 };
 
 let runtime: Runtime | null = null;
@@ -102,6 +105,7 @@ export function makeRuntime(cfg: any, workDir: string, history: AsMsg[]): Runtim
     summarizations: 0,
     undo: [],
     sessionId: "",
+    cancelRequested: false,
   };
 }
 

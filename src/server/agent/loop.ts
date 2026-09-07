@@ -172,14 +172,17 @@ export async function agentAsk(
   const lang = config.load().i18n?.lang === "en" ? "en" : "id";
 
   rt.busy = true;
+  rt.cancelRequested = false; // cancel berlaku satu tugas — reset di awal ask
   emitEvent("thinking_start", String(text || "").slice(0, 120));
   emit({ type: "delta", text: "" });
   pushMsg(rt, { role: "user", content: String(text || "").slice(0, 4000) });
   try {
     await maybeSummarize(rt, config);
     let final = "";
+    let cancelled = false;
     const seenCalls = new Set<string>();
     for (let turn = 0; turn < MAX_ITERATIONS && !rt.destroyed; turn++) {
+      if (rt.cancelRequested) { cancelled = true; break; }
       const messages = rt.history.map((m) => ({
         role: m.role === "tool" ? ("user" as const) : m.role,
         content: m.role === "tool" ? "[hasil tool] " + m.content : m.content,
@@ -257,8 +260,16 @@ export async function agentAsk(
       pushMsg(rt, { role: "tool", content: "[" + detected.name + "] " + clipToolResult(result) });
       emitEvent("tool_call_end", detected.name + " → " + result.slice(0, 80));
       emit({ type: "tool_result", name: detected.name, text: result.slice(0, 2000) });
+      // Cancel kooperatif: cek SETELAH tool selesai — tool yang panjang
+      // (mis. run_command ≤30 dtk) dibereskan dulu, turn berikutnya tak jalan.
+      if (rt.cancelRequested) { cancelled = true; break; }
     }
     if (!final && rt.destroyed) final = "(dihentikan)";
+    if (!final && cancelled) {
+      final = "Dibatalkan oleh user.";
+      rt.cancelRequested = false; // bersih — cancel berikutnya minta lagi
+      emitEvent("error", "dibatalkan: oleh user");
+    }
     if (!final) final = "(berhenti tanpa jawaban setelah " + MAX_ITERATIONS + " langkah — coba pecah tugasnya)";
     pushMsg(rt, { role: "assistant", content: stripToolDirective(final, TOOL_NAMES) });
     const finalText = stripToolDirective(final, TOOL_NAMES);

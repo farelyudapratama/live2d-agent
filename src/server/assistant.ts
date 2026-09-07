@@ -89,6 +89,18 @@ export function assistantReset() {
   return { ok: true };
 }
 
+/**
+ * Cancel tugas berjalan TANPA mematikan runtime (kooperatif: loop mengecek
+ * flag antar-langkah; tool yang sedang eksekusi selesai dulu). Return
+ * accepted=false bila tidak ada tugas berjalan.
+ */
+export function assistantCancel(): { ok: boolean; accepted: boolean } {
+  const rt = getRuntime();
+  if (!rt || !rt.busy) return { ok: true, accepted: false };
+  rt.cancelRequested = true;
+  return { ok: true, accepted: true };
+}
+
 // ── Event stream untuk panel/pet/akting (bus ber-seq) ──────────
 
 export function assistantEvents(sinceSeq = 0) {

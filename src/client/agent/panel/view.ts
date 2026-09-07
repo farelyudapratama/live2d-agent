@@ -604,7 +604,7 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
   }
 
   // ── Status pill ─────────────────────────────────────────────────
-  type PillState = "off" | "idle" | "busy" | "busyOther" | "thinking";
+  type PillState = "off" | "idle" | "busy" | "busyOther" | "thinking" | "approval";
   function setPill(state: PillState): void {
     pill.dataset.state = state;
     pillLabel.textContent = t(
@@ -612,6 +612,7 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
         : state === "busy" ? "as.status.busy"
         : state === "busyOther" ? "as.status.busyOther"
         : state === "thinking" ? "as.status.thinking"
+        : state === "approval" ? "as.status.approval"
         : "as.status.idle",
     );
   }

@@ -2573,6 +2573,28 @@ input[type="range"]::-moz-range-thumb {
   border-color: var(--accent-border);
   background: var(--accent-subtle);
 }
+/* Dot status agent global di tombol Assistant (activity bar) — posisi
+   absolut di sudut; warna per state: idle mint, busy amber, approval rose. */
+.mode-switch button[data-agent] { position: relative; }
+.mode-switch button[data-agent]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.mode-switch button[data-agent="idle"]::after { background: var(--mint); }
+.mode-switch button[data-agent="busy"]::after {
+  background: var(--lamp);
+  animation: ellipsis-dot 1.2s infinite;
+}
+.mode-switch button[data-agent="approval"]::after {
+  background: var(--coral);
+  animation: ellipsis-dot 0.9s infinite;
+}
 .mode-label { display: none; }
 .mode-panel {
   display: flex;
@@ -2748,6 +2770,13 @@ input[type="range"]::-moz-range-thumb {
   animation: ellipsis-dot 1.2s infinite;
 }
 .as-pill[data-state="busy"] { color: var(--text); }
+/* Nunggu izin: dot rose berkedip + label menonjol (state dari
+   pendingApprovals — saat loop pause untuk approval busy=false). */
+.as-pill[data-state="approval"] { color: var(--text); border-color: var(--coral-border); }
+.as-pill[data-state="approval"] .as-pill-dot {
+  background: var(--coral);
+  animation: ellipsis-dot 0.9s infinite;
+}
 
 /* Transcript */
 .as-tl {
@@ -2902,6 +2931,24 @@ input[type="range"]::-moz-range-thumb {
   border-left: 2px solid var(--lamp);
   background: var(--accent-subtle);
 }
+/* Pulse perhatian: rail amber berkedip opacity (opacity-only, patuh
+   manifesto — precedent keyframe ellipsis-dot). */
+@keyframes appr-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.as-blk.as-appr { border-left-color: var(--lamp); }
+.as-blk.as-appr::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--lamp);
+  animation: appr-pulse 1.4s ease-in-out infinite;
+}
+.as-blk.as-appr { position: relative; }
 .as-appr-hd {
   display: flex;
   align-items: baseline;

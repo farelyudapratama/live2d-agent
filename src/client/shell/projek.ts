@@ -185,11 +185,37 @@ export function startProjekRail(): () => void {
   // terbuka tiap 8 dtk (murah: satu GET ringan).
   const iv = setInterval(() => { if (open) void draw(); }, 8000);
 
+  // ── Indikator status agent GLOBAL (di activity bar) ─────────────
+  // Dot kecil pada tombol Assistant: user melihat agent hidup/nunggu izin
+  // tanpa membuka panel mana pun. Poll ringan 4 dtk, selalu jalan.
+  const asBtn = document.querySelector('#mode-switch button[data-mode="assistant"]') as HTMLElement | null;
+  let statusIv: ReturnType<typeof setInterval> | null = null;
+  async function refreshAgentBadge(): Promise<void> {
+    if (!asBtn) return;
+    let st: { running?: boolean; busy?: boolean; pendingApprovals?: unknown[] };
+    try {
+      st = await fetchJSON(API + "/api/assistant/status");
+    } catch { return; } // server lewat — biarkan badge terakhir
+    const pending = Array.isArray(st.pendingApprovals) ? st.pendingApprovals.length : 0;
+    const state = !st.running ? "off" : pending > 0 ? "approval" : st.busy ? "busy" : "idle";
+    asBtn.dataset.agent = state;
+    asBtn.setAttribute("title",
+      state === "approval" ? t("as.status.approval")
+        : state === "busy" ? t("as.status.busy")
+        : state === "idle" ? t("as.status.idle")
+        : t("as.status.off"));
+  }
+  if (asBtn) {
+    void refreshAgentBadge();
+    statusIv = setInterval(() => { void refreshAgentBadge(); }, 4000);
+  }
+
   setOpen(open);
 
   return function destroyProjekRail() {
     destroyed = true;
     clearInterval(iv);
+    if (statusIv) clearInterval(statusIv);
     btn.removeEventListener("click", onBtn);
     rail.textContent = "";
   };

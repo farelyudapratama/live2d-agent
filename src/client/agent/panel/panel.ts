@@ -282,9 +282,16 @@ export function startAssistantPanel(): () => void {
     } catch {
       return;
     }
-    // Pill: live kita > sibuk klien lain > idle/mati
+    // Pill: live kita > sibuk klien lain > nunggu izin > idle/mati.
+    // Saat loop pause untuk approval rt.busy=false — pendingApprovals yang
+    // jadi sumber state "approval" (jangan sampai pill keliru "siap").
+    const waitApproval = !liveAsk && (st.pendingApprovals?.length || 0) > 0;
     view.setPill(
-      !st.running ? "off" : liveAsk ? "busy" : st.busy ? "busyOther" : "idle",
+      !st.running ? "off"
+        : waitApproval ? "approval"
+        : liveAsk ? "busy"
+        : st.busy ? "busyOther"
+        : "idle",
     );
     // Plan (idempotent re-render)
     view.renderPlan(st.plan || []);

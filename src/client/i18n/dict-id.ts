@@ -446,6 +446,7 @@ export const DICT_ID: Record<string, string> = {
   "as.status.busy": "bekerja…",
   "as.status.busyOther": "bekerja (klien lain)",
   "as.status.thinking": "berpikir…",
+  "as.status.approval": "nunggu izinmu…",
   "as.stream.dropped": "koneksi ke stream terputus — memantau dari server…",
   "as.approve.title": "Butuh izin:",
   "as.deny": "Tolak",

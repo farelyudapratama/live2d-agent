@@ -4,6 +4,45 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-07 (3) — SHELL 3 KOLOM ala ZCode + PROJEK MULTI-SESSION
+
+User sketsa layout baru (kiblat tetap ZCode desktop): activity bar kiri,
+panggung tengah, side panel kanan — dan rail "Projek" berisi riwayat sesi.
+Dikerjakan 3 commit (shell / server / rail UI):
+
+- **Shell 3 kolom**: `.app` kini `[activity 56px][projek rail 240px toggle]
+  [stage flex:1][sidebar 372px/600px agent-wide]`. `mode-switch` PINDAH utuh
+  ke `<nav id="activity">` — id & `data-mode` dipertahankan sehingga
+  `mode-runtime.js` TIDAK diubah sama sekali (setPanel/switchMode/boot).
+  Tombol mode kini gaya ikon (label disembunyikan, singkatan `data-mode`
+  via `::before`, tooltip `top.tabTip.*`). Breakpoint <1024px direvisi.
+- **Rail projek** (`#projek-rail`, isi dibangun `src/client/shell/projek.ts`
+  → `window.__shellProjek`, start di boot bundle): kartu project (basename
+  workdir dari /status, klik = salin path) + daftar sesi (poll 8 dtk saat
+  terbuka) dengan switch/new/delete; state buka-tutup di localStorage.
+  Aturan AGENTS.md dipatuhi: logic UI baru = TS, bukan legacy JS.
+- **Multi-session server** (`src/server/agent/sessions.ts`): store
+  `data/assistant-sessions.json` `{active, sessions[]}` — cap 20 sesi FIFO
+  (bukan yang aktif), auto-nama sesi = pesan user pertama (40 char),
+  migrasi SEKALI dari `assistant-history.json` (+ arsip `.bak`), tulis
+  atomic tmp→rename. `state.loadSession/saveSession` jadi wrapper store →
+  CLI `bun run agent` otomatis ikut sesi aktif. `Runtime` + `sessionId`.
+- **API**: `GET /api/assistant/sessions`, `POST …/sessions/new {workDir?}`,
+  `POST …/sessions/switch {id}`, `POST …/sessions/delete {id}` — semua
+  409 saat busy. **Pindah sesi TIDAK mematikan runtime** (kontrak MODES
+  utuh): facade ganti `rt.history/workDir/sessionId` + persist.
+- **Sinkron panel**: `projek.ts` melempar event DOM `agent:session-changed`
+  → panel.ts reset transcript/registry/termLog + hydrate ulang dari
+  /history + refreshStatus (listener dibersihkan di destroyPanel).
+- i18n: 13 key baru (`shell.projek.*`, `as.sess.*`) di KEDUA kamus.
+- Guard yang dijaga & hijau: `#pn-search` proximity (area popup tak
+  disentuh), urutan script voice-input < emotion-overlay, i18n coverage
+  (data-i18n tanpa anak elemen — tombol ikon memakai data-i18n-title).
+- Gate: **302 unit + 512 guard, 0 gagal**; build & tsc bersih.
+- **Prioritas berikutnya (dicatat)**: rename sesi (sekarang auto-nama
+  saja), pin/urutkan sesi, interrupt tugas berjalan per-task (tetap),
+  review tab menampilkan diff penuh per file (tetap).
+
 ## UPDATE 2026-09-07 (2) — PANEL AGENT "POWERFUL VIBECODING" (diff, markdown, tab, undo)
 
 User menilai UI agent masih kurang powerful untuk vibecoding dibanding kiblat

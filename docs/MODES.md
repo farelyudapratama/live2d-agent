@@ -17,6 +17,44 @@ membongkar inti lama.
 4. Status gabungan selalu bisa dibaca: `GET /api/mode` →
    `{active, vtuber, assistant, pet}`.
 
+## Shell 3 kolom (2026-09-07)
+
+Layout app ala coding-agent: `[activity bar 56px][rail projek 240px toggle][stage flex:1][side panel 372px/600px]`.
+
+- **Activity bar** (`<nav id="activity">`): switcher mode vertikal — id
+  `mode-switch` + tombol `data-mode` DIPERTAHANKAN agar wiring
+  `mode-runtime.js` tak berubah; tombol projek membuka rail.
+- **Rail projek** (`#projek-rail`, dibangun `src/client/shell/projek.ts` →
+  `window.__shellProjek`): indikator project (basename workdir) + riwayat
+  sesi assistant (lihat seksi Multi-session). Panel control drawer
+  (`#controls-panel`) & popup lain tetap fixed/float di atas semua ini.
+- **Stage** sizing otomatis (`stageSize()` membaca `#stage.clientWidth` —
+  tidak ada aritmetika lebar sidebar di mana pun).
+- **Side panel** = `#sidebar` (id dipertahankan); `agent-wide` (600px) tetap
+  disetel mode-runtime saat mode assistant.
+- Breakpoint `<1024px`: activity bar jadi baris horizontal, rail projek
+  full-width, sidebar bottom-sheet.
+
+## Multi-session assistant (2026-09-07)
+
+Riwayat sesi bernama di `data/assistant-sessions.json`
+(`{active, sessions: [{id, name, workDir, ts, messages}]}`, cap 20 sesi,
+migrasi sekali dari `assistant-history.json` lama + arsip `.bak`):
+
+- Store: `src/server/agent/sessions.ts` (`makeSessionsStore(appRoot)` —
+  path injectable untuk test). Auto-nama sesi = pesan user pertama
+  (40 char), fallback tanggal. Tulis atomic tmp→rename.
+- API: `GET /api/assistant/sessions`, `POST /api/assistant/sessions/new
+  {workDir?}`, `POST /api/assistant/sessions/switch {id}`,
+  `POST /api/assistant/sessions/delete {id}` — semua menolak saat `busy`
+  (409/404 sesuai kasus).
+- **Pindah sesi TIDAK mematikan runtime** (kontrak mode utuh): facade
+  mengganti `rt.history`/`rt.workDir`/`rt.sessionId` lalu persist. Panel
+  menangkap event DOM `agent:session-changed` (dilempar `projek.ts`) dan
+  hydrate ulang transcript dari `/history`.
+- `loadSession`/`saveSession` (state.ts) kini wrapper store — CLI
+  `bun run agent` ikut membuka sesi aktif tanpa perubahan.
+
 ## AI VTuber (`src/server/vtuber.ts`)
 
 | Provider | Kredensial | Sumber event |

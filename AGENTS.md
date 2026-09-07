@@ -116,14 +116,16 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 ```text
 src/server/index.ts          Bun.serve (loopback default) — 40+ route API + static
 src/server/{vtuber,assistant,pet}.ts   runtime 3 mode (satu aktif)
-src/server/agent/            loop, plan, bus, memory, subagent, tools/ (12 tool)
+src/server/agent/            loop, plan, bus, memory, subagent, tools/ (12 tool),
+                             sessions (multi-session), undo (snapshot/revert)
 src/server/persona/          persona narrator
 src/shared/                  types, config, llm-client (role routing), paths
 src/client/animation/        easing, motion-dsl, motion-registry, motion-runtime
 src/client/engine/           motion-taxonomy (klasifikasi klip .motion3.json)
 src/client/agent/            brain + directive-parser → window.__agent
 src/client/agent/panel/      panel agent (remake ala ZCode): stream/transcript/
-                             actor/view/panel → window.__agentPanel
+                             actor/view/panel/diff/md/registry → window.__agentPanel
+src/client/shell/            rail projek shell (sesi & project) → window.__shellProjek
 src/client/i18n/             core i18n zero-dep + kamus id/en
 src/build.ts                 bundle-entry → static/js/bundle.js (IIFE)
 src/dist.ts                  bun run dist — rakit dist/Live2D-Agent/ (exe + static)

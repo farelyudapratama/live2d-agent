@@ -460,6 +460,8 @@ export const DICT_ID: Record<string, string> = {
   "as.diff.tooBig": "file terlalu besar — hanya statistik yang ditampilkan",
   "as.diff.empty": "(tidak ada perubahan isi)",
   "as.diff.clipped": "…diff dipotong (terlalu panjang)",
+  "as.step.title": "Bekerja",
+  "as.step.count": "{n} langkah",
   "pet.notOpen": "belum terbuka",
   "pet.clickThroughOn": " — klik tembus ON",
   "pet.noClickThrough": " (tanpa klik-tembus)",

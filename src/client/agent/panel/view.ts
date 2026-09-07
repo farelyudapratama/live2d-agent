@@ -8,6 +8,8 @@
 import type { Block } from "./transcript";
 import { changeFromTool, MAX_RENDER_ROWS } from "./diff";
 import type { FileChange } from "./diff";
+import { parseMarkdown } from "./md";
+import type { MdInline, MdToken } from "./md";
 
 export type PlanItem = { id?: string; task: string; status: string; note?: string };
 
@@ -21,6 +23,61 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
   if (cls) e.className = cls;
   if (text != null) e.textContent = text;
   return e;
+}
+
+// ── Render markdown (token data → DOM via textContent; tanpa innerHTML) ──
+function buildInlines(parent: HTMLElement, inlines: MdInline[]): void {
+  for (const inl of inlines) {
+    switch (inl.t) {
+      case "text": parent.appendChild(document.createTextNode(inl.text)); break;
+      case "code": parent.appendChild(el("code", "as-md-code", inl.text)); break;
+      case "bold": parent.appendChild(el("strong", "", inl.text)); break;
+      case "italic": parent.appendChild(el("em", "", inl.text)); break;
+      case "link": {
+        // Hanya http(s) yang jadi anchor; lainnya teks biasa.
+        const a = el("a", "as-md-link", inl.text) as HTMLAnchorElement;
+        a.href = inl.href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        parent.appendChild(a);
+        break;
+      }
+    }
+  }
+}
+
+function buildMd(tokens: MdToken[]): HTMLElement {
+  const root = el("div", "as-md");
+  for (const tk of tokens) {
+    switch (tk.t) {
+      case "h": root.appendChild(el("div", "as-md-h as-md-h" + tk.level)); buildInlines(root.lastChild as HTMLElement, tk.inlines); break;
+      case "p": {
+        const p = el("div", "as-md-p");
+        buildInlines(p, tk.inlines);
+        root.appendChild(p);
+        break;
+      }
+      case "code": root.appendChild(el("pre", "as-md-pre", tk.text)); break;
+      case "quote": {
+        const q = el("div", "as-md-quote");
+        buildInlines(q, tk.inlines);
+        root.appendChild(q);
+        break;
+      }
+      case "ul":
+      case "ol": {
+        const list = el(tk.t === "ul" ? "ul" : "ol", "as-md-list");
+        for (const item of tk.items) {
+          const li = el("li");
+          buildInlines(li, item);
+          list.appendChild(li);
+        }
+        root.appendChild(list);
+        break;
+      }
+    }
+  }
+  return root;
 }
 
 export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
@@ -155,7 +212,7 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
       case "final": {
         const w = el("div", "as-blk as-agent as-final");
         w.appendChild(el("span", "as-who", t("as.agentName")));
-        w.appendChild(el("div", "as-txt", b.text));
+        w.appendChild(buildMd(parseMarkdown(b.text)));
         return w;
       }
       case "speak": {
@@ -262,24 +319,30 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     const stick = nearBottom();
     const seen = new Set<number>();
     let prev: HTMLElement | null = null;
-    for (const b of blocks) {
-      seen.add(b.id);
-      const cur = rendered.get(b.id);
-      if (cur && cur.rev === b.rev) {
-        prev = cur.el;
+    let i = 0;
+    while (i < blocks.length) {
+      const b = blocks[i];
+      if (b.kind !== "tool") {
+        seen.add(b.id);
+        prev = renderOne(b, prev);
+        i++;
         continue;
       }
-      const node = buildBlock(b);
-      if (cur) {
-        cur.el.replaceWith(node);
-        cur.el = node;
-        cur.rev = b.rev;
-      } else {
-        if (prev) prev.after(node);
-        else tl.insertBefore(node, tl.firstChild);
-        rendered.set(b.id, { el: node, rev: b.rev });
+      // Kumpulkan run tool berurutan; grup bila ≥2 (timeline ala coding-agent).
+      let j = i;
+      const run: Extract<Block, { kind: "tool" }>[] = [];
+      while (j < blocks.length && blocks[j].kind === "tool") {
+        run.push(blocks[j] as Extract<Block, { kind: "tool" }>);
+        j++;
       }
-      prev = node;
+      if (run.length >= 2) {
+        for (const tb of run) seen.add(tb.id);
+        prev = renderStepGroup(run, prev, seen);
+      } else {
+        seen.add(b.id);
+        prev = renderOne(b, prev);
+      }
+      i = j;
     }
     for (const [id, cur] of rendered) {
       if (!seen.has(id)) {
@@ -290,7 +353,112 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
         for (const k of [...openDiffs]) if (k.startsWith(pref)) openDiffs.delete(k);
       }
     }
+    pruneStepGroups(seen);
     if (stick) scrollToBottom();
+  }
+
+  /** Render satu blok ke posisi prev; kembalikan elemen terakhir. */
+  function renderOne(b: Block, prev: HTMLElement | null): HTMLElement {
+    const cur = rendered.get(b.id);
+    if (cur && cur.rev === b.rev) return cur.el;
+    const node = buildBlock(b);
+    if (cur) {
+      cur.el.replaceWith(node);
+      cur.el = node;
+      cur.rev = b.rev;
+    } else {
+      if (prev) prev.after(node);
+      else tl.insertBefore(node, tl.firstChild);
+      rendered.set(b.id, { el: node, rev: b.rev });
+    }
+    return node;
+  }
+
+  // state grup step: key = gabungan id tool; val = {wrapper, body, sig}
+  const stepGroups = new Map<string, { wrap: HTMLElement; body: HTMLElement; sig: string }>();
+  let stepSeq = 0;
+
+  /**
+   * Bungkus run tool jadi grup collapsible. Kartu tool dirender normal di
+   * dalam body — recon keyed tetap jalan; grup di-rebuild hanya bila
+   * signature (urutan id + status + rev) berubah.
+   */
+  function renderStepGroup(
+    run: Extract<Block, { kind: "tool" }>[],
+    prev: HTMLElement | null,
+    seen: Set<number>,
+  ): HTMLElement {
+    const ids = run.map((b) => b.id).join(",");
+    const sig = ids + "|" + run.map((b) => b.status + ":" + b.rev).join(",");
+    let g = stepGroups.get(ids);
+    if (g && g.sig !== sig) {
+      // Rebuild dalam: body dikosongkan, kartu child dirender ulang.
+      g.body.textContent = "";
+      for (const tb of run) renderInto(g.body, tb, seen);
+      g.sig = sig;
+      updateStepHeader(g.wrap, run);
+      return g.wrap;
+    }
+    if (!g) {
+      const wrap = el("div", "as-step");
+      const hd = el("button", "as-step-hd") as HTMLButtonElement;
+      hd.type = "button";
+      hd.appendChild(el("span", "as-step-icon", "⚡"));
+      hd.appendChild(el("span", "as-step-ttl"));
+      hd.appendChild(el("span", "as-step-cnt"));
+      hd.appendChild(el("span", "as-chev", "▾"));
+      const body = el("div", "as-step-bd");
+      hd.addEventListener("click", () => wrap.classList.toggle("closed"));
+      wrap.appendChild(hd);
+      wrap.appendChild(body);
+      g = { wrap, body, sig: "" };
+      stepGroups.set(ids, g);
+      if (prev) prev.after(wrap);
+      else tl.insertBefore(wrap, tl.firstChild);
+      for (const tb of run) renderInto(body, tb, seen);
+      g.sig = sig;
+      updateStepHeader(wrap, run);
+    }
+    return g.wrap;
+  }
+
+  /** renderOne yang menautkan ke parent tertentu (dipakai grup step). */
+  function renderInto(parent: HTMLElement, b: Block, seen: Set<number>): void {
+    seen.add(b.id);
+    const cur = rendered.get(b.id);
+    if (cur && cur.rev === b.rev) {
+      if (cur.el.parentElement !== parent) parent.appendChild(cur.el);
+      return;
+    }
+    const node = buildBlock(b);
+    if (cur) {
+      cur.el.replaceWith(node);
+      cur.el = node;
+      cur.rev = b.rev;
+    } else {
+      rendered.set(b.id, { el: node, rev: b.rev });
+    }
+    parent.appendChild(node);
+  }
+
+  /** Header grup: status ikut child terakhir, "N langkah". */
+  function updateStepHeader(wrap: HTMLElement, run: Extract<Block, { kind: "tool" }>[]): void {
+    const last = run[run.length - 1];
+    wrap.dataset.status = last.status;
+    (wrap.querySelector(".as-step-ttl") as HTMLElement).textContent =
+      t("as.step.title");
+    (wrap.querySelector(".as-step-cnt") as HTMLElement).textContent =
+      t("as.step.count", { n: run.length });
+  }
+
+  function pruneStepGroups(seenIds: Set<number>): void {
+    for (const [ids, g] of stepGroups) {
+      const first = Number(ids.split(",")[0]);
+      if (!seenIds.has(first)) {
+        g.wrap.remove();
+        stepGroups.delete(ids);
+      }
+    }
   }
 
   // ── Widget plan ─────────────────────────────────────────────────
@@ -358,6 +526,7 @@ export function createPanelView(root: HTMLElement, deps: PanelViewDeps) {
     rendered.clear();
     openTools.clear();
     openDiffs.clear();
+    stepGroups.clear();
     tl.textContent = "";
   }
 

@@ -14,6 +14,7 @@ import {
   parseToolLabel,
 } from "../src/client/agent/panel/transcript";
 import { diffLines, changeFromTool } from "../src/client/agent/panel/diff";
+import { parseMarkdown, parseInlines } from "../src/client/agent/panel/md";
 import { makeActor } from "../src/client/agent/panel/actor";
 
 // ═══════════════════════════════════════════════════════════════
@@ -427,6 +428,56 @@ describe("Transcript — pelacakan perubahan per giliran", () => {
     const chg = tr.blocks.find((b) => b.kind === "changes") as any;
     expect(chg).toBeDefined();
     expect(chg.files.length).toBe(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// md.ts — parser markdown mini
+// ═══════════════════════════════════════════════════════════════
+
+describe("parseMarkdown", () => {
+  it("heading, paragraf, dan urutan blok terjaga", () => {
+    const tk = parseMarkdown("# Judul\n\nparagraf satu\nlanjutan\n## Sub");
+    expect(tk.map((x) => x.t)).toEqual(["h", "p", "h"]);
+    expect(tk[0]).toMatchObject({ t: "h", level: 1 });
+    expect(tk[1]).toMatchObject({ t: "p" });
+    expect(tk[2]).toMatchObject({ t: "h", level: 2 });
+  });
+
+  it("fenced code utuh, tanpa inline parsing di dalamnya", () => {
+    const tk = parseMarkdown("```ts\nconst a = `x`;\n# bukan heading\n```");
+    expect(tk.length).toBe(1);
+    expect(tk[0].t).toBe("code");
+    expect((tk[0] as any).lang).toBe("ts");
+    expect((tk[0] as any).text).toContain("# bukan heading");
+  });
+
+  it("list ul/ol + lanjutan item terindentasi", () => {
+    const tk = parseMarkdown("- satu\n- dua\n  lanjutan\n1. eks\n2. ye");
+    expect(tk.map((x) => x.t)).toEqual(["ul", "ol"]);
+    expect((tk[0] as any).items.length).toBe(2);
+    expect((tk[0] as any).items[1][1]).toMatchObject({ t: "text", text: " lanjutan" });
+  });
+
+  it("blockquote digabung antar baris", () => {
+    const tk = parseMarkdown("> baris satu\n> baris dua");
+    expect(tk[0].t).toBe("quote");
+    expect((tk[0] as any).inlines[0].text).toContain("baris satu\nbaris dua");
+  });
+
+  it("inline: code, bold, italic, link http saja", () => {
+    const inl = parseInlines("kode `x=1` dan **tebal** serta *miring* plus [tautan](https://a.b)");
+    expect(inl.map((x) => x.t)).toEqual(["text", "code", "text", "bold", "text", "italic", "text", "link"]);
+    expect(inl.find((x) => x.t === "link")).toMatchObject({ href: "https://a.b", text: "tautan" });
+
+    // href non-http → TIDAK jadi link token
+    const evil = parseInlines("[x](javascript:alert(1))");
+    expect(evil.some((x) => x.t === "link")).toBe(false);
+  });
+
+  it("snake_case dan asterisk di tengah kata tidak jadi italic", () => {
+    const inl = parseInlines("snake_case_var dan a*b*c tetap text");
+    expect(inl.every((x) => x.t === "text")).toBe(true);
   });
 });
 

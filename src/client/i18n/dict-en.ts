@@ -452,6 +452,8 @@ export const DICT_EN: Record<string, string> = {
   "as.diff.tooBig": "file too large — showing stats only",
   "as.diff.empty": "(no content change)",
   "as.diff.clipped": "…diff clipped (too long)",
+  "as.step.title": "Working",
+  "as.step.count": "{n} steps",
   "pet.notOpen": "not open",
   "pet.clickThroughOn": " — click-through ON",
   "pet.noClickThrough": " (no click-through)",

@@ -2928,6 +2928,102 @@ input[type="range"]::-moz-range-thumb {
   white-space: nowrap;
 }
 
+/* ── Markdown jawaban agent (render token, tanpa innerHTML) ─────── */
+/* Kelas: .as-md* — solid + hairline, tanpa efek. */
+.as-md { font-size: 12.5px; }
+.as-md-h { font-weight: 600; color: var(--text); margin: 6px 0 2px; }
+.as-md-h1 { font-size: 15px; }
+.as-md-h2 { font-size: 14px; }
+.as-md-h3, .as-md-h4, .as-md-h5, .as-md-h6 { font-size: 13px; }
+.as-md-p { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.as-md-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--ink-input);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  padding: 0 4px;
+  color: var(--lamp-soft);
+}
+.as-md-pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: var(--ink-input);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+}
+.as-md-quote {
+  border-left: 2px solid var(--line-strong);
+  padding: 1px 0 1px 8px;
+  margin: 4px 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.as-md-list { margin: 2px 0; padding-left: 20px; }
+.as-md-list li { margin: 1px 0; }
+.as-md-link { color: var(--lamp-soft); text-decoration: underline; }
+
+/* ── Grup langkah tool (timeline ala coding-agent) ──────────────── */
+/* Kelas: .as-step* — membungkus run ≥2 kartu tool berurutan. */
+.as-step {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  background: var(--ink-1);
+  overflow: hidden;
+}
+.as-step[data-status="running"] { border-left: 2px solid var(--lamp); }
+.as-step[data-status="done"] { border-left: 2px solid var(--mint); }
+.as-step[data-status="error"] { border-left: 2px solid var(--coral); }
+.as-step-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 9px;
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.as-step-hd:hover { background: var(--ink-3); }
+.as-step-icon { flex: none; color: var(--lamp-soft); }
+.as-step[data-status="done"] .as-step-icon { color: var(--mint); }
+.as-step[data-status="error"] .as-step-icon { color: var(--coral); }
+.as-step-ttl { color: var(--text); flex: none; }
+.as-step-cnt {
+  flex: 1 1 auto;
+  text-align: right;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.as-step .as-chev {
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+.as-step.closed .as-chev { transform: rotate(-90deg); }
+.as-step-bd {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px 6px;
+  border-top: 1px solid var(--line-soft);
+}
+.as-step.closed .as-step-bd { display: none; }
+/* Kartu tool di dalam grup tanpa border ganda (menempel ke grup). */
+.as-step-bd .as-blk.as-tool { border-radius: var(--r-xs); }
+
 /* Input: textarea auto-grow */
 #mode-assistant .chat-input textarea {
   width: 100%;

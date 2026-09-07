@@ -158,6 +158,10 @@
           <button id="vt-stop" class="mini-btn" data-i18n="vt.stop">Berhenti</button>
           <span id="vt-status" class="note-status" data-i18n="vt.inactive">tidak aktif</span>
         </div>
+        <div class="note-row">
+          <button id="vt-overlay-open" class="mini-btn" data-i18n="vt.overlayBtn">Buka Overlay OBS</button>
+          <span class="hint" data-i18n="vt.overlayHint">URL bersih untuk Browser Source: /vtuber.html</span>
+        </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
         <div class="section-title" data-i18n="vt.feedTitle">Feed Live</div>
         <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
@@ -173,8 +177,11 @@
         </div>
         <div class="note-row">
           <button id="as-stop" class="mini-btn" data-i18n="as.stop">Matikan Agent</button>
+          <button id="as-memory" class="mini-btn" data-i18n="as.memoryBtn">Lihat Memory</button>
           <span class="hint" data-i18n="as.hint1">Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).</span>
         </div>
+        <div id="as-plan" class="as-plan hidden"></div>
+        <div id="as-memory-box" class="as-plan hidden"></div>
         <div id="as-log" class="as-log"></div>
         <div id="as-approvals"></div>
         <div class="chat-input">
@@ -310,6 +317,13 @@
               </select>
             </label>
 
+            <label class="cfg-row" for="cfg-tts-sysvoice">
+              <span class="cfg-label" data-i18n="cfg.sysVoice">Suara Sistem</span>
+              <select id="cfg-tts-sysvoice" aria-describedby="cfg-hint">
+                <option value="" data-i18n="cfg.sysVoiceAuto">(otomatis sesuai bahasa)</option>
+              </select>
+            </label>
+
             <!-- Mesin suara (TTS): browser / API eksternal. Global (config.json), bukan per-model -->
             <div class="section-title" data-i18n="cfg.ttsTitle">Mesin Suara (TTS)</div>
             <label class="cfg-row" for="cfg-tts-provider">
@@ -358,6 +372,9 @@
                 <input id="cfg-tts-style" type="text" maxlength="300" hidden
                   data-i18n-ph="cfg.stylePh" placeholder="mis. Bicara ceria dengan aksen Jawa" aria-describedby="cfg-tts-hint" />
               </span>
+            </label>
+            <label class="cfg-check tts-remote-row" for="cfg-tts-hemat">
+              <input id="cfg-tts-hemat" type="checkbox" data-i18n-title="cfg.hematTip" /> <span data-i18n="cfg.hemat">Mode Hemat Request (gabung kalimat per paket ±800 karakter)</span>
             </label>
             <p class="hint" id="cfg-tts-hint" data-i18n-html="cfg.ttsHint">
               Browser = suara bawaan sistem. Gradio = perilaku lama (endpoint space).
@@ -603,6 +620,7 @@
         </label>
         <div class="cfg-checks" id="m-roles">
           <label class="cfg-check"><input type="checkbox" value="chat" /> <span data-i18n="conn.role.chat">chat (teks balasan)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="assistant" /> <span data-i18n="conn.role.assistant">assistant (otak agent &amp; tools)</span></label>
           <label class="cfg-check"><input type="checkbox" value="motion" /> <span data-i18n="conn.role.motion">motion (gerak &amp; ekspresi)</span></label>
           <label class="cfg-check"><input type="checkbox" value="sheet" /> <span data-i18n="conn.role.sheet">sheet (analisa parameter)</span></label>
         </div>

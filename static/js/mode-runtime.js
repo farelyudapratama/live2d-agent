@@ -84,6 +84,9 @@
     let stopped = false;
     let lastSpeakAt = 0;
     let speakQueue = [];
+    // Overlay OBS (vtuber.html) terhubung → app utama mundur dari balasan
+    // otomatis supaya chat tidak dibalas dobel (di sini DAN di overlay).
+    let overlayOn = false;
 
     function line(ev) {
       const cls = ev.type === "donation" ? "donation" : ev.type === "system" ? "system" : ev.type === "agent" ? "agent" : "";
@@ -111,6 +114,8 @@
     }
 
     async function maybeRespond(ev) {
+      // Overlay OBS yang pegang balasan → app utama hanya jadi penonton feed.
+      if (overlayOn) return;
       const respond = $("#vt-respond") && $("#vt-respond").checked;
       if (!respond) return;
       const cooldown = Math.max(5, Number(($("#vt-cooldown") || {}).value) || 12) * 1000;
@@ -141,6 +146,10 @@
         const r = await fetch(API + "/api/vtuber/events?since=" + cursor);
         const d = await r.json();
         cursor = d.cursor || cursor;
+        const nowOverlay = !!d.overlay;
+        if (nowOverlay && !overlayOn)
+          line({ type: "system", user: "system", text: __t("vt.overlayYield") });
+        overlayOn = nowOverlay;
         for (const ev of d.events || []) {
           line(ev);
           if (ev.type === "donation") alert(ev);
@@ -185,6 +194,10 @@
     $("#vt-stop").addEventListener("click", onStop);
     $("#vt-provider").addEventListener("change", onProviderChange);
     onProviderChange();
+    // Overlay OBS: halaman transparan untuk Browser Source. Dibuka dengan
+    // ?hud=1 (panel preferensi tampil); URL untuk OBS = tanpa ?hud=1.
+    const onOverlayOpen = () => window.open(API + "/vtuber.html?hud=1", "_blank");
+    $("#vt-overlay-open").addEventListener("click", onOverlayOpen);
     pollTimer = setInterval(poll, 2500);
 
     return function destroy() {
@@ -192,6 +205,7 @@
       $("#vt-start").removeEventListener("click", onStart);
       $("#vt-stop").removeEventListener("click", onStop);
       $("#vt-provider").removeEventListener("change", onProviderChange);
+      $("#vt-overlay-open").removeEventListener("click", onOverlayOpen);
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       post("/api/vtuber/stop").catch(() => {});
       feed.textContent = "";
@@ -212,6 +226,132 @@
   // Panel ini hanya LAYAR: runtime assistant di server adalah layanan
   // mandiri (tetap hidup saat pindah panel / CLI agent memakainya juga).
   // ═════════════════════════════════════════════════════════════
+  // ── Direktur akting: event agent → reaksi karakter ──────────
+  // "Otak akting" di sisi klien: memetakan event aktivitas agent ke gaze,
+  // ekspresi, dan komentar. Komentar bertingkat: kalimat acuan instan
+  // (fallback, gratis) → LLM persona via /api/assistant/quip (role "chat").
+  // Semua reaksi diberi cooldown agar karakter tidak "kebablasan".
+  function makeAssistantActor(L, opts) {
+    const speak = opts?.speakAsCharacter || (() => {});
+    const t = opts?.t || ((k) => k);
+    const fb = opts?.fallbacks || {};
+    let lastQuip = 0;        // jeda minimal antar komentar
+    let lastMotion = 0;      // jeda minimal antar gerakan besar
+    let fillerTimer = null;
+
+    const QUIP_COOLDOWN = 25000;   // komentar LLM maks ~1 per 25 dtk
+    const MOTION_COOLDOWN = 2500;  // gerakan reaksi maks 1 per 2,5 dtk
+
+    const clearFiller = () => {
+      if (fillerTimer) { clearTimeout(fillerTimer); fillerTimer = null; }
+    };
+
+    // Gerakan/ekspresi reaksi. Rate-limited supaya tidak saling menimpa.
+    function react(kind) {
+      if (!L || Date.now() - lastMotion < MOTION_COOLDOWN) return;
+      lastMotion = Date.now();
+      try {
+        if (kind === "tool") {
+          L.setGazeIntent?.("glance", { hold: 1600 });
+          L.expressEmotion?.("bingung");
+        } else if (kind === "done") {
+          L.setGazeIntent?.("up", { hold: 1200 });
+          L.expressEmotion?.("senang");
+        } else if (kind === "error") {
+          L.setGazeIntent?.("lookaway-down", { hold: 2000 });
+          L.expressEmotion?.("kesal");
+        } else if (kind === "approval") {
+          L.setGazeIntent?.("face-user", { hold: 2500 });
+          L.expressEmotion?.("kaget");
+        }
+      } catch (e) {}
+    }
+
+    // Komentar: fallback instan, lalu coba LLM persona (hasilnya menimpa).
+    function comment(fallbackKey, prompt, allowLLM) {
+      speak(t(fallbackKey));
+      if (!allowLLM || Date.now() - lastQuip < QUIP_COOLDOWN) return;
+      lastQuip = Date.now();
+      post("/api/assistant/quip", { persona: actorPersona, event: prompt })
+        .then((d) => { if (d.quip) speak(d.quip); })
+        .catch(() => {});
+    }
+
+    let actorPersona = "";
+
+    return {
+      // Persona di-set ulang tiap start panel (dari sheet userNote).
+      setPersona(p) { actorPersona = String(p || "").slice(0, 800); },
+
+      onActivity(ev) {
+        if (!ev) return;
+        clearFiller();
+        // Nama event kanonik dari agent/bus.ts (agent/loop.ts yang menulis).
+        switch (ev.type) {
+          case "thinking_start":
+            // Mulai mikir: tatap jauh (pose mikir), komentar pengisi.
+            try { L?.setGazeIntent?.("think", { hold: 6000 }); } catch (e) {}
+            comment(fb.think || "as.actor.think",
+              "agent mulai memikirkan dan merencanakan langkah kerjanya", true);
+            // Filler: kalau lama tak ada kabar, karakter bersuara sekali.
+            fillerTimer = setTimeout(() => {
+              speak(t(fb.tool || "as.actor.tool"));
+            }, 18000);
+            break;
+          case "tool_call_start":
+            react("tool");
+            comment(fb.tool || "as.actor.tool",
+              "agent sedang memeriksa berkas dan isi folder kerja", false);
+            break;
+          case "tool_call_end":
+            react("tool");
+            break;
+          case "permission_request":
+            react("approval");
+            comment(fb.think || "as.actor.think",
+              "agent butuh izin user untuk melanjutkan aksinya", false);
+            break;
+          case "speak":
+            // Komentar persona (dibuat server lewat role "chat") — ini
+            // teks utama yang diucapkan; jangan ditimpa fallback.
+            react("done");
+            speak(ev.label || t(fb.done || "as.actor.done"));
+            break;
+          case "final_answer":
+            // Jawaban final: reaksi selesai (versi persona sudah datang
+            // lewat event "speak" / field speak; ini fallback).
+            react("done");
+            if (!ev.label || !/^⏳/.test(ev.label)) {
+              comment(fb.done || "as.actor.done",
+                "agent baru saja menyelesaikan tugasnya", false);
+            }
+            break;
+          case "error":
+            react("error");
+            comment(fb.error || "as.actor.error",
+              "agent mengalami kendala saat bekerja", true);
+            break;
+          case "verification_result":
+            // Verifikasi gagal → reaksi prihatin; lolos → diam saja.
+            if (/^gagal/i.test(ev.label || "")) {
+              react("error");
+              comment(fb.error || "as.actor.error",
+                "agent menemukan masalah saat memverifikasi hasil kerjanya", false);
+            }
+            break;
+          case "subagent_spawned":
+            // Ada pekerjaan paralel — karakter menonton dengan penasaran.
+            react("tool");
+            comment(fb.tool || "as.actor.tool",
+              "agent mengerjakan beberapa sub-task sekaligus lewat subagent", false);
+            break;
+        }
+      },
+
+      stop() { clearFiller(); },
+    };
+  }
+
   function startAssistantClient() {
     const log = $("#as-log");
     const approvalsBox = $("#as-approvals");
@@ -220,9 +360,20 @@
 
     // Runtime server langsung menyala saat panel dibuka. Kalau sudah jalan
     // (mis. CLI agent membukanya), start() tidak menghapus sesi — history
-    // dimuat ulang dari sesi yang tersimpan.
-    post("/api/assistant/start", { workDir: ($("#as-workdir") || {}).value || undefined })
-      .then(async () => {
+    // dimuat ulang dari sesi yang tersimpan. Persona sheet dikirim sekalian
+    // supaya komentar karakter (role "chat") ikut gaya karakternya.
+    (async () => {
+      let persona = "";
+      try {
+        const prof = await window.__live2dAgent?.getCapabilityProfile?.();
+        persona = String(prof?.userNote || "").slice(0, 800);
+      } catch (e) {}
+      try {
+        await post("/api/assistant/start", {
+          workDir: ($("#as-workdir") || {}).value || undefined,
+          persona,
+        });
+        actor.setPersona(persona);
         // Tarik riwayat sesi (bisa berisi percakapan dari CLI / sesi lama).
         try {
           const hist = await fetch(API + "/api/assistant/history").then((r) => r.json());
@@ -232,8 +383,34 @@
           }
         } catch (e) {}
         line("tool", __t("as.activeDefault"));
-      })
-      .catch((e) => line("tool", __t("as.startFail", { msg: e.message })));
+      } catch (e) {
+        line("tool", __t("as.startFail", { msg: e.message }));
+      }
+    })();
+
+    // ═════════════════════════════════════════════════════════════
+    // Lapisan akting karakter — menerjemahkan aktivitas agent jadi
+    // gerakan/ekspresi/ucapan. Agent tidak tahu & tidak peduli: dia hanya
+    // menulis event; panel ini yang "berakting".
+    // ═════════════════════════════════════════════════════════════
+    const L = window.__live2dAgent;
+    const actor = makeAssistantActor(L, {
+      speakAsCharacter,
+      fallbacks: { think: "as.actor.think", tool: "as.actor.tool", done: "as.actor.done", error: "as.actor.error" },
+      t: __t,
+    });
+
+    // Polling event log aktivitas (ring buffer ber-seq di server — CLI dan
+    // panel ini bisa memantau agent yang sama tanpa saling mengganggu).
+    let lastSeq = 0;
+    const evIv = setInterval(async () => {
+      if (stopped) return;
+      try {
+        const d = await fetch(API + "/api/assistant/events?since=" + lastSeq).then((r) => r.json());
+        lastSeq = d.latest || lastSeq;
+        for (const ev of d.events || []) actor.onActivity(ev);
+      } catch (e) {}
+    }, 1500);
 
     function line(role, text) {
       const row = el("div", "as-line " + role, text);
@@ -242,10 +419,78 @@
       log.scrollTop = log.scrollHeight;
     }
 
+    // Lapisan karakter terpisah dari agent: yang DIUCAPKAN hanya ringkasan
+    // (d.speak dari server, dibuat lewat role "chat") — teks penuh tetap
+    // tampil di panel ini.
+    function speakAsCharacter(text) {
+      if (!text) return;
+      try { window.__addChat?.("agent", text); } catch {}
+      try { window.__live2dAgent?.speak?.(text); } catch {}
+    }
+
+    // Kotak rencana kerja: todo list live dari state agent.
+    function renderPlan(plan) {
+      const box = $("#as-plan");
+      if (!box) return;
+      if (!plan || !plan.length) {
+        box.classList.add("hidden");
+        box.textContent = "";
+        return;
+      }
+      box.classList.remove("hidden");
+      box.textContent = "";
+      const t0 = __t("as.planTitle");
+      if (t0) box.appendChild(el("div", "hint", t0));
+      for (const p of plan) {
+        const row = el("div", "as-plan-item");
+        row.appendChild(el("span", "st " + p.status, p.status));
+        row.appendChild(el("span", "", p.task + (p.note ? " — " : "")));
+        if (p.note) row.appendChild(el("span", "note", p.note));
+        box.appendChild(row);
+      }
+    }
+
+    // Memory lintas sesi: lihat & lupakan.
+    async function toggleMemory() {
+      const box = $("#as-memory-box");
+      if (!box) return;
+      if (!box.classList.contains("hidden")) {
+        box.classList.add("hidden");
+        box.textContent = "";
+        return;
+      }
+      try {
+        const d = await fetch(API + "/api/assistant/memory").then((r) => r.json());
+        box.classList.remove("hidden");
+        box.textContent = "";
+        const title = el("div", "hint", __t("as.memTitle"));
+        box.appendChild(title);
+        const entries = d.entries || [];
+        if (!entries.length) box.appendChild(el("div", "", __t("as.memEmpty")));
+        for (const m of entries) {
+          const row = el("div", "as-mem-row");
+          row.appendChild(el("span", "k", "[" + m.key + "]"));
+          row.appendChild(el("span", "", m.value));
+          const forget = el("button", "mini-btn", __t("as.memForget"));
+          forget.addEventListener("click", async () => {
+            try {
+              await post("/api/assistant/memory/forget", { key: m.key });
+            } catch (e) {}
+            toggleMemory();
+            toggleMemory();
+          });
+          row.appendChild(forget);
+          box.appendChild(row);
+        }
+      } catch (e) {}
+    }
+
     async function refresh() {
       if (stopped) return;
       try {
         const st = await fetch(API + "/api/mode").then((r) => r.json());
+        // render rencana kerja (update_plan) — progress real-time
+        renderPlan(st.assistant?.plan || []);
         // render approval pending
         approvalsBox.textContent = "";
         for (const ap of st.assistant?.pendingApprovals || []) {
@@ -259,6 +504,7 @@
             try {
               const d = await post("/api/assistant/approve", { id: ap.id, approve: true });
               if (d.reply) line("assistant", d.reply);
+              if (d.speak) speakAsCharacter(d.speak);
             } catch (e) { line("tool", "gagal: " + e.message); }
             refresh();
           });
@@ -284,6 +530,7 @@
         // set workdir sekali di awal
         const wd = ($("#as-workdir") || {}).value;
         const d = await post("/api/assistant/ask", { text, workDir: wd || undefined });
+        if (d.speak) speakAsCharacter(d.speak);
         // tarik riwayat terbaru dari server (sumber kebenaran)
         const hist = await fetch(API + "/api/assistant/history").then((r) => r.json());
         log.textContent = "";
@@ -304,6 +551,7 @@
     $("#btn-as-send").addEventListener("click", onSend);
     input.addEventListener("keydown", onKey);
     $("#as-stop").addEventListener("click", onStop);
+    $("#as-memory").addEventListener("click", toggleMemory);
     const iv = setInterval(refresh, 4000);
     refresh();
 
@@ -311,10 +559,13 @@
       // Panel ditutup ≠ runtime dimatikan: assistant adalah layanan mandiri
       // (mungkin sedang dipakai CLI agent). Yang dilepas hanya UI ini.
       stopped = true;
+      actor.stop();
       $("#btn-as-send").removeEventListener("click", onSend);
       input.removeEventListener("keydown", onKey);
       $("#as-stop").removeEventListener("click", onStop);
+      $("#as-memory").removeEventListener("click", toggleMemory);
       clearInterval(iv);
+      clearInterval(evIv);
       log.textContent = "";
       approvalsBox.textContent = "";
     };

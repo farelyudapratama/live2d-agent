@@ -2545,6 +2545,46 @@ input[type="range"]::-moz-range-thumb {
   gap: 6px;
   margin-top: 8px;
 }
+/* Kotak rencana kerja (update_plan) & memory di panel assistant */
+.as-plan {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--mint);
+  background: var(--ink-1);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  margin-bottom: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.as-plan .as-plan-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+.as-plan .as-plan-item .st {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  flex: none;
+  width: 74px;
+}
+.as-plan .as-plan-item .st.pending { color: var(--muted); }
+.as-plan .as-plan-item .st.in_progress { color: var(--lamp); }
+.as-plan .as-plan-item .st.done { color: var(--ok, #7dc98f); }
+.as-plan .as-plan-item .st.failed { color: var(--lamp); text-decoration: line-through; }
+.as-plan .as-plan-item .note { color: var(--muted); font-size: 11px; }
+.as-plan .as-mem-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.as-plan .as-mem-row .k {
+  font-family: var(--font-mono);
+  color: var(--mint);
+  flex: none;
+}
 .as-workdir {
   display: flex;
   flex-direction: column;

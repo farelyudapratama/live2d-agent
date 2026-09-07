@@ -51,10 +51,57 @@ AI via `/api/chat` dengan gaya dari input `#vt-persona` dan cooldown
   dan loop lanjut (maks 6 turn) sampai jawaban final.
 - Approval: `POST /api/assistant/approve {id, approve}` — mengeksekusi tool
   lalu melanjutkan reasoning; menolak memasukkan pesan "User MENOLAK".
+  Varian streaming `POST /api/assistant/approve-stream` (SSE) mengalirkan
+  hasil tool + lanjutan reasoning — dipakai panel browser.
 - Sandbox: `safePath` mengunci path di dalam folder kerja; `run_command`
   asinkron dengan timeout 30 dtk, output dipangkas 12 KB (server tetap
   responsif selama perintah jalan). Tetap: shell = akses penuh mesin — hanya
   izinkan perintah yang kamu pahami.
+
+### Panel agent (remake ala ZCode, 2026-09-07)
+
+Panel assistant **port ke TS**: `src/client/agent/panel/` (stream / transcript /
+actor / view / panel) di-bundle ke `bundle.js` sebagai `window.__agentPanel`;
+`mode-runtime.js` hanya bridge `start()`. Bentuk:
+
+- **Rail melebar** — `#sidebar.agent-wide` (372 → 600px) saat mode assistant
+  aktif; karakter tetap terlihat di kiri.
+- **Transcript live** — pertanyaan dikirim via SSE `/api/assistant/ask-stream`
+  (delta token, kartu tool + args/hasil, kartu approval, `speak`, `done`),
+  bukan lagi `POST /ask` blocking. Approve via `/approve-stream` agar kartu
+  bermetamorfosis mulus ("menunggu izin" → "menjalankan" → hasil).
+- **Satu sumber kebenaran per state** — kartu approval & plan dari poll
+  `/api/assistant/status` (2 dtk, keyed by `ap.id`); transcript mode `live`
+  (SSE) vs `follow` (bus `/events?since=`, untuk pantau CLI/klien lain).
+  Bus `thinking/tool_call/permission/final/error` disupresi dari transcript
+  saat live (padanannya dari SSE); `verification/subagent` selalu dirender.
+- **Protokol putus-koneksi dua-kasus** (`decideFallback`): SSE gagal sebelum
+  event pertama → cek status fresh, resend `POST /ask` sekali bila tidak busy;
+  putus setelah ≥1 event → tidak pernah resend, lanjut follow dari bus
+  (server menolak ask kedua saat `busy` — defense-in-depth).
+- **Direktur akting** (`actor.ts`) tetap ada, mapping per-event diperluas:
+  verification gagal → prihatin, lolos → ringan tanpa komentar;
+  subagent_completed → senang; plan_revised → gaze think;
+  permission_resolved disetujui → lega, ditolak → tanpa reaksi.
+- **Diff, markdown, tab, undo (vibecoding, 2026-09-07 (2))**:
+  - `panel/diff.ts` menghitung diff file di CLIENT dari argumen tool mutasi
+    (`write_file`/`edit_file`/`delete_file` lewat SSE) — kartu tool mutasi
+    menampilkan diff, kartu approval menampilkan pratinjau diff terbuka, dan
+    tiap akhir giliran memunculkan kartu ringkasan "N file berubah +a −r".
+  - `panel/md.ts` (zero-dep, token data → textContent, tanpa innerHTML)
+    merender jawaban `final` sebagai markdown.
+  - Tab **Obrolan / Review / Terminal** di atas transcript: Review = daftar
+    file berubah sesi ini (registry client + `notes.filesTouched` dari
+    `/api/assistant/status` — field additive) + tombol Revert; Terminal =
+    riwayat `run_command` (command + output).
+  - **Undo**: `execTool` menyimpan snapshot isi file SEBELUM write/edit/
+    delete sukses (`Runtime.undo`, cap 20 FIFO, in-memory, tidak dipersist —
+    seperti approval). `GET /api/assistant/undo` + `POST /api/assistant/
+    revert {id}`; revert menulis balik isi lama / menghapus bila file tadinya
+    belum ada; satu rekaman per path = kondisi asli sebelum rantai mutasi;
+    revert ganda ditolak. CLI ikut tercakup (jalur `execTool` sama).
+- Kontrak lama utuh: CLI `bun run agent` memakai runtime yang sama; panel
+  hanya LAYAR — destroy() melepas UI, runtime tetap hidup.
 
 ## Desktop Pet (`src/server/pet.ts` + `static/pet.html`)
 

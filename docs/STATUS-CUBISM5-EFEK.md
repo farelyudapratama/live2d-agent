@@ -4,6 +4,112 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-07 (2) — PANEL AGENT "POWERFUL VIBECODING" (diff, markdown, tab, undo)
+
+User menilai UI agent masih kurang powerful untuk vibecoding dibanding kiblat
+coding-agent modern; keempat gap diisi dalam 4 commit:
+
+1. **Diff & ringkasan perubahan (client-only)** — `panel/diff.ts` (LCS baris,
+   cap 1000 baris, trim prefix/suffix, hunks berkonteks) menghitung diff di
+   CLIENT dari argumen `write_file`/`edit_file`/`delete_file` yang SUDAH lewat
+   SSE — nol perubahan server. Kartu tool mutasi kini menampilkan diff
+   (bukan JSON), kartu approval menampilkan PRATINJAU diff terbuka (keputusan
+   Allow/Deny berbasis isi), dan tiap akhir giliran (`done`) memunculkan kartu
+   ringkasan "N file berubah +a −r" ala ZCode. Tracking per giliran: reset
+   saat `appendUser`, tool ERROR membuang change, pause approval (⏳) menunda
+   ringkasan tanpa membuang tracking, `resolveApprovalVisual(klien lain)`
+   tetap masuk hitungan.
+2. **Markdown + grup langkah** — `panel/md.ts`: parser mini zero-dep → token
+   data (heading/paragraf/fenced code/quote/list/inline code+bold+italic+link
+   http-saja); view merender via createElement/textContent — TIDAK pernah
+   innerHTML konten model (XSS-safe by design). Blok `final` dirender
+   markdown; streaming tetap plain+caret. Run ≥2 kartu tool berurutan
+   dibungkus grup `.as-step` collapsible ("Bekerja — N langkah", status ikut
+   child terakhir, signature rebuild: id+status+rev — state expand child
+   terjaga).
+3. **Tab Obrolan/Review/Terminal** — `panel/registry.ts` (murni): 
+   `ChangeRegistry` (perubahan file lintas giliran; `mergeTouched` menyatukan
+   `notes.filesTouched` dari /status — path sesi CLI tampil "touched") &
+   `TermLog` (riwayat run_command, cap 80). Server ADDITIVE:
+   `assistantStatus()` kini menyertakan `notes: {filesTouched}`. Panel poling
+   `view.activeTab()` untuk menggambar halaman aktif.
+4. **Undo/revert (server)** — snapshot isi file SEBELUM eksekusi
+   write/edit/delete di `execTool` (path lewat `safePath`; hanya bila tool
+   SUKSES; SATU rekaman per path = kondisi asli; jalur approval panel/CLI
+   ikut karena `agentRunApproved` lewat `execTool`). `Runtime.undo`
+   (cap 20 FIFO, in-memory — sengaja TIDAK dipersist, seperti approval).
+   Route: `GET /api/assistant/undo`, `POST /api/assistant/revert {id}`
+   (error 404 bila id asing; revert ganda ditolak). Panel: tombol Revert per
+   file di tab Review → lookup by path → revert → status line di transcript.
+- Gate: **295 unit + 512 guard, 0 gagal**; build & tsc bersih. Test baru:
+  diff (8), transcript-change (5), md (6), registry (7), undo (6, eksekusi
+  sungguhan di workDir mkdtemp), parity status (1).
+- **Prioritas berikutnya (dicatat, belum dikerjakan)**: interrupt tugas
+  berjalan (cancel 1 task) masih jadi gap — "Matikan Agent" tetap blunt
+  instrument; halaman Review belum menampilkan diff penuh per file (baru
+  stat), bisa naik level dengan menautkan ke kartu diff di transcript.
+
+## UPDATE 2026-09-07 — REMAKE TAMPILAN AGENT (panel Assistant ala ZCode, port ke TS)
+
+User minta tampilan agent di-remake total — kiblatnya coding-agent seperti
+ZCode. Panel lama cuma log teks polos di rail sempit (372px), pertanyaan via
+`POST /ask` blocking (user menatap "Memproses…"), aktivitas tool tidak tampil.
+Kini:
+
+- **Panel port ke TS** — aturan lama "panel DOM tidak direncanakan di-port"
+  DIREVISI (AGENTS.md + MODES.md + README sudah diubah): panel kini di
+  `src/client/agent/panel/{stream,transcript,actor,view,panel}.ts`,
+  di-bundle sebagai `window.__agentPanel`; `mode-runtime.js` tinggal bridge
+  `start()` ±10 baris. Tidak ada guard legacy yang menunjuk mode-runtime
+  (dicek grep) — logic teruji lewat `test/agent-panel.test.ts` (32 test baru).
+- **Transcript live ala ZCode**: rail melebar `#sidebar.agent-wide`
+  (372→600px, karakter tetap terlihat); streaming delta via SSE
+  `/api/assistant/ask-stream` yang selama ini hanya dipakai CLI; kartu tool
+  collapsible (args pretty + hasil, dot status); kartu approval menonjol;
+  plan widget dengan progres x/y; chip subagent; status pill
+  (siap/bekerja/bekerja-klien-lain/mati); textarea auto-grow (Enter kirim,
+  Shift+Enter baris baru).
+- **Server additive** (kontrak lama utuh): `assistantResolveApproval` menerima
+  `onEvent` opsional; `agentRunApproved` meng-emit SSE `tool_result` (hasil
+  tool yang disetujui kini sampai ke transcript); bus event
+  `permission_resolved` (yang selama ini cuma deklarasi) kini benar-benar
+  di-emit saat approve/deny; route baru `POST /api/assistant/approve-stream`
+  (SSE, pola sama dengan ask-stream); `clipToolResult` line-boundary-aware
+  (diff tak putus di tengah baris) + chip "…dipotong" di panel.
+- **Dedup eksplisit antar 3 channel** (SSE + poll status 2dtk + poll bus
+  1,5dtk): kartu approval satu-satunya sumber = `pendingApprovals` dari
+  `/status` keyed by `ap.id` (event SSE/bus hanya pemicu refresh); plan satu
+  sumber = `status.plan`; transcript punya mode `live` (SSE) vs `follow`
+  (bus — pantau CLI/klien lain) dengan supresi
+  `thinking/tool_call/permission/final/error` saat live;
+  `verification/subagent` selalu dirender (tidak ada di SSE).
+- **Protokol putus-koneksi dua-kasus** (`decideFallback`, teruji): SSE gagal
+  sebelum event pertama → cek `/status` fresh, resend `POST /ask` sekali bila
+  tidak busy; putus setelah ≥1 event → TIDAK PERNAH resend, lanjut follow
+  dari bus + hydrate jawaban final dari history saat busy→false (dedupe by
+  teks). Server juga sudah menolak ask kedua saat busy (defense-in-depth).
+- **Kontinuitas approve→lanjutan**: kartu approval bermetamorfosis jadi kartu
+  tool "menjalankan…" → diisi `tool_result` dari approve-stream; lanjutan
+  delta menempel tanpa bubble/header baru; prompt internal "Lanjutkan tugas…"
+  difilter dari hydrate.
+- **Direktur akting dipertahankan + diperluas per-event** (port ke
+  `actor.ts`, cooldown 2,5dtk/25dtk utuh): verification gagal→prihatin,
+  lolos→ringan tanpa komentar; subagent_completed→senang; plan_revised→gaze
+  think + fallback `as.actor.revised`; permission_resolved disetujui→lega,
+  ditolak→tanpa reaksi.
+- **Hydrate saat buka panel**: `/api/assistant/history` (user→bubble,
+  assistant→bubble final, tool→kartu hasil, `MENUNGGU PERSETUJUAN:`→kartu
+  running), bus TIDAK direplay (baseline seq terkini), workdir dicerminkan
+  dari `/status`.
+- i18n: 21 key baru `as.*` di KEDUA kamus (id/en, parity hijau); key mati
+  lama dibiarkan (tak berbahaya). Tombol Reset (`/api/assistant/reset`, sudah
+  ada dari dulu) kini diekspos di panel.
+- Gate: **260 unit + 512 guard, 0 gagal**; build & tsc bersih.
+- **Prioritas berikutnya (dicatat, belum dikerjakan)**: interrupt tugas
+  berjalan (cancel 1 task, bukan "Matikan Agent" yang mematikan runtime) —
+  `run_command` 30 dtk & subagent paralel maks 4 bisa nyangkut, dan satu-
+  satunya jalan keluar sekarang blunt instrument.
+
 ## UPDATE 2026-09-02 (4) — jalur saran preset AI diperbaiki & diuji end-to-end
 
 Keluhan "analisis AI untuk sheet gagal mulu" dianamis sampai akar:

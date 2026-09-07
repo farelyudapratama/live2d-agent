@@ -34,7 +34,7 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 228 unit test (bun test) + 512 guard (11 suite)
+bun run test           # SEMUA: 260 unit test (bun test) + 512 guard (11 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
@@ -76,7 +76,11 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
   diubah di-port potongannya ke TS **di commit yang sama** bersama guard-nya.
   Dua area bernilai di-port bila kelak disentuh: sistem sheet
   (`migrateSheet`/`resolvePresets`) dan role mapping (`mapRoles`/`pokeRole*`).
-  Chat UI/panel DOM tidak direncanakan di-port.
+  Chat UI utama (bubble `#chat-log`, quick phrase, dsb. di app.js) tidak
+  direncanakan di-port. Panel agent **sudah** di-port ke TS
+  (`src/client/agent/panel/`, remake ala ZCode) — `mode-runtime.js` kini hanya
+  bridge `window.__agentPanel.start()`; logic panel baru ditulis di TS, bukan
+  di legacy JS.
 - **Guard legacy menguji kode asli** — fungsi diekstrak dari `app.js` via
   `vm`, bukan salinan. Saat mem-port, guard ikut dikonversi ke bun test,
   bukan dibuang.
@@ -118,13 +122,17 @@ src/shared/                  types, config, llm-client (role routing), paths
 src/client/animation/        easing, motion-dsl, motion-registry, motion-runtime
 src/client/engine/           motion-taxonomy (klasifikasi klip .motion3.json)
 src/client/agent/            brain + directive-parser → window.__agent
+src/client/agent/panel/      panel agent (remake ala ZCode): stream/transcript/
+                             actor/view/panel → window.__agentPanel
 src/client/i18n/             core i18n zero-dep + kamus id/en
 src/build.ts                 bundle-entry → static/js/bundle.js (IIFE)
 src/dist.ts                  bun run dist — rakit dist/Live2D-Agent/ (exe + static)
 src/cli/agent.ts             bun run agent — REPL Assistant di terminal
 agent-shell/                 cangkang Tauri (Rust) — jendela utama, pet, sidecar
 static/js/app.js             engine/UI legacy (±8.600 baris) — dijaga guard
-static/js/{mode-runtime,voice-input,emotion-overlay,motion-editor,camera-presence}.js
+static/js/mode-runtime.js    switcher mode — panel assistant tinggal bridge
+                             window.__agentPanel
+static/js/{voice-input,emotion-overlay,motion-editor,camera-presence}.js
 test/                        bun test (unit) — termasuk server-parity & integration
 test/legacy/                 guard legacy — 512 assertion, 11 suite
 data/                        data user — TIDAK di-commit

@@ -104,10 +104,11 @@ potongan saat disentuh). Kode TS client di-bundle oleh `src/build.ts` dan dimuat
 |---|---|---|
 | Server — 40+ route, LLM proxy, static, upload | `src/server/index.ts` | TS penuh, teruji unit |
 | Otak agent — prompt, directive, proaktif | `src/client/agent/` + `src/server/agent/` | TS penuh, teruji unit |
+| Panel agent — transcript live ala ZCode | `src/client/agent/panel/` | TS penuh, teruji unit; `mode-runtime.js` hanya bridge |
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
 | Mode system — VTuber / Assistant / Pet | `src/server/{vtuber,assistant,pet}.ts` | satu mode aktif, teardown sebelum pindah |
 | Release portable — compile + rakit folder | `src/dist.ts` → `dist/Live2D-Agent/` | sidecar shell Tauri |
-| Engine/UI — render loop, chat, panel, sheet | `static/js/app.js` (±8.600 baris) | legacy — dijaga guard |
+| Engine/UI — render loop, chat, sheet | `static/js/app.js` (±8.600 baris) | legacy — dijaga guard |
 
 Alur LLM: `browser → POST /api/chat → llmForRole('chat') → llmWithFallback → provider →
 parseSegments → animateTextViaDirector (role 'motion') → MotionRuntime`. Persona

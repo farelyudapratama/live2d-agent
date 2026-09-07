@@ -63,6 +63,8 @@ export type Runtime = {
   summarizations: number;
   /** Riwayat snapshot file sebelum mutasi (undo) — cap MAX_UNDO, in-memory. */
   undo: UndoRecord[];
+  /** Sesi aktif (assistant-sessions.json) — untuk persist multi-session. */
+  sessionId: string;
 };
 
 let runtime: Runtime | null = null;
@@ -99,6 +101,7 @@ export function makeRuntime(cfg: any, workDir: string, history: AsMsg[]): Runtim
     planBlocks: {},
     summarizations: 0,
     undo: [],
+    sessionId: "",
   };
 }
 
@@ -108,37 +111,23 @@ export function pushMsg(rt: Runtime, m: Omit<AsMsg, "ts">): void {
   saveSession(rt);
 }
 
-// ── Persist sesi — riwayat & folder kerja selamat restart server.
-// Approval SENGAJA tidak dipersist: izin per aksi itu keputusan instan.
-import { readFileSync, mkdirSync } from "fs";
-import { join } from "path";
-import { queueJsonWrite } from "../../shared/config";
+// ── Persist sesi — lewat store multi-session (sessions.ts).
+// loadSession/saveSession adalah wrapper kompatibilitas: CLI & panel tidak
+// perlu tahu store-nya; sesi aktif disimpan di assistant-sessions.json
+// (migrasi otomatis dari assistant-history.json format lama).
 import { appRoot } from "../../shared/paths";
+import { makeSessionsStore } from "./sessions";
 
-const SESSION_FILE = join(appRoot(), "data", "assistant-history.json");
+const store = makeSessionsStore(appRoot());
 
-export function loadSession(): { history: AsMsg[]; workDir: string | null } | null {
-  try {
-    const raw = readFileSync(SESSION_FILE, "utf8");
-    const j = JSON.parse(raw);
-    if (!Array.isArray(j?.history)) return null;
-    return {
-      history: j.history.slice(-MAX_HISTORY),
-      workDir: typeof j.workDir === "string" ? j.workDir : null,
-    };
-  } catch {
-    return null;
-  }
+export function loadSession(): { history: AsMsg[]; workDir: string | null; sessionId?: string } | null {
+  const rec = store.activeRec();
+  if (!rec) return null;
+  return { history: rec.messages, workDir: rec.workDir || null, sessionId: rec.id };
 }
 
 export function saveSession(rt: Runtime): void {
-  try {
-    mkdirSync(join(appRoot(), "data"), { recursive: true });
-    queueJsonWrite(SESSION_FILE, {
-      history: rt.history.slice(-MAX_HISTORY),
-      workDir: rt.workDir,
-    }).catch(() => {});
-  } catch {}
+  store.persistActive(rt.history, rt.workDir);
 }
 
 /** Pencatatan state penting — dipanggil loop setelah tool mutating sukses. */

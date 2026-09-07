@@ -10,6 +10,7 @@
 import type { ConfigManager } from "../shared/config";
 import { appRoot } from "../shared/paths";
 import { makeRuntime, getRuntime, setRuntime, loadSession, saveSession, pushMsg } from "./agent/state";
+import { makeSessionsStore } from "./agent/sessions";
 import { agentAsk, agentRunApproved } from "./agent/loop";
 import { stripToolDirective } from "./agent/parse";
 import { readEvents, emitEvent } from "./agent/bus";
@@ -25,6 +26,8 @@ export type { AsEvent } from "./assistant-events";
 export { memoryList as assistantMemoryList, memoryDelete as assistantMemoryDelete };
 
 let configWired = false;
+/** Store sesi — satu instance untuk proses (path dari appRoot). */
+const sessionsStore = makeSessionsStore(appRoot());
 /** Dipanggil sekali dari index.ts saat server boot. */
 export function initAssistant(config: ConfigManager): void {
   if (!configWired) {
@@ -68,6 +71,7 @@ export function assistantStart(cfg: any): { ok: boolean; error?: string } {
   const saved = loadSession();
   const workDir = String(cfg?.workDir || saved?.workDir || appRoot()).trim();
   const rt = makeRuntime(cfg || {}, workDir, saved?.history ? saved.history.slice() : []);
+  rt.sessionId = saved?.sessionId || "";
   setRuntime(rt);
   saveSession(rt);
   return { ok: true };
@@ -157,4 +161,55 @@ export function assistantRevert(id: string): string {
   const rt = getRuntime();
   if (!rt) throw new Error("assistant mode tidak aktif");
   return revertUndo(rt, id);
+}
+
+// ── Multi-session: list / create / switch / delete ───────────────
+
+export function assistantSessionsList() {
+  return sessionsStore.list();
+}
+
+export function assistantSessionCreate(workDir?: string): { ok: boolean; error?: string } {
+  const rt = getRuntime();
+  if (rt?.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
+  const wd = String(workDir || rt?.workDir || appRoot()).trim();
+  // Simpan dulu state sesi lama (bila ada), lalu buat & pindah.
+  if (rt) saveSession(rt);
+  const rec = sessionsStore.create(wd);
+  if (rt) {
+    rt.history = [];
+    rt.workDir = wd;
+    rt.sessionId = rec.id;
+  }
+  return { ok: true };
+}
+
+export function assistantSessionSwitch(id: string): { ok: boolean; error?: string } {
+  const rt = getRuntime();
+  if (rt?.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
+  if (rt) saveSession(rt); // simpan yang lama dulu
+  const rec = sessionsStore.switchTo(String(id || ""));
+  if (!rec) return { ok: false, error: "sesi tidak ditemukan" };
+  if (rt) {
+    rt.history = rec.messages.slice();
+    if (rec.workDir) rt.workDir = rec.workDir;
+    rt.sessionId = rec.id;
+    saveSession(rt);
+  }
+  return { ok: true };
+}
+
+export function assistantSessionDelete(id: string): { ok: boolean; error?: string; newActive?: string } {
+  const rt = getRuntime();
+  if (rt?.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
+  const r = sessionsStore.remove(String(id || ""));
+  if (!r.ok) return { ok: false, error: "sesi tidak ditemukan" };
+  // Sesi aktif terhapus → runtime dipindah ke sesi sisa terbaru (atau kosong).
+  if (rt && r.newActive !== undefined) {
+    const rec = sessionsStore.activeRec();
+    rt.history = rec ? rec.messages.slice() : [];
+    rt.sessionId = rec ? rec.id : "";
+    if (rec?.workDir) rt.workDir = rec.workDir;
+  }
+  return { ok: true, newActive: r.newActive };
 }

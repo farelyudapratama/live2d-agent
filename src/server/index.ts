@@ -15,7 +15,7 @@ import { execSync } from "child_process";
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive } from "./vtuber";
-import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, initAssistant } from "./assistant";
+import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { appRoot } from "../shared/paths";
 
@@ -238,6 +238,22 @@ async function handleAPI(req: Request): Promise<Response|null> {
   }
   if(method==="POST" && path==="/api/assistant/reset") { assistantReset(); return json({ok:true}); }
   if(method==="GET" && path==="/api/assistant/status") return json(assistantStatus());
+  if(method==="GET" && path==="/api/assistant/sessions") return json(assistantSessionsList());
+  if(method==="POST" && path==="/api/assistant/sessions/new") {
+    const body = await readBody(req);
+    const r = assistantSessionCreate(typeof body?.workDir === "string" ? body.workDir : undefined);
+    return json(r, r.ok ? 200 : 409);
+  }
+  if(method==="POST" && path==="/api/assistant/sessions/switch") {
+    const body = await readBody(req);
+    const r = assistantSessionSwitch(String(body?.id || ""));
+    return json(r, r.ok ? 200 : 404);
+  }
+  if(method==="POST" && path==="/api/assistant/sessions/delete") {
+    const body = await readBody(req);
+    const r = assistantSessionDelete(String(body?.id || ""));
+    return json(r, r.ok ? 200 : 404);
+  }
   if(method==="GET" && path==="/api/assistant/undo") return json({ entries: assistantUndoList() });
   if(method==="POST" && path==="/api/assistant/revert") {
     const body = await readBody(req);

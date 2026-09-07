@@ -4,6 +4,43 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-07 (4) — GAP AUDIT UI AGENT: STATUS GLOBAL, BADGE LEVEL, CANCEL, QUICK ACTIONS
+
+User memberi checklist "elemen ideal UI agent" (6 kelompok). Hasil audit:
+mayoritas sudah ada (streaming, tool card, plan live, approval+diff,
+Review/Terminal tab, multi-session, memory, verifikasi ✓/✗, subagent chip,
+akting per-event). Empat gap utama ditutup dalam 4 commit:
+
+1. **Status global** — pill panel dapat state `approval` (dulu saat loop
+   pause untuk izin, `busy=false` → pill keliru "siap"; kini
+   `pendingApprovals` yang menentukan). Tombol Assistant di activity bar
+   diberi dot status (`data-agent`: off/idle/busy/approval, poll 4 dtk di
+   `projek.ts`) — status agent terlihat dari mana pun. Kartu approval
+   dapat pulse rail amber (keyframe `appr-pulse`, opacity-only — patuh
+   manifesto).
+2. **Badge level tool** — `/status` + field additive `tools [{name,level}]`
+   dari registry `TOOLS`; panel menampilkan badge "auto" (mint, safe) /
+   "izin" (amber, mutating) di header kartu tool & approval → user paham
+   kenapa sesuatu auto-jalan vs diminta izin.
+3. **Cancel per-task** — `Runtime.cancelRequested` dicek loop antar-langkah
+   (awal turn + setelah `execTool`); tool yang jalan selesai dulu (run_command
+   ≤30 dtk — cancel kooperatif, di-dokumentasikan MODES), reply
+   "Dibatalkan oleh user.", runtime TIDAK dimatikan. Route
+   `POST /api/assistant/cancel` (accepted hanya saat busy); tombol panel
+   "Stop Task" (`#as-cancel`) terpisah dari "Matikan Agent" (nuke).
+   `ask` baru membersihkan flag sisa — cancel tak bocor antar tugas.
+4. **Quick actions + resizable** — 4 chip task umum di composer (teks i18n
+   = prompt, dikirim textContent — satu sumber); `#sb-gutter` 6px antara
+   stage & sidebar untuk drag lebar panel (320–900px, persist localStorage,
+   dobel-klik reset), handler di `projek.ts`.
+- i18n: 10 key baru (`as.status.approval`, `as.lvl.*`, `as.cancel*`,
+  `as.quick.*`) di KEDUA kamus.
+- Gate: **305 unit + 512 guard, 0 gagal**; build & tsc bersih.
+- **Sisa gap yang disadari (belum dikerjakan)**: indikator koneksi persisten
+  (sekarang masih status line sekali saat drop — bisa jadi dot di pill);
+  subagent parallel count (chip ada, hitungan "n/4" belum); rename/pin sesi;
+  halaman Review tanpa diff penuh per file.
+
 ## UPDATE 2026-09-07 (3) — SHELL 3 KOLOM ala ZCode + PROJEK MULTI-SESSION
 
 User sketsa layout baru (kiblat tetap ZCode desktop): activity bar kiri,

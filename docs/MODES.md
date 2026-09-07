@@ -55,6 +55,28 @@ migrasi sekali dari `assistant-history.json` lama + arsip `.bak`):
 - `loadSession`/`saveSession` (state.ts) kini wrapper store — CLI
   `bun run agent` ikut membuka sesi aktif tanpa perubahan.
 
+## Cancel per-task & status global (2026-09-07 (2))
+
+- **Cancel kooperatif**: `POST /api/assistant/cancel` menyetel
+  `rt.cancelRequested` (hanya saat `busy` → `{ok,accepted}`); loop mengecek
+  flag di awal tiap turn & setelah `execTool` kembali — tool yang sedang
+  jalan selesai dulu (`run_command` ≤30 dtk), lalu reply
+  "Dibatalkan oleh user." + bus `error "dibatalkan: oleh user"`. Runtime
+  TIDAK dimatikan (beda dengan `POST /api/assistant/stop` yang membongkar
+  runtime & approval). Panel: tombol "Stop Task" (`#as-cancel`), aktif
+  saat `running && (busy || liveAsk)`.
+- **Metadata tool**: `GET /api/assistant/status` menyertakan
+  `tools: [{name, level}]` (dari registry `TOOLS`) — panel menampilkan
+  badge "auto" (safe) / "izin" (mutating) di header kartu tool & approval.
+- **Status global**: tombol Assistant di activity bar diberi `data-agent`
+  (off/idle/busy/approval) dari poll `/status` 4 dtk (`projek.ts`) — status
+  agent terlihat tanpa membuka panel. Pill panel punya state tambahan
+  `approval` (dari `pendingApprovals` — saat loop pause untuk izin,
+  `busy=false`, jadi sumbernya bukan busy).
+- Side panel resizable via `#sb-gutter` (drag 320–900px, persist
+  localStorage, dobel-klik = reset); quick actions 4 chip di composer
+  (teks i18n = prompt, dikirim apa adanya).
+
 ## AI VTuber (`src/server/vtuber.ts`)
 
 | Provider | Kredensial | Sumber event |

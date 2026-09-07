@@ -143,6 +143,13 @@ describe("server API parity (dispatcher-level)", () => {
     expect(wc).toMatchObject({ level: "mutating" });
     const rd = json.tools.find((t: any) => t.name === "read_file");
     expect(rd).toMatchObject({ level: "safe" });
+    // Aktivitas terakhir untuk chip panggung — null saat runtime/bus kosong,
+    // atau shape ringkas {type,label}; history penuh tidak pernah bocor.
+    expect(json).toHaveProperty("lastEvent");
+    if (json.lastEvent != null) {
+      expect(typeof json.lastEvent.type).toBe("string");
+      expect(typeof json.lastEvent.label).toBe("string");
+    }
   });
 });
 

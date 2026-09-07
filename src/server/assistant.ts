@@ -40,6 +40,10 @@ export function initAssistant(config: ConfigManager): void {
 
 export function assistantStatus() {
   const rt = getRuntime();
+  const bus = readEvents(0);
+  const lastEvent = rt && bus.events.length
+    ? bus.events[bus.events.length - 1]
+    : null;
   return {
     running: !!rt,
     busy: rt?.busy || false,
@@ -53,6 +57,9 @@ export function assistantStatus() {
     /** Metadata level tool (safe/mutating) — badge "auto"/"izin" di panel.
      *  Sumber kebenaran tetap registry TOOLS; client tidak menduplikasi. */
     tools: TOOLS.map((t) => ({ name: t.name, level: t.level })),
+    /** Aktivitas agent terakhir — stage chip menampilkan apa yang sedang
+     *  dikerjakan tanpa membuka panel. Null bila runtime mati/bus kosong. */
+    lastEvent: lastEvent ? { type: lastEvent.type, label: lastEvent.label } : null,
   };
 }
 

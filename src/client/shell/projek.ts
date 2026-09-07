@@ -192,18 +192,39 @@ export function startProjekRail(): () => void {
   let statusIv: ReturnType<typeof setInterval> | null = null;
   async function refreshAgentBadge(): Promise<void> {
     if (!asBtn) return;
-    let st: { running?: boolean; busy?: boolean; pendingApprovals?: unknown[] };
+    let st: {
+      running?: boolean;
+      busy?: boolean;
+      pendingApprovals?: unknown[];
+      lastEvent?: { type?: string; label?: string } | null;
+    };
     try {
       st = await fetchJSON(API + "/api/assistant/status");
     } catch { return; } // server lewat — biarkan badge terakhir
     const pending = Array.isArray(st.pendingApprovals) ? st.pendingApprovals.length : 0;
     const state = !st.running ? "off" : pending > 0 ? "approval" : st.busy ? "busy" : "idle";
     asBtn.dataset.agent = state;
-    asBtn.setAttribute("title",
-      state === "approval" ? t("as.status.approval")
-        : state === "busy" ? t("as.status.busy")
-        : state === "idle" ? t("as.status.idle")
-        : t("as.status.off"));
+    const stateLabel = state === "approval" ? t("as.status.approval")
+      : state === "busy" ? t("as.status.busy")
+      : state === "idle" ? t("as.status.idle")
+      : t("as.status.off");
+    asBtn.setAttribute("title", stateLabel);
+
+    // Stage chip hanya saat ada kerja/izin — idle sengaja sunyi.
+    const chip = document.getElementById("stage-agent-chip");
+    const chipText = chip?.querySelector(".sac-text") as HTMLElement | null;
+    if (chip && chipText) {
+      const show = state === "busy" || state === "approval";
+      chip.classList.toggle("hidden", !show);
+      chip.dataset.state = state;
+      if (show) {
+        const raw = String(st.lastEvent?.label || "")
+          .replace(/\{[\s\S]*$/, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        chipText.textContent = raw ? stateLabel + " — " + raw.slice(0, 48) : stateLabel;
+      }
+    }
   }
   if (asBtn) {
     void refreshAgentBadge();

@@ -44,9 +44,33 @@ const MIME: Record<string,string> = {
 };
 
 function json(data: unknown, status=200): Response {
-  return new Response(JSON.stringify(data), { status, headers:{ "Content-Type":"application/json; charset=utf-8", "Access-Control-Allow-Origin":"*" } });
+  return new Response(JSON.stringify(data), { status, headers:{ "Content-Type":"application/json; charset=utf-8" } });
 }
-function cors(res: Response){ res.headers.set("Access-Control-Allow-Origin","*"); res.headers.set("Access-Control-Allow-Methods","POST, GET, PUT, DELETE, OPTIONS"); res.headers.set("Access-Control-Allow-Headers","Content-Type"); return res; }
+/**
+ * API memegang apiKey, filesystem, shell, dan browser agent. Halaman asing
+ * yang dibuka browser terkontrol TIDAK boleh memanggil localhost API lewat
+ * CORS. Request tanpa Origin tetap diizinkan untuk CLI/test/native client.
+ */
+function apiOriginAllowed(req: Request): boolean {
+  const raw = req.headers.get("origin");
+  if (!raw || raw === "null") return !raw; // "null" dari sandbox/file ditolak
+  let origin: URL;
+  let target: URL;
+  try { origin = new URL(raw); target = new URL(req.url); } catch { return false; }
+  if (origin.protocol !== "http:" && origin.protocol !== "https:") return false;
+  const loop = (h: string) => h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+  // Same-origin persis; localhost/127 boleh ekuivalen pada port yang sama.
+  if (origin.origin === target.origin) return true;
+  return loop(origin.hostname) && loop(target.hostname) && origin.port === target.port && origin.protocol === target.protocol;
+}
+function cors(res: Response, req?: Request){
+  const origin=req?.headers.get("origin");
+  if(origin && apiOriginAllowed(req!)) res.headers.set("Access-Control-Allow-Origin",origin);
+  res.headers.set("Access-Control-Allow-Methods","POST, GET, PUT, DELETE, OPTIONS");
+  res.headers.set("Access-Control-Allow-Headers","Content-Type");
+  res.headers.set("Vary","Origin");
+  return res;
+}
 
 // Body-size caps per endpoint. Kalau body kelebihan batas, lempar
 // BodyTooLargeError yang dijawab 413 JSON supaya client dapat error terbaca.
@@ -193,6 +217,12 @@ function listMotions(modelKey:string){
 // ── API dispatcher ──────────────────────────────────────────────
 async function handleAPI(req: Request): Promise<Response|null> {
   const url=new URL(req.url); const path=url.pathname; const method=req.method;
+  // Semua endpoint /api/* adalah privileged surface (apiKey, filesystem,
+  // shell, browser agent). Halaman asing yang dibuka browser terkontrol tidak
+  // boleh memanggilnya melalui localhost.
+  if(path.startsWith("/api/") && !apiOriginAllowed(req)) {
+    return json({error:"origin tidak diizinkan"},403);
+  }
 
   // config
   if(method==="GET" && path==="/api/config"){

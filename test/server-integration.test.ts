@@ -97,6 +97,28 @@ describe("server API parity (dispatcher-level)", () => {
     expect(res).toBeNull();
   });
 
+  it("API menolak Origin asing tetapi menerima app origin & CLI tanpa Origin", async () => {
+    const hostile = await handleAPI(new Request(BASE + "/api/assistant/status", {
+      headers: { Origin: "https://evil.example" },
+    }) as any);
+    expect(hostile?.status).toBe(403);
+    expect(await hostile?.json()).toMatchObject({ error: "origin tidak diizinkan" });
+
+    const app = await handleAPI(new Request(BASE + "/api/assistant/status", {
+      headers: { Origin: BASE },
+    }) as any);
+    expect(app?.status).toBe(200);
+
+    // localhost dan 127.0.0.1 ekuivalen bila protocol+port sama.
+    const loopbackAlias = await handleAPI(new Request(BASE + "/api/assistant/status", {
+      headers: { Origin: "http://127.0.0.1:8310" },
+    }) as any);
+    expect(loopbackAlias?.status).toBe(200);
+
+    const cli = await call("GET", "/api/assistant/status");
+    expect(cli?.status).toBe(200);
+  });
+
   it("/api/config returns valid JSON shape", async () => {
     const res = await call("GET", "/api/config");
     expect(res).not.toBeNull();

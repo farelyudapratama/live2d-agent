@@ -1,0 +1,130 @@
+/**
+ * server/agent/state.ts — State runtime agent (otak kerja).
+ * Semua yang lintas-turn tinggal di sini: riwayat, approval, catatan sesi,
+ * dan persistensi ke disk. Loop (loop.ts) hanya menerima rt ini — tidak
+ * tahu apa-apa soal persona/karakter.
+ */
+
+export type AsMsg = { role: "user" | "assistant" | "tool"; content: string; ts: number };
+export type AsApproval = { id: string; tool: string; args: any; ts: number };
+
+/** Catatan state penting yang WAJIB selamat dari summarization history. */
+export type SessionNotes = {
+  /** File yang pernah ditulis/diubah agent (path relatif). */
+  filesTouched: string[];
+  /** Keputusan/permintaan user penting (kalimat singkat). */
+  decisions: string[];
+};
+
+/** Todo list rencana kerja — state terpisah dari teks jawaban. */
+export type PlanItem = {
+  id: string;
+  task: string;
+  status: "pending" | "in_progress" | "done" | "failed";
+  note?: string;
+};
+
+export type Runtime = {
+  cfg: any;
+  history: AsMsg[];
+  approvals: Map<string, AsApproval>;
+  busy: boolean;
+  workDir: string;
+  destroyed: boolean;
+  /** Persona karakter (userNote sheet) — diisi client saat start. */
+  persona: string;
+  /** Ring buffer event (bus.ts menulis, endpoint /events membaca). */
+  events: { seq: number; type: string; label: string; ts: number }[];
+  eventSeq: number;
+  /** State penting di luar history — selamat dari summarization. */
+  notes: SessionNotes;
+  /** Rencana kerja saat ini (update_plan tool). */
+  plan: PlanItem[];
+  /** Pelacakan verifikasi: tulis vs baca/jalan terakhir. */
+  lastWriteAt: number;
+  lastVerifyAt: number;
+  /** Penghitung pelanggaran verifikasi per item plan. */
+  planBlocks: Record<string, number>;
+  /** Jumlah ringkasan history yang sudah dilakukan (untuk log/debug). */
+  summarizations: number;
+};
+
+let runtime: Runtime | null = null;
+
+export const MAX_HISTORY = 60;
+/** Budget karakter total riwayat sebelum summarization (~12k token). */
+export const HISTORY_CHAR_BUDGET = 30000;
+
+export function getRuntime(): Runtime | null {
+  return runtime;
+}
+
+export function setRuntime(rt: Runtime | null): void {
+  runtime = rt;
+}
+
+export function makeRuntime(cfg: any, workDir: string, history: AsMsg[]): Runtime {
+  return {
+    cfg: cfg || {},
+    history,
+    approvals: new Map(),
+    busy: false,
+    workDir,
+    destroyed: false,
+    persona: typeof cfg?.persona === "string" ? cfg.persona.slice(0, 800) : "",
+    events: [],
+    eventSeq: 0,
+    notes: { filesTouched: [], decisions: [] },
+    plan: [],
+    lastWriteAt: 0,
+    lastVerifyAt: 0,
+    planBlocks: {},
+    summarizations: 0,
+  };
+}
+
+export function pushMsg(rt: Runtime, m: Omit<AsMsg, "ts">): void {
+  rt.history.push({ ...m, ts: Date.now() });
+  if (rt.history.length > MAX_HISTORY) rt.history.splice(0, rt.history.length - MAX_HISTORY);
+  saveSession(rt);
+}
+
+// ── Persist sesi — riwayat & folder kerja selamat restart server.
+// Approval SENGAJA tidak dipersist: izin per aksi itu keputusan instan.
+import { readFileSync, mkdirSync } from "fs";
+import { join } from "path";
+import { queueJsonWrite } from "../../shared/config";
+import { appRoot } from "../../shared/paths";
+
+const SESSION_FILE = join(appRoot(), "data", "assistant-history.json");
+
+export function loadSession(): { history: AsMsg[]; workDir: string | null } | null {
+  try {
+    const raw = readFileSync(SESSION_FILE, "utf8");
+    const j = JSON.parse(raw);
+    if (!Array.isArray(j?.history)) return null;
+    return {
+      history: j.history.slice(-MAX_HISTORY),
+      workDir: typeof j.workDir === "string" ? j.workDir : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveSession(rt: Runtime): void {
+  try {
+    mkdirSync(join(appRoot(), "data"), { recursive: true });
+    queueJsonWrite(SESSION_FILE, {
+      history: rt.history.slice(-MAX_HISTORY),
+      workDir: rt.workDir,
+    }).catch(() => {});
+  } catch {}
+}
+
+/** Pencatatan state penting — dipanggil loop setelah tool mutating sukses. */
+export function noteFileTouched(rt: Runtime, path: string): void {
+  const p = String(path || "").replace(/\\/g, "/");
+  if (p && !rt.notes.filesTouched.includes(p)) rt.notes.filesTouched.push(p);
+  if (rt.notes.filesTouched.length > 30) rt.notes.filesTouched.splice(0, rt.notes.filesTouched.length - 30);
+}

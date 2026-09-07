@@ -14,8 +14,8 @@ import { execSync } from "child_process";
 // @ts-ignore — modul TS client, dipakai bareng oleh server & bundle browser
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
-import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay } from "./vtuber";
-import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset } from "./assistant";
+import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive } from "./vtuber";
+import { assistantStart, assistantStop, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { appRoot } from "../shared/paths";
 
@@ -29,6 +29,7 @@ const SHEETS_DIR = join(DATA, "sheets");
 const MOTIONS_DIR = join(DATA, "motions");
 
 const config = new ConfigManager(DATA);
+initAssistant(config);
 for (const d of [DATA, SHEETS_DIR, MOTIONS_DIR, MODEL_DIR]) mkdirSync(d, { recursive: true });
 
 const KNOWN_ROLES = ["angleX","angleY","angleZ","eyeBallX","eyeBallY","eyeLOpen","eyeROpen","eyeLSmile","eyeRSmile","eyeForm","mouthOpenY","mouthForm","mouthOpenX","bodyAngleX","bodyAngleY","bodyAngleZ","breath","browLForm","browRForm","browLY","browRY","browLAngle","browRAngle","blush"];
@@ -216,6 +217,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
   // VTuber runtime
   if(method==="POST" && path==="/api/vtuber/start") return handleVtuberStart(req);
   if(method==="POST" && path==="/api/vtuber/stop") { vtuberStop(); return json({ok:true}); }
+  if(method==="POST" && path==="/api/vtuber/overlay") return json(overlayPing());
   if(method==="GET" && path==="/api/vtuber/events") return handleVtuberEvents(req);
   if(method==="POST" && path==="/api/vtuber/mock-event") return handleVtuberMockEvent(req);
 
@@ -226,8 +228,19 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);
   if(method==="POST" && path==="/api/assistant/ask-stream") return handleAssistantAskStream(req);
   if(method==="POST" && path==="/api/assistant/approve") return handleAssistantApprove(req);
+  if(method==="POST" && path==="/api/assistant/quip") return handleAssistantQuip(req);
+  if(method==="GET" && path==="/api/assistant/memory") return json({ entries: assistantMemoryList() });
+  if(method==="POST" && path==="/api/assistant/memory/forget") {
+    const body = await readBody(req);
+    const r = assistantMemoryDelete(String(body?.key || ""));
+    return json(r, r.ok ? 200 : 404);
+  }
   if(method==="POST" && path==="/api/assistant/reset") { assistantReset(); return json({ok:true}); }
   if(method==="GET" && path==="/api/assistant/status") return json(assistantStatus());
+  if(method==="GET" && path==="/api/assistant/events") {
+    const since = Number(new URL(req.url, "http://x").searchParams.get("since") || 0);
+    return json(assistantEvents(Number.isFinite(since) ? since : 0));
+  }
 
   // Pet overlay window
   if(method==="POST" && path==="/api/pet/launch") { return json(petLaunch(PORT)); }
@@ -309,7 +322,9 @@ async function handleVtuberStart(req: Request): Promise<Response> {
 }
 async function handleVtuberEvents(req: Request): Promise<Response> {
   const since = Number(new URL(req.url).searchParams.get("since") || 0);
-  return json(vtuberEvents(since));
+  // overlay: true saat Browser Source OBS terhubung (heartbeat segar) —
+  // client app utama memakainya untuk menahan balasan otomatisnya sendiri.
+  return json({ ...vtuberEvents(since), overlay: overlayActive() });
 }
 function vtuberInject(body: any) {
   // dipakai UI untuk mensimulasikan chat/donasi saat runtime aktif
@@ -328,6 +343,38 @@ async function handleAssistantStart(req: Request): Promise<Response> {
   // panel menyalakannya tanpa membongkar pet/VTuber yang sedang jalan.
   const r = assistantStart(body || {});
   return json(r, r.ok ? 200 : 400);
+}
+
+// Komentar karakter real-time atas aktivitas agent (lapisan akting). Persona
+// & kalimat acuan dikirim klien; LLM-nya role "chat" — otak akting yang bisa
+// BEDA dari otak kerja (role "assistant"). Gagal = {} → klien pakai fallback.
+async function handleAssistantQuip(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const persona = String(body?.persona || "").slice(0, 800);
+  const event = String(body?.event || "").slice(0, 160);
+  const lang = config.load().i18n?.lang === "en" ? "en" : "id";
+  const sys =
+    (lang === "en"
+      ? "You are the VOICE of a living character (desktop pet / VTuber) accompanying an AI agent as it works. You briefly react to what the agent JUST did — one casual spoken line, max 15 words, with personality. Never mention tool names, file paths, or technical terms. No emoji, no quotation marks."
+      : "Kamu adalah SUARA karakter hidup (pet / VTuber) yang menemani agent AI bekerja. Reaksilah singkat atas apa yang agent BARU lakukan — satu kalimat santai, maksimal 15 kata, dengan kepribadian. Jangan sebut nama tool, path file, atau istilah teknis. Tanpa emoji, tanpa tanda kutip.") +
+    (persona
+      ? lang === "en"
+        ? "\n\nYour character:\n" + persona
+        : "\n\nKaraktermu:\n" + persona
+      : "");
+  try {
+    const { reply } = await llmForRole(
+      "chat",
+      () => config.connections,
+      () => config.activeConnection,
+      (conns) => config.saveConnections(conns, config.load().activeId),
+      [{ role: "user", content: event || "agent mulai berpikir" }],
+      sys,
+    );
+    return json({ quip: String(reply || "").trim().slice(0, 140) });
+  } catch (e: any) {
+    return json({ quip: "", error: e.message });
+  }
 }
 async function handleAssistantAsk(req: Request): Promise<Response> {
   const body = await readBody(req);
@@ -456,10 +503,35 @@ function pcmToWav(pcm:Buffer, sampleRate:number, channels=1, bits=16):Buffer{
   h.write("data",36); h.writeUInt32LE(pcm.length,40);
   return Buffer.concat([h,pcm]);
 }
+// Base endpoint OpenAI-compat: buang akhiran path umum yang sering ikut
+// tersimpan dari provider lain (/v1/tts, /tts, /v1/audio/speech, /v1).
+function openaiBase(endpoint:string):string{
+  return endpoint.replace(/\/+$/,"").replace(/\/(v1\/)?(audio\/speech|tts|v1)$/i,"");
+}
 async function firstOkAudio(url:string, init?:RequestInit):Promise<Response>{
   const r = await fetch(url, init);
   if(!r.ok){ let detail=""; try{ detail=(await r.text()).slice(0,300);}catch{} throw new Error("HTTP "+r.status+(detail?": "+detail:"")); }
   return r;
+}
+// Voice pertama yang diumumkan server OpenAI-compat via /v1/styles (mis.
+// supertonic serve) — dipakai sebagai cadangan bila user tak memilih voice
+// dan server menolak voice default-nya. Kosong bila tak tersedia.
+async function firstServerVoice(base:string):Promise<string>{
+  try{
+    const s=await fetch(base+"/v1/styles"); if(!s.ok) return "";
+    const j:any=await s.json(); const arr=Array.isArray(j)?j:(j.styles||[]);
+    for(const v of arr){ const n=typeof v==="string"?v:String((v&&v.name)||""); if(n) return n; }
+  }catch{}
+  return "";
+}
+// Nama model yang sedang dimuat server OpenAI-compat (via /v1/health —
+// supertonic serve mengumumkannya di sini).
+async function serverLoadedModel(base:string):Promise<string>{
+  try{
+    const hp=await fetch(base+"/v1/health"); if(!hp.ok) return "";
+    const j:any=await hp.json(); return j&&j.model?String(j.model):"";
+  }catch{}
+  return "";
 }
 // ── Gemini TTS (docs: ai.google.dev/gemini-api/docs/speech-generation) ──
 // API resmi: POST /v1beta/interactions — {model, input, response_format:
@@ -545,7 +617,7 @@ async function ttsAudioFor(cfg:TTSConfig, text:string):Promise<{buf:Buffer; type
   }
   if(provider==="openai"){
     if(!endpoint) throw new Error("endpoint belum diisi");
-    const base=endpoint.replace(/\/$/,"").replace(/\/audio\/speech$/,"").replace(/\/v1$/,"");
+    const base=openaiBase(endpoint);
     const headers:Record<string,string>={"Content-Type":"application/json"};
     if(apiKey) headers.Authorization="Bearer "+apiKey;
     // Gaya/cara bicara (aksen, nada, tempo) — docs OpenAI: "instructions"
@@ -553,9 +625,33 @@ async function ttsAudioFor(cfg:TTSConfig, text:string):Promise<{buf:Buffer; type
     // asing, jadi hanya dilampirkan untuk model tersebut.
     const style=String(cfg.style||"").trim();
     const model=String(cfg.model||"tts-1");
-    const payload:any={model,voice:cfg.voice||"alloy",input:text,response_format:"mp3"};
+    const fmt=String((cfg as any).format||"mp3");
+    const payload:any={model,voice:cfg.voice||"alloy",input:text,response_format:fmt};
     if(style && /gpt-4o-mini-tts|gpt-4[oi].*tts/i.test(model)) payload.instructions=style;
-    const r=await firstOkAudio(base+"/v1/audio/speech",{method:"POST",headers,body:JSON.stringify(payload)});
+    // Server OpenAI-compat tak semua sama: sebagian menolak mp3 (mis.
+    // supertonic serve: hanya wav/flac/ogg), sebagian tak punya model/voice
+    // default OpenAI ("tts-1"/"alloy"). Bila user tak mengisi field-nya,
+    // perbaiki SATU hal per kegagalan (format → model → voice) lalu ulang —
+    // maks 4 percobaan. Nama valid ditanyakan ke server sendiri.
+    const postSpeech=(f:string)=>firstOkAudio(base+"/v1/audio/speech",{method:"POST",headers,body:JSON.stringify(Object.assign({},payload,{response_format:f}))});
+    let fmtCur=fmt; let r:Response|undefined;
+    for(let attempt=0;attempt<4;attempt++){
+      try{ r=await postSpeech(fmtCur); break; }
+      catch(e:any){
+        const msg=String(e&&e.message||"");
+        if(fmtCur!=="wav" && /response_format/i.test(msg)){ fmtCur="wav"; continue; }
+        if(!cfg.model && /model/i.test(msg)){
+          const m=await serverLoadedModel(base);
+          if(m && m!==payload.model){ payload.model=m; continue; }
+        }
+        if(!cfg.voice && /voice/i.test(msg)){
+          const v=await firstServerVoice(base);
+          if(v && v!==payload.voice){ payload.voice=v; continue; }
+        }
+        throw e;
+      }
+    }
+    if(!r) throw new Error("gagal sintesis setelah retry otomatis");
     return { buf:Buffer.from(await r.arrayBuffer()), type:r.headers.get("content-type")||"audio/mpeg" };
   }
   if(provider==="elevenlabs"){
@@ -732,7 +828,7 @@ async function handleTTSOptions(req:Request):Promise<Response>{
       // Endpoint bukan resmi OpenAI (Kokoro dkk) → coba tarik daftarnya
       if(endpoint && !/api\.openai\.com/i.test(endpoint)){
         try{
-          const base=endpoint.replace(/\/$/,"").replace(/\/audio\/speech$/,"").replace(/\/v1$/,"");
+          const base=openaiBase(endpoint);
           const h:Record<string,string>={};
           if(realKey) h.Authorization="Bearer "+realKey;
           const r=await fetch(base+"/v1/audio/voices",{headers:h});
@@ -740,6 +836,22 @@ async function handleTTSOptions(req:Request):Promise<Response>{
             const j:any=await r.json();
             const list=(Array.isArray(j)?j:j.voices||[]).map((v:any)=>typeof v==="string"?{id:v,name:v}:{id:String(v.id||v.name),name:String(v.name||v.id)}).filter((v:any)=>v.id);
             if(list.length) return json({voices:list, models:[]});
+          }
+        }catch{}
+        // Server tanpa /v1/audio/voices (mis. supertonic serve): katalog
+        // voice di /v1/styles, model yang sedang dimuat di /v1/health.
+        try{
+          const base=openaiBase(endpoint);
+          const s=await fetch(base+"/v1/styles");
+          if(s.ok){
+            const j:any=await s.json();
+            const list=(Array.isArray(j)?j:j.styles||[]).map((v:any)=>typeof v==="string"?{id:v,name:v}:{id:String((v as any).name||(v as any).id),name:String((v as any).name||(v as any).id)}).filter((v:any)=>v.id);
+            let models:any[]=[];
+            try{
+              const hp=await fetch(base+"/v1/health");
+              if(hp.ok){ const hj:any=await hp.json(); if(hj&&hj.model) models=[{id:String(hj.model),name:String(hj.model)+" (dimuat di server)"}]; }
+            }catch{}
+            if(list.length) return json({voices:list, models});
           }
         }catch{}
         return json({voices:[], models:[]}); // server tak dukung — UI pakai input bebas

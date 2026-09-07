@@ -119,6 +119,27 @@ describe("server API parity (dispatcher-level)", () => {
     expect(cli?.status).toBe(200);
   });
 
+  it("route Browser dikenali tanpa meluncurkan proses atau jaringan", async () => {
+    const status = await call("GET", "/api/browser/status");
+    expect(status?.status).toBe(200);
+    expect(await status?.json()).toMatchObject({ running: false, connected: false });
+
+    for (const path of ["open", "navigate", "history", "inspect", "click", "type", "point", "focus", "close", "grant"]) {
+      const response = await call("POST", `/api/browser/${path}`, {});
+      expect(response).toBeInstanceOf(Response);
+      expect(response).not.toBeNull();
+    }
+    const screenshot = await call("GET", "/api/browser/screenshot?format=jpeg&quality=70");
+    expect(screenshot).toBeInstanceOf(Response);
+    expect(screenshot?.status).toBe(503);
+  });
+
+  it("POST Browser wajib application/json", async () => {
+    const response = await handleAPI(new Request(BASE + "/api/browser/close", { method: "POST" }) as any);
+    expect(response?.status).toBe(415);
+    expect(await response?.json()).toMatchObject({ error: "Content-Type application/json wajib" });
+  });
+
   it("/api/config returns valid JSON shape", async () => {
     const res = await call("GET", "/api/config");
     expect(res).not.toBeNull();

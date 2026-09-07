@@ -79,6 +79,33 @@ describe("browser manager helpers", () => {
     expect(manager.click("bs_lama", snapshot.nodes[0].ref)).rejects.toBeInstanceOf(SnapshotReferenceError);
   });
 
+  it("mengubah klik point ternormalisasi ke koordinat viewport", async () => {
+    const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const client = {
+      closed: false,
+      send: async <T>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
+        sent.push({ method, params });
+        if (method === "Page.getFrameTree") return { frameTree: { frame: { url: "https://example.com/" } } } as T;
+        if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } } as T;
+        return {} as T;
+      },
+      on: () => () => {}, close: () => {},
+    };
+    const manager = new BrowserManager({
+      executable: "C:\\Chrome\\chrome.exe", createClient: () => client,
+      inspectUrl: async () => ({ ok: true, url: "https://example.com/", origin: "https://example.com", privateNetwork: false }),
+    });
+    (manager as any).client = client;
+    (manager as any).url = "https://example.com/";
+    await manager.clickPoint(0.25, 0.75);
+    expect(sent.filter((entry) => entry.method === "Input.dispatchMouseEvent")).toEqual([
+      { method: "Input.dispatchMouseEvent", params: { type: "mouseMoved", x: 200, y: 450 } },
+      { method: "Input.dispatchMouseEvent", params: { type: "mousePressed", x: 200, y: 450, button: "left", clickCount: 1 } },
+      { method: "Input.dispatchMouseEvent", params: { type: "mouseReleased", x: 200, y: 450, button: "left", clickCount: 1 } },
+    ]);
+    await expect(manager.clickPoint(-0.1, 0.5)).rejects.toThrow("antara 0 dan 1");
+  });
+
   it("memvalidasi DevToolsActivePort", () => {
     expect(parseDevToolsActivePort("9222\n/devtools/browser/abc\n")).toEqual({ port: 9222, browserPath: "/devtools/browser/abc" });
     expect(parseDevToolsActivePort("0\n/devtools/browser/abc")).toBeNull();

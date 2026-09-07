@@ -233,9 +233,25 @@ export class BrowserManager {
     if (!quad || quad.length < 8) throw new Error("elemen tidak terlihat atau tidak punya box");
     const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
     const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
-    await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-    await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    await this.dispatchPoint(client, x, y);
+  }
+
+  /** Klik koordinat viewport dari preview; input wajib ternormalisasi agar route
+   *  tidak berubah menjadi primitive CDP/selector arbitrer. */
+  async clickPoint(normalizedX: number, normalizedY: number): Promise<void> {
+    const client = this.requireClient();
+    await this.verifyCurrentPage();
+    if (!Number.isFinite(normalizedX) || !Number.isFinite(normalizedY)
+      || normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) {
+      throw new Error("koordinat preview harus antara 0 dan 1");
+    }
+    const layout = await client.send<{ cssLayoutViewport?: { clientWidth?: number; clientHeight?: number } }>("Page.getLayoutMetrics");
+    const width = Number(layout.cssLayoutViewport?.clientWidth);
+    const height = Number(layout.cssLayoutViewport?.clientHeight);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      throw new Error("ukuran viewport browser tidak tersedia");
+    }
+    await this.dispatchPoint(client, normalizedX * width, normalizedY * height);
   }
 
   async type(snapshotId: string, ref: string, value: string, pressEnter = false): Promise<void> {
@@ -268,6 +284,12 @@ export class BrowserManager {
       height: Math.round(layout.cssLayoutViewport?.clientHeight ?? 0),
       ts: Date.now(),
     };
+  }
+
+  private async dispatchPoint(client: ClientLike, x: number, y: number): Promise<void> {
+    await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
   }
 
   private async launch(): Promise<void> {

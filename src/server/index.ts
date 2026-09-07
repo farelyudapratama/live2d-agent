@@ -18,6 +18,9 @@ import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, ov
 import { assistantStart, assistantStop, assistantCancel, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { appRoot } from "../shared/paths";
+import { browserManager } from "./browser/manager";
+import { inspectBrowserUrl } from "./browser/policy";
+import { SnapshotReferenceError } from "./browser/snapshot";
 
 const PORT = Number(process.env.PORT) || 8310;
 // Akar dev = folder repo; akar exe hasil compile = folder portable (lihat paths.ts)
@@ -79,6 +82,7 @@ function bodyLimitFor(path: string): number {
   if (path === "/api/model/import-zip") return 500 * 1024 * 1024;
   if (path === "/api/model/upload") return 200 * 1024 * 1024;
   if (path === "/api/sheet") return 5 * 1024 * 1024;
+  if (path.startsWith("/api/browser/")) return 64 * 1024;
   if (path === "/api/config" || path === "/api/test" || path === "/api/model/expressions-adoption") return 100 * 1024;
   return 1024 * 1024; // chat, classify, analyze-sheet, animate-text, motions, tts
 }
@@ -214,6 +218,111 @@ function listMotions(modelKey:string){
   const dir=motionsDirFor(modelKey); const out:any[]=[]; let entries:string[]=[]; try{ entries=readdirSync(dir);}catch{ return out;} for(const f of entries){ if(!f.endsWith(".motion.json")) continue; try{ out.push(JSON.parse(stripBom(readFileSync(join(dir,f),"utf8")))); }catch{}} return out;
 }
 
+function requireBrowserJson(req: Request): Response | null {
+  const type = (req.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+  return type === "application/json" ? null : json({ error: "Content-Type application/json wajib" }, 415);
+}
+
+function browserError(error: unknown): Response {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = error instanceof SnapshotReferenceError ? 409
+    : /belum terbuka|terputus|tidak ditemukan|tidak tersedia/i.test(message) ? 503
+    : /stale|riwayat/i.test(message) ? 409 : 400;
+  return json({ error: message }, status);
+}
+
+function browserBodyString(body: any, key: string, max: number): string {
+  const value = typeof body?.[key] === "string" ? body[key].trim() : "";
+  if (!value) throw new Error(`${key} wajib diisi`);
+  if (value.length > max) throw new Error(`${key} terlalu panjang`);
+  return value;
+}
+
+async function handleBrowserAPI(req: Request, path: string): Promise<Response | null> {
+  const method = req.method;
+  if (method === "GET" && path === "/api/browser/status") return json(browserManager.status());
+  if (method === "GET" && path === "/api/browser/screenshot") {
+    try {
+      const query = new URL(req.url).searchParams;
+      const format = query.get("format") === "jpeg" ? "jpeg" : "png";
+      const rawQuality = Number(query.get("quality") ?? 85);
+      const quality = Number.isFinite(rawQuality) ? Math.max(0, Math.min(100, Math.trunc(rawQuality))) : 85;
+      const shot = await browserManager.screenshot(format, quality);
+      return new Response(shot.bytes.buffer.slice(shot.bytes.byteOffset, shot.bytes.byteOffset + shot.bytes.byteLength) as ArrayBuffer, { headers: {
+        "Content-Type": shot.mime, "Cache-Control": "no-store",
+        "X-Browser-Timestamp": String(shot.ts), "X-Browser-Width": String(shot.width),
+        "X-Browser-Height": String(shot.height),
+      } });
+    } catch (error) { return browserError(error); }
+  }
+  if (method !== "POST" || !path.startsWith("/api/browser/")) return null;
+  const unsupported = requireBrowserJson(req);
+  if (unsupported) return unsupported;
+  try {
+    const body = await readBody(req);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "body JSON rusak" }, 400);
+    if (path === "/api/browser/open") {
+      const raw = browserBodyString(body, "url", 2_048);
+      if (body.allowPrivate === true) {
+        const decision = await inspectBrowserUrl(raw);
+        if (!decision.ok || !decision.origin) throw new Error(decision.error || "URL tidak valid");
+        if (!decision.privateNetwork) throw new Error("allowPrivate hanya untuk origin privat");
+        browserManager.grantPrivateOrigin(decision.origin);
+      }
+      return json(await browserManager.open(raw));
+    }
+    if (path === "/api/browser/navigate") return json(await browserManager.navigate(browserBodyString(body, "url", 2_048)));
+    if (path === "/api/browser/history") {
+      const action = browserBodyString(body, "action", 16);
+      if (action === "back") await browserManager.back();
+      else if (action === "forward") await browserManager.forward();
+      else if (action === "reload") await browserManager.reload();
+      else throw new Error("action harus back, forward, atau reload");
+      return json({ ok: true, action });
+    }
+    if (path === "/api/browser/inspect") {
+      const cursor = Math.max(0, Math.trunc(Number(body.cursor) || 0));
+      const requested = Number(body.maxChars);
+      const maxChars = Number.isFinite(requested) ? Math.max(1, Math.min(12_000, Math.trunc(requested))) : 12_000;
+      const snapshotId = typeof body.snapshotId === "string" && body.snapshotId ? body.snapshotId.slice(0, 160) : undefined;
+      return json(await browserManager.inspect(cursor, maxChars, snapshotId));
+    }
+    if (path === "/api/browser/click") {
+      await browserManager.click(browserBodyString(body, "snapshotId", 160), browserBodyString(body, "ref", 160));
+      return json({ ok: true });
+    }
+    if (path === "/api/browser/point") {
+      const x = Number(body.x), y = Number(body.y);
+      await browserManager.clickPoint(x, y);
+      return json({ ok: true, x, y });
+    }
+    if (path === "/api/browser/type") {
+      const snapshotId = browserBodyString(body, "snapshotId", 160);
+      const ref = browserBodyString(body, "ref", 160);
+      if (typeof body.text !== "string") throw new Error("text wajib berupa string");
+      if (body.text.length > 32_768) throw new Error("text terlalu panjang");
+      await browserManager.type(snapshotId, ref, body.text, Boolean(body.submit));
+      return json({ ok: true, chars: body.text.length, submit: Boolean(body.submit) });
+    }
+    if (path === "/api/browser/focus") return json({ ok: await browserManager.focus() });
+    if (path === "/api/browser/close") { await browserManager.close(); return json({ ok: true }); }
+    if (path === "/api/browser/grant") {
+      const raw = browserBodyString(body, "origin", 512);
+      const normalized = new URL(raw).origin;
+      if (raw !== normalized && raw !== normalized + "/") throw new Error("grant harus berupa origin tanpa path");
+      const decision = await inspectBrowserUrl(normalized);
+      if (!decision.ok || !decision.origin) throw new Error(decision.error || "origin tidak valid");
+      if (!decision.privateNetwork) throw new Error("grant hanya untuk origin privat");
+      browserManager.grantPrivateOrigin(decision.origin);
+      return json({ ok: true, origin: decision.origin });
+    }
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) return json({ error: error.message }, 413);
+    return browserError(error);
+  }
+  return null;
+}
+
 // ── API dispatcher ──────────────────────────────────────────────
 async function handleAPI(req: Request): Promise<Response|null> {
   const url=new URL(req.url); const path=url.pathname; const method=req.method;
@@ -223,6 +332,8 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(path.startsWith("/api/") && !apiOriginAllowed(req)) {
     return json({error:"origin tidak diizinkan"},403);
   }
+  const browserResponse = await handleBrowserAPI(req, path);
+  if (browserResponse) return browserResponse;
 
   // config
   if(method==="GET" && path==="/api/config"){

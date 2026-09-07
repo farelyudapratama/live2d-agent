@@ -59,6 +59,7 @@ export function startAssistantPanel(): () => void {
   const termLog = new TermLog(); // riwayat run_command (tab Terminal)
   /** name → level tool (dari /status; sumber kebenaran = registry server). */
   const toolLevels = new Map<string, "safe" | "mutating">();
+  let destroyBrowserPanel: (() => void) | null = null;
   const view = createPanelView(rootEl, techRootEl, {
     t,
     onApprove: approve,
@@ -101,7 +102,6 @@ export function startAssistantPanel(): () => void {
     view.render(transcript.blocks);
   };
 
-  /** Gambar halaman teknis aktif; Browser diisi modul control plane mendatang. */
   function drawPages(tab: TechnicalTab): void {
     if (tab === "review") {
       view.renderReview(registry.list(), {
@@ -111,6 +111,8 @@ export function startAssistantPanel(): () => void {
       });
     } else if (tab === "term") {
       view.renderTerm(termLog.list());
+    } else if (!destroyBrowserPanel) {
+      destroyBrowserPanel = (window as any).__browserPanel?.start?.() ?? null;
     }
   }
 
@@ -492,6 +494,7 @@ export function startAssistantPanel(): () => void {
     memBtn?.removeEventListener("click", onMem);
     document.getElementById("as-quick")?.removeEventListener("click", onQuick);
     window.removeEventListener("agent:session-changed", onSessionChanged);
+    destroyBrowserPanel?.();
     rootEl.textContent = "";
     if (techRootEl) techRootEl.textContent = "";
   };

@@ -25,6 +25,7 @@ import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
 import { startAssistantPanel } from "./agent/panel/panel";
 import { startProjekRail } from "./shell/projek";
+import { startBrowserPanel } from "./browser/panel";
 
 if (typeof window !== "undefined") {
   (window as any).MotionDSL = MotionDSL;
@@ -41,7 +42,10 @@ if (typeof window !== "undefined") {
   (window as any).__agentPanel = { start: startAssistantPanel };
   // Rail projek shell (activity bar kiri) — start sekali di boot app.
   (window as any).__shellProjek = { start: startProjekRail };
+  (window as any).__browserPanel = { start: startBrowserPanel };
   try { startProjekRail(); } catch {}
+  // Mount ada setelah panel Assistant membangun halaman teknis; panel memanggil
+  // start ulang saat tab Browser tersedia.
   i18n.init();
   console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain + i18n)");
 }

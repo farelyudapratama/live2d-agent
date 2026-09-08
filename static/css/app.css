@@ -184,6 +184,8 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--line);
   border-top-color: var(--line-strong);
 }
+/* Spacer: mendorong tombol terakhir (⚙ panel kontrol) ke dasar bar. */
+.act-flex { flex: 1 1 auto; }
 .act-btn {
   width: 38px;
   height: 38px;
@@ -736,8 +738,9 @@ a:hover { text-decoration: underline; }
   background: var(--mint);
 }
 
-#btn-clear-chat,
-#btn-toggle-controls {
+/* ⚙ panel kontrol kini .act-btn di dasar activity bar — gaya tombol header
+   lama tidak berlaku lagi; hover/active mengikuti .act-btn. */
+#btn-clear-chat {
   flex-shrink: 0;
   height: 30px;
   padding: 0 10px;
@@ -749,8 +752,7 @@ a:hover { text-decoration: underline; }
   background: var(--ink-2);
   border: 1px solid var(--line);
 }
-#btn-clear-chat:hover,
-#btn-toggle-controls:hover {
+#btn-clear-chat:hover {
   color: var(--text);
   border-color: var(--line-strong);
   background: var(--ink-3);

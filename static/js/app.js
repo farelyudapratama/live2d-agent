@@ -2625,6 +2625,8 @@
     $("#btn-toggle-controls").addEventListener("click", () =>
       setControlsOpen(!isOpen()),
     );
+    // ☰ overlay stage dihapus (permintaan user 2026-09-08) — null-guard
+    // supaya tidak meledak bila tombol tak ada di DOM.
     const stageBtn = $("#btn-stage-controls");
     if (stageBtn)
       stageBtn.addEventListener("click", () => setControlsOpen(!isOpen()));

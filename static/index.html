@@ -36,6 +36,15 @@
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
         </svg>
       </button>
+      <!-- Pintu panel kontrol dipindah ke sini (bawah activity bar) —
+           tombol ☰ overlay stage dihapus (permintaan user 2026-09-08). -->
+      <div class="act-flex"></div>
+      <button id="btn-toggle-controls" class="act-btn" data-i18n-title="top.toggleControlsTip">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </nav>
 
     <!-- ===================== RAIL PROJEK (toggle) ===================== -->
@@ -61,7 +70,6 @@
       <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
            berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
            folder/.zip lewat UI, atau copy manual ke data/model/. -->
-      <button id="btn-stage-controls" class="stage-ctl" data-i18n-title="stage.openControls">☰</button>
         <div id="stage-empty" class="stage-empty hidden">
         <div class="se-box">
           <div class="se-title" data-i18n="stage.empty.title">Belum ada model Live2D</div>

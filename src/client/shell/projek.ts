@@ -12,6 +12,8 @@
 const API = location.origin;
 const LS_KEY = "live2d.projekRail.open";
 
+import { clampWorkspaceBasis } from "./workspace";
+
 type SessionItem = { id: string; name: string; workDir: string; ts: number; count: number };
 type SessionsResp = { active: string; sessions: SessionItem[] };
 
@@ -60,6 +62,9 @@ export function startProjekRail(): () => void {
     btn.setAttribute("aria-pressed", open ? "true" : "false");
     try { localStorage.setItem(LS_KEY, open ? "1" : "0"); } catch {}
     if (open) void draw();
+    // Rail masuk/keluar mengubah ruang kolom lain — clamp workspace ulang
+    // (initWorkspaceW = deklarasi fungsi, hoisted dari blok gutter bawah).
+    initWorkspaceW();
   }
 
   /** Gambar seluruh isi rail: kartu project + daftar sesi. */
@@ -246,8 +251,15 @@ export function startProjekRail(): () => void {
   const MIN_DESKTOP_W = 1280;
   function applyWorkspaceW(px: number | null): void {
     if (!workspace) return;
-    if (px == null || window.innerWidth < MIN_DESKTOP_W) workspace.style.flexBasis = "";
-    else workspace.style.flexBasis = Math.max(650, Math.min(1200, px)) + "px";
+    if (px == null || window.innerWidth < MIN_DESKTOP_W) {
+      workspace.style.flexBasis = "";
+      return;
+    }
+    // occupied = kolom kiri (activity 56 + gap 10 + rail ±230) + gutter 6 +
+    // padding .app 2×10 + gap .app 3×10 (kiri|stage|gutter|workspace) = +56.
+    const left = document.getElementById("left-workspace")?.offsetWidth ?? 300;
+    const clamped = clampWorkspaceBasis(px, window.innerWidth, left + 56);
+    workspace.style.flexBasis = clamped == null ? "" : clamped + "px";
   }
   function storedWorkspaceW(): number | null {
     try {

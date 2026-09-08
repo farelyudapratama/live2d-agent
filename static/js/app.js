@@ -305,9 +305,13 @@
     canvas.style.height = sz.h + "px";
   }
   fitCanvas();
-  window.addEventListener("resize", () => {
-    fitCanvas();
 
+  // Lebar #stage juga berubah TANPA event window — transisi flex-basis
+  // workspace agent (maximize / drag gutter / rail projek). ResizeObserver
+  // mengikuti ukuran akhir elemen; tanpa ini canvas & framing tersangkut
+  // di ukuran lama dan model terpotong tepi stage.
+  function applyStageLayout() {
+    fitCanvas();
     try {
       fitStageBgImage(state.modelConfig && state.modelConfig.bgDim);
     } catch (e) {}
@@ -317,7 +321,19 @@
       state.stageArea = { width: app.screen.width };
       frameModel(state.fullBody ? "full" : "upper");
     }
-  });
+  }
+  window.addEventListener("resize", applyStageLayout);
+  if (typeof ResizeObserver !== "undefined") {
+    let roQueued = false;
+    new ResizeObserver(() => {
+      if (roQueued) return;
+      roQueued = true;
+      requestAnimationFrame(() => {
+        roQueued = false;
+        applyStageLayout();
+      });
+    }).observe($("#stage"));
+  }
 
   async function resolveAnyModelPath() {
     try {

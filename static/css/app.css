@@ -170,6 +170,8 @@ a:hover { text-decoration: underline; }
   min-width: 0;
   display: flex;
   gap: 10px;
+  /* Anchor popup #projek-rail (absolute) — rail tidak lagi menggeser stage. */
+  position: relative;
 }
 
 #activity {
@@ -210,17 +212,25 @@ a:hover { text-decoration: underline; }
   margin: 4px 0;
 }
 
+/* Popup melayang (permintaan user): muncul di samping activity bar TAPI
+   tidak menggeser stage/panel lain — position absolute di atas #stage,
+   bayangan sebagai pemisah dari konten di baliknya. z-index di bawah
+   drawer/controls panel. */
 #projek-rail {
-  flex: 0 0 240px;
-  min-width: 0;
+  position: absolute;
+  top: 0;
+  left: 66px; /* activity 56 + gap 10 */
+  bottom: 0;
+  width: 264px;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px 10px;
   border-radius: var(--r-xl);
   background: var(--ink-1);
-  border: 1px solid var(--line);
-  border-top-color: var(--line-strong);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   overflow-y: auto;
 }
 #projek-rail.hidden { display: none; }

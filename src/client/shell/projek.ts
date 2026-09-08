@@ -54,11 +54,11 @@ export function startProjekRail(): () => void {
   let open = false;
   try {
     const saved = localStorage.getItem(LS_KEY);
-    // Layar lebar memakai kolom Project/History secara default; pilihan user
-    // setelah toggle tetap menang pada kunjungan berikutnya.
-    open = saved == null ? window.innerWidth >= 1600 : saved === "1";
+    // Rail kini POPUP melayang (menutupi stage) — tidak membuka sendiri
+    // bila user belum pernah memilih; pilihan tersimpan tetap dihormati.
+    open = saved === "1";
   } catch {
-    open = window.innerWidth >= 1600;
+    open = false;
   }
 
   function setOpen(v: boolean): void {

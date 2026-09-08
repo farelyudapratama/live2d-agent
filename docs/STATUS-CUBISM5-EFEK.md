@@ -4,6 +4,21 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (10) — RAIL PROJEK POPUP MELAYANG (c5ab550)
+
+Permintaan user: panel projek boleh muncul di posisi sama tapi JANGAN
+mengecilkan panel Live2D. `#projek-rail` dari kolom flex (mendorong
+layout) → **popup absolute**: anchor `#left-workspace` (kini
+`position: relative`), menempel samping activity bar (`left: 66px`),
+melayang di atas stage — bayangan + border `--line-strong`, lebar 264px,
+z-index 30. Stage tak tersentuh: `measureOccupied` di projek.ts otomatis
+benar karena offsetWidth left-workspace tetap 56 saat rail melayang.
+
+Default auto-open ≥1600px DILEPAS — popup menutupi stage, jadi tak
+membuka sendiri tanpa pilihan eksplisit (localStorage `projekRail.open`
+tetap dihormati; komentar di projek.ts menjelaskan).
+Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (9) — IKON DESAIN SENDIRI UNTUK VTUBER/ASSISTANT/PET (b3082a9)
 
 Masukan user: Video (kamera) generik kurang pas untuk VTuber; Sparkles

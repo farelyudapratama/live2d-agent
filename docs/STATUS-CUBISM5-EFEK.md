@@ -4,6 +4,29 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (8) — IKON SET REICON DI ACTIVITY BAR (4027ea4)
+
+User minta pelajari reicon.dev dan terapkan + selesaikan overlap tombol
+mode (CHAT/VTUBER/ASSISTANT/PET overflow di bar sempit). Riset: Reicon =
+library ikon SVG open-source **MIT** (2676+ ikon, Outline & Filled, paket
+npm `reicon` + ikonify). Konsumsi dipilih **inline SVG copy** — cocok
+prinsip zero-dep client (tanpa npm/CDN runtime), pattern sama dengan
+Feather yang sudah ada.
+
+- Mode switcher: Chat→Message, VTuber→Video, Assistant→Sparkles,
+  Pet→Paw. `data-mode` & tooltip i18n dipertahankan → wiring
+  mode-runtime.js (switcher bergantung tombol data-mode) tak tersentuh.
+  Label teks keluar dari DOM; kunci `top.tab.*` tinggal di dict (guard
+  i18n hanya parity dict ↔ dict + coverage HTML→dict, jadi aman).
+- Gear ⚙ dan folder rail diganti path Reicon (Settings/Folder) — satu
+  gaya ikon di activity bar.
+- CSS: tombol mode 40×34 → 38×38 persegi; `::before
+  attr(data-mode)` (singkatan teks) dihapus; dot status agent tetap.
+- Kalau nanti butuh ikon lain: ambil dari `reicon` npm (tar paket →
+  icons/*.js punya path `O:` outline), tempel sebagai inline SVG
+  `fill="none"` + path `fill="currentColor"` — JANGAN tambah dependensi.
+- Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (7) — GEAR GANDA + GRIP SPLITTER (bdfe04f)
 
 Laporan user: di sebelah Clear masih ada tombol lagi (⚙). Akar: kelalaian

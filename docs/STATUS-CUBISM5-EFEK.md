@@ -4,6 +4,34 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 — STAGE TENGGELAM SAAT MAXIMIZE (FIX 57eb5a0)
+
+Laporan user: restored (gambar 1) stage normal; maximized (gambar 2) stage jadi
+strip ±460px dan model Live2D cuma terlihat potongan kiri-bawah. Dua lapis,
+satu akar:
+
+1. **Basis workspace tanpa batas.** `applyWorkspaceW` (shell/projek.ts)
+   menerapkan preferensi tersimpan `live2d.agentWorkspace.w` (sering ±1040,
+   warisan migrasi `live2d.sidebar.w`+340) mentah-mentah begitu
+   `innerWidth ≥ 1280`. Workspace `flex-shrink: 0` → stage tergencet sampai
+   `min-width: 340px`. Jendela restored (±1260px CSS @125% scaling) justru di
+   bawah ambang → default 372px → stage lega. Itulah inkonsistensi yang
+   dilaporkan: jendela kecil dapat stage besar, maximize menenggelamkannya.
+2. **Canvas/framing tidak mengejar.** `fitCanvas`+`frameModel` (app.js) hanya
+   di listener `resize` window; lebar stage berubah belakangan lewat
+   transisi `flex-basis 0.18s` → canvas & framing tersangkut di ukuran lama,
+   model "tengah canvas lebar" jatuh di luar stage sempit, terpotong
+   `overflow: hidden`.
+
+Fix (commit `57eb5a0`): `ResizeObserver` di `#stage` (rAF-debounced) →
+`fitCanvas` + `frameModel` mengikuti ukuran akhir elemen apa pun pemicunya
+(juga memperbaiki drag gutter yang selama ini tanpa re-frame); fungsi murni
+`clampWorkspaceBasis` di **shell/workspace.ts** (modul baru, aman diimpor
+test — projek.ts menyentuh `location` di level modul) membatasi basis agar
+stage tak pernah di bawah 340px, dipakai `applyWorkspaceW` + `setOpen`.
+Regresi: `test/workspace-clamp.test.ts` memakai angka nyata 1260/1536px.
+Gate: **344 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-07 (6) — 4 KOLOM + BROWSER NYATA YANG DIKONTROL AGENT
 
 Target final: `[projek/history][Live2D][conversation][technical pane]` dan browser

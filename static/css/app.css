@@ -414,7 +414,7 @@ a:hover { text-decoration: underline; }
 #btn-fullbody {
   position: absolute;
   top: 10px;
-  right: 50px;
+  right: 10px;
   z-index: 15;
   display: inline-flex;
   align-items: center;
@@ -3690,16 +3690,13 @@ input[type="range"]::-moz-range-thumb {
 }
 .as-quick-chip:hover { color: var(--text-dim); border-bottom-color: var(--line-strong); }
 
-/* ── Splitter vertikal stage ↔ workspace agent ──────────────────── */
+/* ── Splitter vertikal stage ↔ right panel ──────────────────── */
 #sb-gutter {
-  flex: 0 0 10px;
   align-self: stretch;
   position: relative;
   cursor: col-resize;
   border-radius: var(--r-xs);
 }
-/* Grip bar vertikal SELALU terlihat — affordance eksplisit, bukan tersembunyi
-   sampai hover. Membesar & menyala saat hover/drag. */
 #sb-gutter::before {
   content: "";
   position: absolute;
@@ -3716,7 +3713,6 @@ input[type="range"]::-moz-range-thumb {
 body.sb-resizing #sb-gutter::before {
   background: var(--lamp);
   height: 160px;
-  width: 5px;
 }
 /* Saat menggeser: transition flex-basis dimatikan (lineal, tanpa lag),
    selektor global — kelas dipasang di <body> oleh projek.ts. */
@@ -3907,11 +3903,10 @@ body.sb-resizing #agent-workspace { transition: none; }
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+/* @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
+} */

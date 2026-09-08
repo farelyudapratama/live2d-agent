@@ -9,10 +9,16 @@
  * `agent:session-changed` — panel agent yang menangkap (hydrate transcript).
  */
 
+import {
+  WORKSPACE_CEIL,
+  WORKSPACE_FLOOR,
+  clampWorkspaceBasis,
+  tameStoredWorkspaceBasis,
+  workspaceFloor,
+} from "./workspace";
+
 const API = location.origin;
 const LS_KEY = "live2d.projekRail.open";
-
-import { clampWorkspaceBasis } from "./workspace";
 
 type SessionItem = { id: string; name: string; workDir: string; ts: number; count: number };
 type SessionsResp = { active: string; sessions: SessionItem[] };
@@ -248,17 +254,25 @@ export function startProjekRail(): () => void {
   const workspace = document.getElementById("agent-workspace");
   const LS_W = "live2d.agentWorkspace.w";
   const LEGACY_LS_W = "live2d.sidebar.w";
-  const MIN_DESKTOP_W = 1280;
+  // <1500px layout bertumpuk (media query) — inline basis di arah kolom
+  // berarti HEIGHT, jadi di bawah itu basis inline sengaja tidak dipasang.
+  const MIN_DESKTOP_W = 1500;
+  function measureOccupied(): number {
+    // Kolom kiri (activity 56 + gap 10 + rail ±230) + gutter 6 + padding
+    // .app 2×10 + gap .app 3×10 (kiri|stage|gutter|workspace) = +56.
+    const left = document.getElementById("left-workspace")?.offsetWidth ?? 300;
+    return left + 56;
+  }
+  function wsFloor(): number {
+    return workspaceFloor(workspace!.classList.contains("agent-wide"));
+  }
   function applyWorkspaceW(px: number | null): void {
     if (!workspace) return;
     if (px == null || window.innerWidth < MIN_DESKTOP_W) {
       workspace.style.flexBasis = "";
       return;
     }
-    // occupied = kolom kiri (activity 56 + gap 10 + rail ±230) + gutter 6 +
-    // padding .app 2×10 + gap .app 3×10 (kiri|stage|gutter|workspace) = +56.
-    const left = document.getElementById("left-workspace")?.offsetWidth ?? 300;
-    const clamped = clampWorkspaceBasis(px, window.innerWidth, left + 56);
+    const clamped = clampWorkspaceBasis(px, window.innerWidth, measureOccupied(), wsFloor());
     workspace.style.flexBasis = clamped == null ? "" : clamped + "px";
   }
   function storedWorkspaceW(): number | null {
@@ -267,13 +281,18 @@ export function startProjekRail(): () => void {
       if (raw == null) {
         const legacy = Number(localStorage.getItem(LEGACY_LS_W));
         if (legacy >= 320 && legacy <= 900) {
-          raw = String(Math.max(650, Math.min(1200, legacy + 340)));
+          raw = String(Math.max(WORKSPACE_FLOOR, Math.min(WORKSPACE_CEIL, legacy + 340)));
           localStorage.setItem(LS_W, raw);
           localStorage.removeItem(LEGACY_LS_W);
         }
       }
       const w = Number(raw);
-      return w >= 650 && w <= 1200 ? w : null;
+      if (!(w >= WORKSPACE_FLOOR && w <= WORKSPACE_CEIL)) return null;
+      if (window.innerWidth < MIN_DESKTOP_W) return w;
+      // Nilai tersimpan di-tame saat dibaca: preferensi lama yang lebar
+      // (warisan drag/migrasi di viewport lain) tidak boleh menjadikan
+      // stage strip tiap maximize — stage dijaga ≥45% ruang panel.
+      return tameStoredWorkspaceBasis(w, window.innerWidth, measureOccupied(), wsFloor());
     } catch {
       return null;
     }
@@ -305,8 +324,9 @@ export function startProjekRail(): () => void {
       if (!dragging) return;
       dragging = false;
       document.body.classList.remove("sb-resizing");
+      // Simpan nilai TERLIHAT (hasil clamp), bukan keinginan mentah drag.
       const w = parseInt(workspace.style.flexBasis, 10);
-      if (w >= 650 && w <= 1200) {
+      if (w >= WORKSPACE_FLOOR && w <= WORKSPACE_CEIL) {
         try { localStorage.setItem(LS_W, String(w)); } catch {}
       }
     });

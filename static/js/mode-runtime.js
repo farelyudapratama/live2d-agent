@@ -56,6 +56,9 @@
     if (workspace) workspace.classList.toggle("agent-wide", mode === "assistant");
     const tech = $("#agent-tech");
     if (tech) tech.classList.toggle("hidden", mode !== "assistant");
+    // Mode Agent saja: panggung bersih — HUD (hint/Full Body/strip status)
+    // disembunyikan via CSS body.mode-agent. Mode lain tanpa perubahan.
+    document.body.classList.toggle("mode-agent", mode === "assistant");
     const labels = { chat: "Chat", vtuber: "VTuber", assistant: "Assistant", pet: "Pet" };
     const lbl = $("#mode-label");
     if (lbl) lbl.textContent = labels[mode] || mode;

@@ -421,9 +421,78 @@ a:hover { text-decoration: underline; }
 }
 .stage-ctl:active { background: var(--ink-3); }
 
-/* Stage bersih (permintaan user 2026-09-08): #btn-fullbody, #live-state
-   (.ls-item/#ls-*) dan #hint dihapus dari index.html — panggung tanpa
-   overlay teks. Fungsi zoom/drag/mood tetap jalan di engine. */
+#btn-fullbody {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 15;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+}
+#btn-fullbody:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+  background: var(--ink-2);
+}
+#btn-fullbody.active {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--lamp-soft);
+}
+
+/* Lower-third: satu strip, pemisah garis antar item (bukan kotak
+   bertumpuk kotak). */
+#live-state {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--r-sm);
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.ls-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.ls-item + .ls-item { border-left: 1px solid var(--line-soft); }
+#ls-presence { color: var(--mint); }
+#ls-mood { color: var(--text); }
+#ls-quiet { color: var(--muted); }
+
+#hint {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--ink-1);
+  border: 1px solid var(--line-soft);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
 
 /* Aktivitas agent di panggung — menghubungkan karakter dengan pekerjaan
    teknis. Hanya tampil saat busy/approval; idle sengaja sunyi. */
@@ -549,7 +618,12 @@ a:hover { text-decoration: underline; }
   gap: 10px;
   transition: flex-basis 0.18s ease;
 }
-#agent-workspace.agent-wide { flex-basis: 860px; }
+/* Mode Assistant (agent): default LEBAR (permintaan user) — 650..1200px,
+   sisakan stage ±470px di 1920. Clamp CSS mengikuti viewport; preferensi
+   drag tersimpan (inline flex-basis dari projek.ts) tetap menang di atasnya. */
+#agent-workspace.agent-wide {
+  flex-basis: clamp(650px, 100vw - 470px, 1200px);
+}
 
 #sidebar {
   position: relative;
@@ -619,9 +693,17 @@ a:hover { text-decoration: underline; }
   border-color: var(--line-strong);
   background: var(--ink-3);
 }
-@media (min-width: 1500px) {
-  #agent-workspace.agent-wide.tech-collapsed { flex-basis: 558px !important; }
-}
+/* Default agent-wide sudah clamp viewport — pengatur tech-collapsed lama
+   (558px !important) dicabut: bertabrakan dan membuat tech collapse justru
+   memperkecil workspace. */
+@media (min-width: 1500px) { /* (kosong — placeholder rentang) */ }
+
+/* Mode Agent (assistant) saja: panggung bersih — HUD (hint interaksi,
+   tombol Full Body, strip hadir/mood/masa tenang) disembunyikan. Mode lain
+   TIDAK tersentuh (permintaan user). */
+body.mode-agent #hint,
+body.mode-agent #btn-fullbody,
+body.mode-agent #live-state { display: none !important; }
 
 .sb-header {
   display: flex;

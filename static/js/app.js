@@ -2634,8 +2634,24 @@
     $("#btn-close-controls").addEventListener("click", () =>
       setControlsOpen(false),
     );
+
+    // Popup pengaturan VTuber (panel utama kini hanya Mulai/Berhenti/feed).
+    const setVtCfgOpen = (open) => {
+      $("#vt-config").classList.toggle("hidden", !open);
+    };
+    $("#vt-config-open").addEventListener("click", () =>
+      setVtCfgOpen($("#vt-config").classList.contains("hidden")),
+    );
+    $("#vt-config-close").addEventListener("click", () => setVtCfgOpen(false));
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
+      // Popup pengaturan VTuber ditutup duluan bila terbuka (di atas
+      // controls-panel dalam z-order runtime).
+      const vtCfg = $("#vt-config");
+      if (vtCfg && !vtCfg.classList.contains("hidden")) {
+        vtCfg.classList.add("hidden");
+        return;
+      }
       const panel = $("#controls-panel");
       if (!panel || panel.classList.contains("hidden")) return;
 

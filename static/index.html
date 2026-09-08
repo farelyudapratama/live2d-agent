@@ -153,56 +153,72 @@
       </label>
       </div><!-- /mode-chat -->
 
-      <!-- ═══ MODE: AI VTUBER (streaming) ═══ -->
+      <!-- ═══ MODE: AI VTUBER (streaming) ═══
+           Panel utama: Mulai/Berhenti/status + Feed Live (permintaan user).
+           Konfigurasi lain (platform/channel/persona/donasi/OBS) jadi popup.
+           SEMUA ID tetap → wiring mode-runtime.js (poll 2.5 dtk, provider
+           change, overlay OBS) bekerja tanpa adapter. -->
       <div id="mode-vtuber" class="mode-panel hidden">
         <div class="section-title" data-i18n="vt.title">AI VTuber — Live Stream</div>
-        <label class="cfg-row" for="vt-provider">
-          <span class="cfg-label" data-i18n="vt.platform">Platform</span>
-          <select id="vt-provider">
-            <option value="mock" data-i18n="vt.prov.mock">Mock (simulasi, tanpa key)</option>
-            <option value="twitch" data-i18n="vt.prov.twitch">Twitch (baca chat)</option>
-            <option value="youtube" data-i18n="vt.prov.youtube">YouTube Live (chat + superchat)</option>
-          </select>
-        </label>
-        <label class="cfg-row" id="vt-row-channel" for="vt-channel">
-          <span class="cfg-label" data-i18n="vt.channel">Channel Twitch</span>
-          <input id="vt-channel" type="text" data-i18n-ph="vt.channelPh" placeholder="mis. nama_channel" />
-        </label>
-        <label class="cfg-row" id="vt-row-ytid" for="vt-video-id">
-          <span class="cfg-label" data-i18n="vt.videoId">Video ID Live YT</span>
-          <input id="vt-video-id" type="text" data-i18n-ph="vt.videoIdPh" placeholder="mis. 5YxZabc123" />
-        </label>
-        <label class="cfg-row" id="vt-row-ytkey" for="vt-yt-key">
-          <span class="cfg-label" data-i18n="vt.ytKey">API Key YouTube</span>
-          <input id="vt-yt-key" type="password" placeholder="AIza…" />
-        </label>
-        <label class="cfg-row" for="vt-persona">
-          <span class="cfg-label" data-i18n="vt.persona">Gaya jawab</span>
-          <input id="vt-persona" type="text" value="ceria, singkat, suka emoji, panggil penonton dengan nama" />
-        </label>
-        <label class="cfg-check">
-          <input id="vt-respond" type="checkbox" checked /> <span data-i18n="vt.autoReply">AI balas chat otomatis</span>
-        </label>
-        <label class="cfg-check">
-          <input id="vt-donate-respond" type="checkbox" checked /> <span data-i18n="vt.thanksOnDonate">Ucapkan terima kasih saat donasi</span>
-        </label>
-        <label class="cfg-row" for="vt-cooldown">
-          <span class="cfg-label" data-i18n="vt.cooldown">Jeda antar balas (dtk)</span>
-          <input id="vt-cooldown" type="number" min="5" max="120" value="12" />
-        </label>
         <div class="note-row">
           <button id="vt-start" class="mini-btn" data-i18n="vt.start">Mulai</button>
           <button id="vt-stop" class="mini-btn" data-i18n="vt.stop">Berhenti</button>
           <span id="vt-status" class="note-status" data-i18n="vt.inactive">tidak aktif</span>
-        </div>
-        <div class="note-row">
-          <button id="vt-overlay-open" class="mini-btn" data-i18n="vt.overlayBtn">Buka Overlay OBS</button>
-          <span class="hint" data-i18n="vt.overlayHint">URL bersih untuk Browser Source: /vtuber.html</span>
+          <button id="vt-config-open" class="mini-btn" data-i18n-title="vt.cfgOpenTip" data-i18n="vt.cfgOpen">Pengaturan</button>
         </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
         <div class="section-title" data-i18n="vt.feedTitle">Feed Live</div>
         <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
-        <p class="hint" data-i18n="vt.hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
+
+        <!-- Popup pengaturan — ID input tidak berubah (mode-runtime & poll
+             aman). Escape & ✕ menutup; wiring di app.js. -->
+        <div id="vt-config" class="hidden">
+          <div class="drawer-head">
+            <span class="tabs"><strong class="cfg-title" data-i18n="vt.cfgTitle">Pengaturan Stream</strong></span>
+            <button id="vt-config-close" class="drawer-close" data-i18n-title="cfg.closeTip">✕</button>
+          </div>
+          <div class="vt-cfg-body">
+            <label class="cfg-row" for="vt-provider">
+              <span class="cfg-label" data-i18n="vt.platform">Platform</span>
+              <select id="vt-provider">
+                <option value="mock" data-i18n="vt.prov.mock">Mock (simulasi, tanpa key)</option>
+                <option value="twitch" data-i18n="vt.prov.twitch">Twitch (baca chat)</option>
+                <option value="youtube" data-i18n="vt.prov.youtube">YouTube Live (chat + superchat)</option>
+              </select>
+            </label>
+            <label class="cfg-row" id="vt-row-channel" for="vt-channel">
+              <span class="cfg-label" data-i18n="vt.channel">Channel Twitch</span>
+              <input id="vt-channel" type="text" data-i18n-ph="vt.channelPh" placeholder="mis. nama_channel" />
+            </label>
+            <label class="cfg-row" id="vt-row-ytid" for="vt-video-id">
+              <span class="cfg-label" data-i18n="vt.videoId">Video ID Live YT</span>
+              <input id="vt-video-id" type="text" data-i18n-ph="vt.videoIdPh" placeholder="mis. 5YxZabc123" />
+            </label>
+            <label class="cfg-row" id="vt-row-ytkey" for="vt-yt-key">
+              <span class="cfg-label" data-i18n="vt.ytKey">API Key YouTube</span>
+              <input id="vt-yt-key" type="password" placeholder="AIza…" />
+            </label>
+            <label class="cfg-row" for="vt-persona">
+              <span class="cfg-label" data-i18n="vt.persona">Gaya jawab</span>
+              <input id="vt-persona" type="text" value="ceria, singkat, suka emoji, panggil penonton dengan nama" />
+            </label>
+            <label class="cfg-check">
+              <input id="vt-respond" type="checkbox" checked /> <span data-i18n="vt.autoReply">AI balas chat otomatis</span>
+            </label>
+            <label class="cfg-check">
+              <input id="vt-donate-respond" type="checkbox" checked /> <span data-i18n="vt.thanksOnDonate">Ucapkan terima kasih saat donasi</span>
+            </label>
+            <label class="cfg-row" for="vt-cooldown">
+              <span class="cfg-label" data-i18n="vt.cooldown">Jeda antar balas (dtk)</span>
+              <input id="vt-cooldown" type="number" min="5" max="120" value="12" />
+            </label>
+            <div class="note-row">
+              <button id="vt-overlay-open" class="mini-btn" data-i18n="vt.overlayBtn">Buka Overlay OBS</button>
+              <span class="hint" data-i18n="vt.overlayHint">URL bersih untuk Browser Source: /vtuber.html</span>
+            </div>
+            <p class="hint" data-i18n="vt.hint">Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch &amp; mock = simulasi.</p>
+          </div>
+        </div>
       </div>
 
       <!-- ═══ MODE: AI ASSISTANT (agent lokal — transcript ala ZCode) ═══

@@ -2722,6 +2722,39 @@ input[type="range"]::-moz-range-thumb {
 
 /* ── VTuber ─────────────────────────────────────────────────────── */
 
+/* Panel utama VTuber: Mulai/Berhenti/status + Pengaturan di atas, Feed Live
+   mengisi sisa tinggi. Form lengkap pindah ke popup #vt-config. */
+#mode-vtuber { min-height: 0; }
+
+/* Popup pengaturan stream — melayang di atas panel kanan (pola controls
+   panel), tidak menggeser Feed Live. */
+#vt-config {
+  position: fixed;
+  top: 60px;
+  right: 12px;
+  width: min(430px, calc(100vw - 24px));
+  max-height: calc(100dvh - 80px);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--r-xl);
+  background: var(--ink-1);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+#vt-config.hidden { display: none; }
+#vt-config .drawer-head { flex: none; }
+#vt-config .cfg-title { font-size: 13px; color: var(--text); }
+#vt-config .vt-cfg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
 .vt-feed {
   flex: 1 1 auto;
   min-height: 130px;

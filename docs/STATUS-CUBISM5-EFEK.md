@@ -4,6 +4,27 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (5) — BAR CHAT DI BAWAH STAGE (b42e6aa)
+
+Anotasi user pada screenshot: **Hapus** Full Body + ☰ overlay pojok stage
+dan ⚙ di header chat; **Pindah** composer chat (Mic/ketik/Kirim/frasa/Mode
+Otak) ke bar di bawah stage.
+
+- `#stage-chat-bar` baru di dalam `#stage`: Mic + input + Kirim + toggle
+  Mode Otak + ☰ (satu-satunya pintu `#controls-panel` sekarang; ⚙ header
+  dihapus) + Full Body kontekstual (muncul setelah zoom manual — perilaku
+  `state._showFullBtn` tak berubah). SEMUA ID dipertahankan → wiring app.js,
+  voice-input, i18n tak tersentuh; composer lama keluar dari `#mode-chat`,
+  quick phrases tetap di sidebar.
+- CSS: `.stage-ctl` & `#btn-fullbody` dari absolute → static di bar;
+  `#live-state` naik ke `bottom: 58px`; bar `flex-wrap` di <1280px (Mode
+  Otak turun baris). `frameModel` + `ResizeObserver` (175c6a9/57eb5a0)
+  otomatis mem-frame ulang karakter karena stage menyusut ±52px.
+- Catatan port: pemindahan ini menyentuh UI legacy app.js — hanya wiring
+  tombol (null-guard), logic tetap di app.js; quick phrases & log chat
+  belum dipindah (menunggu arahan).
+- Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (4) — SPLITTER AKTIF DI 1025–1499PX (fa3f8ed)
 
 User: panel tetap tak bisa digeser (screenshot assistant, tech pane di bawah

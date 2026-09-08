@@ -4,7 +4,27 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
-## UPDATE 2026-09-08 (5) — BAR CHAT DI BAWAH STAGE (b42e6aa)
+## UPDATE 2026-09-08 (6) — KOREKSI: REVERT b42e6aa + PERMINTAAN ASLI (2422809)
+
+User mengoreksi b42e6aa: yang diminta HANYA (1) hapus ☰ overlay stage,
+(2) pindah ⚙ ke panel kiri paling bawah — bukan memindahkan composer chat.
+Pelajaran: instruksi beranotasi dieksekusi apa adanya; jangan improvisasi
+di luar anotasi meski terlihat "cocok secara desain".
+
+- `git revert b42e6aa` (38178c0) — composer kembali ke sidebar, overlay
+  stage kembali semula; lalu di atasnya: ☰ stage dihapus, `⚙
+  btn-toggle-controls` (ID tetap) jadi `.act-btn` ber-svg gear di dasar
+  `#activity` (spacer `.act-flex`); gaya tombol header lama dilepas;
+  wiring `stageBtn` null-guard.
+- **Jebakan revert yang perlu diingat**: `git revert` menulis ulang 3 file
+  static dengan **CRLF** (repo memakai LF). Guard legacy yang menghitung
+  jarak karakter antar pola (test-param-notes-ui.js `releasePresetPose
+  total`) melewati ambang hanya karena `\r` tambahan per baris
+  (d3: 1973→2023, ambang 2000). Solusi: normalisasi `sed -i 's/\r$//'`
+  kembali ke LF — jangan ubah ambang guard untuk itu.
+- Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
+## UPDATE 2026-09-08 (5) — BAR CHAT DI BAWAH STAGE (b42e6aa) — DIREVERT
 
 Anotasi user pada screenshot: **Hapus** Full Body + ☰ overlay pojok stage
 dan ⚙ di header chat; **Pindah** composer chat (Mic/ketik/Kirim/frasa/Mode

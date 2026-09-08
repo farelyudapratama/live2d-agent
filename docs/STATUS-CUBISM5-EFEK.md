@@ -4,6 +4,30 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (2) — PANEL LIVE2D RESIZE + STATE TERSIMPAN (db9d0f2)
+
+Lanjutan permintaan user: panel Live2D harus bisa diresize dan ukuran terakhir
+tersimpan. Temuan: gutter sudah ada, tapi floor workspace 650px membatasi
+stage maksimal ±530px di layar 1536px, dan nilai tersimpan warisan migrasi
+(±1040px) otomatis menjadikan stage strip tiap maximize (floor clamp lama
+hanya menjamin stage ≥340px — tetap strip).
+
+Fix: floor drag kontekstual — 372px (chat/vtuber) atau 722px (assistant =
+tech 340 + gap + percakapan min) di `shell/workspace.ts::workspaceFloor`;
+`clampWorkspaceBasis` (drag, stage ≥340) dan `tameStoredWorkspaceBasis`
+(restore: stage ≥45% ruang panel, hanya memangkas — preferensi kecil sadar
+tetap dihormati). `MIN_DESKTOP_W` 1280→1500: di bawahnya layout bertumpuk dan
+inline basis berarti HEIGHT (quirk lama ikut dibersihkan). Mouseup menyimpan
+nilai terlihat (hasil clamp), bukan keinginan mentah. Stage = sisa ruang,
+di-frame ulang otomatis oleh ResizeObserver `57eb5a0` saat drag.
+
+Konsekuensi user: setelah update, nilai lama 1040 dibaca menjadi ±649 saat
+maximize 1536 (stage ±531). Drag gutter ke kiri → stage hingga ±808 (chat
+mode). Dobel-klik gutter = reset ke default CSS. Catatan terbuka: default
+`.agent-wide` 860px di mode assistant pada layar 1536px tetap menyisakan
+stage ±326px (pre-existing, belum disentuh — kandidat perbaikan berikutnya).
+Gate: **351 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 — STAGE TENGGELAM SAAT MAXIMIZE (FIX 57eb5a0)
 
 Laporan user: restored (gambar 1) stage normal; maximized (gambar 2) stage jadi

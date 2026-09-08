@@ -4,6 +4,21 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (9) — IKON DESAIN SENDIRI UNTUK VTUBER/ASSISTANT/PET (b3082a9)
+
+Masukan user: Video (kamera) generik kurang pas untuk VTuber; Sparkles
+'AI magic' kurang mewakili agent. Tiga SVG dirancang sendiri (stroke 1.6,
+currentColor, 24×24 — koheren dengan set Reicon yang bergaris):
+
+- **VTuber**: kepala+bahu avatar + dot LIVE ber-arc gelombang siaran di
+  sudut — "orang yang sedang live", bukan kamera.
+- **Assistant**: kepala robot — antena dot, dua mata, stub kuping, mulut.
+- **Pet**: paw versi stroke terbuka (4 jari ellipse + telapak outline),
+  bukan blob fill — supaya senada gaya garis.
+- Chat tetap Reicon Message. Karan gaya: 2 ikon stroke → paw fill ikut
+  dikonversi stroke demi koherensi.
+Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (8) — IKON SET REICON DI ACTIVITY BAR (4027ea4)
 
 User minta pelajari reicon.dev dan terapkan + selesaikan overlap tombol

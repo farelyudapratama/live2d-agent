@@ -2645,9 +2645,9 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ── Mode: switcher & panel ─────────────────────────────────────── */
-/* Switcher kini vertikal di activity bar (shell 3 kolom) — ikon-saja:
-   tombol memuat label teks yang disembunyikan, mode terbaca dari
-   tooltip + warna aktif. */
+/* Switcher vertikal di activity bar — penuh ikon (set Reicon, inline SVG di
+   index.html). Nama mode dari tooltip + warna aktif; dot status agent di
+   sudut tombol Assistant tetap berlaku. */
 .mode-switch {
   display: flex;
   flex-direction: column;
@@ -2659,26 +2659,18 @@ input[type="range"]::-moz-range-thumb {
   border: 1px solid var(--line);
 }
 .mode-switch button {
-  width: 40px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   display: grid;
   place-items: center;
   border-radius: var(--r-xs);
-  font-size: 0; /* label teks disembunyikan (ikon via ::first-letter?) —
-                   pakai singkatan 2 huruf pertama */
   line-height: 1;
   color: var(--muted);
   border: 1px solid transparent;
   overflow: hidden;
 }
-.mode-switch button::before {
-  content: attr(data-mode);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
+.mode-switch button svg { display: block; }
 .mode-switch button:hover { color: var(--text-dim); }
 .mode-switch button.active {
   color: var(--lamp);

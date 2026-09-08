@@ -4,6 +4,24 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (11) — VTUBER: FEED LIVE UTAMA, KONFIG POPUP (f8b4dae)
+
+Permintaan user: panel kanan mode VTuber diutamakan Feed Live; sisanya
+popup. Sekarang #mode-vtuber hanya: baris Mulai/Berhenti/status + tombol
+**Pengaturan**, lalu Feed Live mengisi sisa tinggi. Form konfigurasi
+(platform/channel YT-Twitch/gaya jawab/toggle AI-balas & donasi/jeda/
+Overlay OBS + hint) pindah ke popup **#vt-config** (fixed kanan, pola
+controls-panel; ✕ / Escape menutup — Escape menutup popup dulu sebelum
+controls-panel).
+
+Kunci desain: SEMUA ID tetap (vt-provider/channel/video-id/yt-key/persona/
+respond/donate-respond/cooldown/overlay-open/start/stop/status/feed/
+alert) → mode-runtime.js (poll 2.5 dtk, provider change row-toggle,
+overlay OBS) tanpa adapter; vt-alert tetap di panel utama. i18n +3 kunci
+(vt.cfgOpen/cfgOpenTip/cfgTitle) di id+en. Mulai/Berhenti bisa dipakai
+tanpa membuka popup (setting terakhir dipakai).
+Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (10) — RAIL PROJEK POPUP MELAYANG (c5ab550)
 
 Permintaan user: panel projek boleh muncul di posisi sama tapi JANGAN

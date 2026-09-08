@@ -4,6 +4,18 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (7) — GEAR GANDA + GRIP SPLITTER (bdfe04f)
+
+Laporan user: di sebelah Clear masih ada tombol lagi (⚙). Akar: kelalaian
+di 2422809 — ⚙ baru ditambah ke activity bar tapi ⚙ header lama tak
+dihapus → dua tombol, dan yang di header MATI karena ID kembar
+(`$("#btn-toggle-controls")` menangkap yang pertama di DOM). Header kini
+avatar + nama + Clear saja.
+
+Splitter dipertegas sesuai permintaan: grip 3×56 → 4×96px warna `--muted`
+(lebih kontras), hover/drag 5×160px `--lamp`; hit area 8→10px.
+Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (6) — KOREKSI: REVERT b42e6aa + PERMINTAAN ASLI (2422809)
 
 User mengoreksi b42e6aa: yang diminta HANYA (1) hapus ☰ overlay stage,

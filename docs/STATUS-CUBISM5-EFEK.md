@@ -4,6 +4,32 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (3) — SPLITTER EKSPLISIT + FRAMING ANTI-GEPENG (175c6a9)
+
+Panduan user perbaikan berikutnya (poin 1–2 dieksekusi; poin 3 menunggu
+arahan): (1) panel Live2D resize dengan splitter vertikal yang jelas;
+(2) panel kiri diperkecil tidak boleh membuat karakter "gepeng" — canvas
+jaga rasio, zoom/pan yang menyesuaikan; (3) panel kanan responsif per mode.
+
+- **Anti-gepeng** (`engine/framing.ts` baru, murni → `window.__framing`):
+  akar masalah — frameModel legacy membatasi skala dengan lebar stage
+  (`min(stageW/natW, H/natH)`) sehingga tiap panel menyempit karakter ikut
+  mengecil. Kini `computeFrame` untuk mode `upper`/`full` hanya fungsi
+  TINGGI (105%/82% H); lebar hanya menggeser pan (x center) & memotong sisi.
+  Hanya `fit` (dobel-klik/reset) yang menyesuaikan lebar. frameModel legacy
+  memakai computeFrame dengan fallback rumus lama (degrade manis). Perhatian:
+  port "port saat disentuh" — logika framing kini sumber-kebenaran TS,
+  app.js tipis; guard = test/framing.test.ts (invarian skala identik untuk
+  lebar 840↔372px, tinggi sama).
+- **Splitter eksplisit** (CSS `#sb-gutter`): grip bar vertikal 3×56px selalu
+  terlihat (`--line-strong`), membesar 96px & menyala `--lamp` saat
+  hover/drag; hit area 8px. Drag tetap lewat projek.ts (floor kontekstual,
+  state tersimpan — db9d0f2).
+- **Panel kanan per mode**: chat & VTuber sudah full-height (sidebar flex
+  column, chat-log flex). Assistant menunggu penjelasan user — jangan
+  berimprovisasi.
+- Gate: **359 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (2) — PANEL LIVE2D RESIZE + STATE TERSIMPAN (db9d0f2)
 
 Lanjutan permintaan user: panel Live2D harus bisa diresize dan ukuran terakhir

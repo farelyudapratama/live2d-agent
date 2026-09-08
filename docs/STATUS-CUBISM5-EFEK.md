@@ -4,6 +4,24 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (12) — MODE AGENT: LEBAR DEFAULT + PANGGUNG BERSIH PER-MODE (a2ef22e)
+
+Finalisasi permintaan user (hanya mode Agent; mode lain TANPA perubahan):
+
+- **Lebar workspace agent**: `.agent-wide` 860px →
+  `clamp(650px, 100vw - 470px, 1200px)` — mengikuti viewport (1280 CSS ≈
+  810; 1920 mentok 1200); stage min-width 340 tetap terlindungi.
+  Preferensi drag tersimpan (inline basis) tetap menang di atas default.
+  `.agent-wide.tech-collapsed 558px !important` dicabut — bentrok clamp.
+- **Panggung bersih per-mode**: `body.mode-agent` (toggle di
+  mode-runtime `setPanel`) menyembunyikan `#hint`, `#btn-fullbody`,
+  `#live-state` via CSS `display:none !important`. HUD DIKEMBALIKAN ke
+  index.html — commit paralel f27868a sempat menghapusnya permanen
+  (hilang di semua mode, melanggar batasan user); entri (12) lama yang
+  mendaftar penghapusan permanen dicabut. Mode lain: HUD normal kembali.
+  app.js null-safe untuk ketiganya (initLiveStateIndicator, fbBtn).
+Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih; i18n OK.
+
 ## UPDATE 2026-09-08 (11) — VTUBER: FEED LIVE UTAMA, KONFIG POPUP (f8b4dae)
 
 Permintaan user: panel kanan mode VTuber diutamakan Feed Live; sisanya

@@ -1118,8 +1118,24 @@
       if (!validSize(natW, natH)) return;
     }
 
+    // Rumus framing dipindah ke TS murni (engine/framing.ts — port "port
+    // saat disentuh"): upper/full hanya fungsi TINGGI stage, jadi panel kiri
+    // diperkecil → karakter tetap sama besar (pan/crop), bukan mengecil.
+    // Fallback inline = rumus lama untuk degrade manis bila bundle belum ada.
+    const f =
+      window.__framing && window.__framing.computeFrame
+        ? window.__framing.computeFrame(
+            natW,
+            natH,
+            W,
+            H,
+            mode === "reset" ? "fit" : mode,
+          )
+        : null;
     let scale;
-    if (mode === "full") {
+    if (f && Number.isFinite(f.scale) && f.scale > 0) {
+      scale = f.scale;
+    } else if (mode === "full") {
       scale = (H * 0.82) / natH;
     } else if (mode === "upper") {
       scale = Math.min(stageW / natW, H / natH) * 1.05;
@@ -1132,12 +1148,17 @@
     state.natW = natW;
     state.natH = natH;
 
-    b = m.getBounds();
-    const bw = validSize(b.width, b.height) ? b.width : natW * scale;
-    const bh = validSize(b.width, b.height) ? b.height : natH * scale;
-    const ax = stageW / 2;
-    m.x = ax - bw / 2;
-    m.y = (H - bh) / 2;
+    if (f && Number.isFinite(f.x) && Number.isFinite(f.y)) {
+      m.x = f.x;
+      m.y = f.y;
+    } else {
+      b = m.getBounds();
+      const bw = validSize(b.width, b.height) ? b.width : natW * scale;
+      const bh = validSize(b.width, b.height) ? b.height : natH * scale;
+      const ax = stageW / 2;
+      m.x = ax - bw / 2;
+      m.y = (H - bh) / 2;
+    }
     state.basePos.x = m.x;
     state.basePos.y = m.y;
     state.scale = scale;

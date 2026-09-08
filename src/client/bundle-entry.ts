@@ -19,6 +19,7 @@ import * as MotionDSL from "./animation/motion-dsl";
 import { MotionRegistry } from "./animation/motion-registry";
 import { MotionRuntime } from "./animation/motion-runtime";
 import * as MotionTaxonomy from "./engine/motion-taxonomy";
+import * as Framing from "./engine/framing";
 import * as LipSync from "./speech/lip-sync";
 import * as i18n from "./i18n/index";
 import "./agent/directive-parser";
@@ -33,6 +34,9 @@ if (typeof window !== "undefined") {
   (window as any).MotionRuntime = MotionRuntime;
   (window as any).MotionTaxonomy = MotionTaxonomy;
   (window as any).LipSync = LipSync;
+  // Rumus framing panggung (murni) — dipakai legacy frameModel. upper/full
+  // hanya fungsi TINGGI stage (anti-gepeng saat splitter didrag).
+  (window as any).__framing = Framing;
   // i18n: init() sinkron menyweep atribut data-i18n* di DOM statis SEBELUM
   // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
   // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.

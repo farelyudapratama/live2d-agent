@@ -3688,14 +3688,33 @@ input[type="range"]::-moz-range-thumb {
 }
 .as-quick-chip:hover { color: var(--text-dim); border-bottom-color: var(--line-strong); }
 
-/* ── Gutter resize workspace agent ──────────────────────────────── */
+/* ── Splitter vertikal stage ↔ workspace agent ──────────────────── */
 #sb-gutter {
-  flex: 0 0 6px;
+  flex: 0 0 8px;
   align-self: stretch;
+  position: relative;
   cursor: col-resize;
   border-radius: var(--r-xs);
 }
-#sb-gutter:hover { background: var(--ink-3); }
+/* Grip bar vertikal SELALU terlihat — affordance eksplisit, bukan tersembunyi
+   sampai hover. Membesar & menyala saat hover/drag. */
+#sb-gutter::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 56px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 0.15s ease, height 0.15s ease;
+}
+#sb-gutter:hover::before,
+body.sb-resizing #sb-gutter::before {
+  background: var(--lamp);
+  height: 96px;
+}
 /* Saat menggeser: transition flex-basis dimatikan (lineal, tanpa lag),
    selektor global — kelas dipasang di <body> oleh projek.ts. */
 body.sb-resizing #agent-workspace { transition: none; }

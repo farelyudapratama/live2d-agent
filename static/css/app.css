@@ -387,43 +387,13 @@ a:hover { text-decoration: underline; }
 
 /* ── Kontrol & HUD panggung ─────────────────────────────────────── */
 
-/* Bar bawah stage: composer chat (Mic/ketik/Kirim), toggle Mode Otak, dan
-   tombol kontekstual (Full Body muncul setelah zoom manual; ☰ buka panel
-   kontrol). Menggantikan tombol overlay pojok kanan-atas yang dihapus. */
-#stage-chat-bar {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--r-md);
-  background: var(--ink-1);
-  border: 1px solid var(--line);
-  border-top-color: var(--line-strong);
-}
-#stage-chat-bar .chat-input { flex: 1; }
-#stage-chat-bar .brain-toggle { margin: 0 4px; white-space: nowrap; }
-/* Kontrol kontekstual menempel di ujung kiri bar; hidden tetap berlaku. */
-#stage-chat-bar #btn-fullbody,
-#stage-chat-bar .stage-ctl {
-  position: static;
-  flex: none;
-}
-@media (max-width: 1279px) {
-  /* Panel sempit: Mode Otak turun satu baris agar input tak terdorong. */
-  #stage-chat-bar { flex-wrap: wrap; }
-  #stage-chat-bar .brain-toggle { order: 3; width: 100%; }
-}
-
 .stage-ctl {
-  position: static;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 15;
   width: 32px;
   height: 32px;
-  flex: none;
   display: grid;
   place-items: center;
   border-radius: var(--r-sm);
@@ -440,6 +410,10 @@ a:hover { text-decoration: underline; }
 .stage-ctl:active { background: var(--ink-3); }
 
 #btn-fullbody {
+  position: absolute;
+  top: 10px;
+  right: 50px;
+  z-index: 15;
   display: inline-flex;
   align-items: center;
   height: 32px;
@@ -463,11 +437,11 @@ a:hover { text-decoration: underline; }
 }
 
 /* Lower-third: satu strip, pemisah garis antar item (bukan kotak
-   bertumpuk kotak). bottom mengikuti tinggi #stage-chat-bar. */
+   bertumpuk kotak). */
 #live-state {
   position: absolute;
   left: 10px;
-  bottom: 58px;
+  bottom: 10px;
   z-index: 10;
   display: flex;
   align-items: stretch;

@@ -61,6 +61,7 @@
       <!-- Empty state: repo tidak membawa model (data/ di-gitignore, aset
            berlisensi). Muncul saat data/model/ kosong — mengarah ke impor
            folder/.zip lewat UI, atau copy manual ke data/model/. -->
+      <button id="btn-stage-controls" class="stage-ctl" data-i18n-title="stage.openControls">☰</button>
         <div id="stage-empty" class="stage-empty hidden">
         <div class="se-box">
           <div class="se-title" data-i18n="stage.empty.title">Belum ada model Live2D</div>
@@ -86,22 +87,8 @@
         <span class="ls-item" id="ls-quiet" data-i18n="live.quiet">masa tenang: —</span>
       </div>
 
-      <!-- Full Body button: only shows after the user manually zooms/drags.
-           Dipindah ke bar bawah stage (#stage-chat-bar) — tetap satu node,
-           CSS yang memindah posisinya, wiring app.js tak berubah. -->
-      <div id="stage-chat-bar">
-        <button id="btn-fullbody" class="hidden" data-i18n-title="live.fullBodyTip" data-i18n="live.fullBody">Full Body</button>
-        <button id="btn-stage-controls" class="stage-ctl" data-i18n-title="stage.openControls">☰</button>
-        <div class="chat-input">
-          <button id="btn-mic" data-i18n-title="chat.micTip" data-i18n="chat.mic">Mic</button>
-          <input type="text" id="bubble-input" data-i18n-ph="chat.inputPh" placeholder="Ketik pesan lalu Enter..." />
-          <button id="btn-bubble" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
-        </div>
-        <label class="brain-toggle">
-          <input type="checkbox" id="toggle-brain" checked />
-          <span data-i18n="chat.brainToggle">Mode Otak (LLM mikir & balas sendiri)</span>
-        </label>
-      </div>
+      <!-- Full Body button: only shows after the user manually zooms/drags -->
+      <button id="btn-fullbody" class="hidden" data-i18n-title="live.fullBodyTip" data-i18n="live.fullBody">Full Body</button>
 
       <div id="hint" data-i18n="live.hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
     </div>
@@ -125,6 +112,7 @@
           <div class="sb-status"><span class="dot"></span> <span id="sb-state" data-i18n="sys.online">Online</span></div>
         </div>
         <button id="btn-clear-chat" data-i18n-title="chat.clearTip" data-i18n="chat.clear">Clear</button>
+        <button id="btn-toggle-controls" data-i18n-title="top.toggleControlsTip">⚙</button>
       </div>
 
       <!-- Mode switcher pindah ke #activity (bar aktivitas kiri) —
@@ -142,9 +130,12 @@
       <!-- Thinking indicator -->
       <div id="thinking" class="thinking hidden" data-i18n="chat.thinking">Mikir...</div>
 
-      <!-- Composer pindah ke bar bawah stage (#stage-chat-bar) — Mic/input/
-           Kirim/Mode Otak tinggal di sana; ID tidak berubah sehingga wiring
-           app.js & voice-input tak tersentuh. -->
+      <!-- Input -->
+      <div class="chat-input">
+        <button id="btn-mic" data-i18n-title="chat.micTip" data-i18n="chat.mic">Mic</button>
+        <input type="text" id="bubble-input" data-i18n-ph="chat.inputPh" placeholder="Ketik pesan lalu Enter..." />
+        <button id="btn-bubble" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
+      </div>
       <div class="quick-phrases">
         <button class="phrase-btn" data-phrase="Halo~" data-i18n="chat.phrase1">Halo~</button>
         <button class="phrase-btn" data-phrase="Apa kabar?" data-i18n="chat.phrase2">Apa kabar?</button>
@@ -154,6 +145,10 @@
         <button class="phrase-btn" data-phrase="Hmmm..." data-i18n="chat.phrase6">Hmmm...</button>
         <button class="phrase-btn" data-phrase="Maaf ya..." data-i18n="chat.phrase7">Maaf ya...</button>
       </div>
+      <label class="brain-toggle">
+        <input type="checkbox" id="toggle-brain" checked />
+        <span data-i18n="chat.brainToggle">Mode Otak (LLM mikir & balas sendiri)</span>
+      </label>
       </div><!-- /mode-chat -->
 
       <!-- ═══ MODE: AI VTUBER (streaming) ═══ -->

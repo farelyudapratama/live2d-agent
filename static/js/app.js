@@ -2622,12 +2622,9 @@
       $("#controls-panel").classList.toggle("hidden", !open);
     };
     const isOpen = () => !$("#controls-panel").classList.contains("hidden");
-    // Pintu panel kontrol kini ☰ di bar bawah stage (#stage-chat-bar) —
-    // ikon ⚙ di header chat dihapus (redesign 2026-09-08). Null-guard untuk
-    // keduanya supaya layout lama/baru tetap jalan.
-    const gearBtn = $("#btn-toggle-controls");
-    if (gearBtn)
-      gearBtn.addEventListener("click", () => setControlsOpen(!isOpen()));
+    $("#btn-toggle-controls").addEventListener("click", () =>
+      setControlsOpen(!isOpen()),
+    );
     const stageBtn = $("#btn-stage-controls");
     if (stageBtn)
       stageBtn.addEventListener("click", () => setControlsOpen(!isOpen()));

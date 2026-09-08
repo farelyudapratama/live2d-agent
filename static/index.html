@@ -81,10 +81,17 @@
         <div id="bubble-tail"></div>
       </div>
 
-      <!-- Stage bersih (permintaan user 2026-09-08): overlay teks dihapus —
-           hint kontrol, strip status hadir/mood/masa-tenang, dan tombol Full
-           Body tidak lagi tampil. Fungsi zoom/drag tetap ada; status mood
-           tetap diproses agent, hanya tak dirender di stage. -->
+      <!-- Lower-third siaran: keadaan karakter di atas panggung (dipindah dari sidebar, redesign 2026-09-02). -->
+      <div id="live-state" aria-live="polite">
+        <span class="ls-item" id="ls-presence" data-i18n="live.presence">presence: —</span>
+        <span class="ls-item" id="ls-mood" data-i18n="live.mood">mood: —</span>
+        <span class="ls-item" id="ls-quiet" data-i18n="live.quiet">masa tenang: —</span>
+      </div>
+
+      <!-- Full Body button: only shows after the user manually zooms/drags -->
+      <button id="btn-fullbody" class="hidden" data-i18n-title="live.fullBodyTip" data-i18n="live.fullBody">Full Body</button>
+
+      <div id="hint" data-i18n="live.hint">Drag · Scroll: zoom · Dobel-klik: reset</div>
     </div>
 
     <!-- Pegangan resize workspace agent (drag = ubah lebar gabungan; dobel-klik =

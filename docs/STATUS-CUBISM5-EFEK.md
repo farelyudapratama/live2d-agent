@@ -4,23 +4,6 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
-## UPDATE 2026-09-08 (12) — STAGE BERSIH TANPA OVERLAY TEKS (f27868a)
-
-Permintaan user: hapus semua tulisan overlay di panel Live2D — hint
-"Drag · Scroll: zoom · Dobel-klik: reset", strip status
-hadir/mood/masa-tenang (#live-state), dan tombol Full Body. Stage kini
-hanya karakter + bubble chat + chip aktivitas agent (busy/approval).
-Zoom/drag/dobel-klik tetap berfungsi (interaksi canvas, bukan teks);
-mood/presence/quiet tetap diproses engine (state agent) — hanya tak
-dirender; wiring `initLiveStateIndicator` & `fbBtn` sudah null-guarded,
-`state._showFullBtn` jadi no-op aman.
-
-Ukuran default mode agent: user menyatakan ukuran sekarang (default
-`.agent-wide` 860px) sudah oke — DIPERTAHANKAN, jangan diubah. Lanjutan
-perubahan UI panel kanan masih akan datang dari user (jangan improvisasi
-lebih dulu).
-Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
-
 ## UPDATE 2026-09-08 (11) — VTUBER: FEED LIVE UTAMA, KONFIG POPUP (f8b4dae)
 
 Permintaan user: panel kanan mode VTuber diutamakan Feed Live; sisanya

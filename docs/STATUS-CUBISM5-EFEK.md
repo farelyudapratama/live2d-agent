@@ -4,6 +4,26 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-08 (4) — SPLITTER AKTIF DI 1025–1499PX (fa3f8ed)
+
+User: panel tetap tak bisa digeser (screenshot assistant, tech pane di bawah
+percakapan). Akar terverifikasi dari screenshot: mesin user 1920 fisik @
+scaling 150% → viewport CSS ±1280 saat maximize → CSS lama menyembunyikan
+`#sb-gutter` di ≤1499px, jadi splitter TIDAK PERNAH ada di rentang itu
+(kesalahan dugaan "125%" pada entri (2) dikoreksi: sebenarnya 150%).
+
+- CSS: gutter disembunyikan hanya ≤1024px (shell kolom penuh). 1025–1499px:
+  .app tetap flex row → flex-basis tetap berarti LEBAR; default 372/540px
+  dipertahankan untuk kondisi tanpa ukuran tersimpan (inline menimpa).
+- projek.ts: MIN_DESKTOP_W 1025px; `measureOccupied` mengukur anak .app
+  nyata (gutter display:none → 0, gap hanya kolom terlihat); floor
+  kontekstual — 722px hanya jika tech di samping percakapan (≥1500px +
+  agent-wide), bertumpuk 372px. Rentang rasio 20/80 … 50/50 kini dicapai
+  (batas bawah stage = min-width 340px ≈ 27% di 1280).
+- Regresi: test 1280px (drag 700 → stage 466; 50/50 = 583; tame 372;
+  anti-gepeng upper stage 715↔466 skala identik).
+- Gate: **362 unit + 512 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-08 (3) — SPLITTER EKSPLISIT + FRAMING ANTI-GEPENG (175c6a9)
 
 Panduan user perbaikan berikutnya (poin 1–2 dieksekusi; poin 3 menunggu

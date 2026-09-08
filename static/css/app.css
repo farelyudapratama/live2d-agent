@@ -421,78 +421,9 @@ a:hover { text-decoration: underline; }
 }
 .stage-ctl:active { background: var(--ink-3); }
 
-#btn-fullbody {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 15;
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--r-sm);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-dim);
-  background: var(--ink-1);
-  border: 1px solid var(--line);
-}
-#btn-fullbody:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
-  background: var(--ink-2);
-}
-#btn-fullbody.active {
-  background: var(--accent-subtle);
-  border-color: var(--accent-border);
-  color: var(--lamp-soft);
-}
-
-/* Lower-third: satu strip, pemisah garis antar item (bukan kotak
-   bertumpuk kotak). */
-#live-state {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  z-index: 10;
-  display: flex;
-  align-items: stretch;
-  border-radius: var(--r-sm);
-  background: var(--ink-1);
-  border: 1px solid var(--line);
-  overflow: hidden;
-  pointer-events: auto;
-}
-.ls-item {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 10px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-.ls-item + .ls-item { border-left: 1px solid var(--line-soft); }
-#ls-presence { color: var(--mint); }
-#ls-mood { color: var(--text); }
-#ls-quiet { color: var(--muted); }
-
-#hint {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 10;
-  padding: 5px 10px;
-  border-radius: var(--r-sm);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--ink-1);
-  border: 1px solid var(--line-soft);
-  pointer-events: none;
-  user-select: none;
-  white-space: nowrap;
-}
+/* Stage bersih (permintaan user 2026-09-08): #btn-fullbody, #live-state
+   (.ls-item/#ls-*) dan #hint dihapus dari index.html — panggung tanpa
+   overlay teks. Fungsi zoom/drag/mood tetap jalan di engine. */
 
 /* Aktivitas agent di panggung — menghubungkan karakter dengan pekerjaan
    teknis. Hanya tampil saat busy/approval; idle sengaja sunyi. */

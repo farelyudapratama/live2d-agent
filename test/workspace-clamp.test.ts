@@ -18,6 +18,7 @@ import {
   tameStoredWorkspaceBasis,
   workspaceFloor,
 } from "../src/client/shell/workspace";
+import { computeFrame } from "../src/client/engine/framing";
 
 const LEFT = 300;
 const CHROME = 56;
@@ -87,6 +88,35 @@ describe("tameStoredWorkspaceBasis (restore nilai tersimpan)", () => {
     const big = tameStoredWorkspaceBasis(5000, 2200, OCCUPIED)!;
     expect(big).toBe(1014);
     expect(2200 - OCCUPIED - big).toBe(Math.round(1844 * 0.45));
+  });
+});
+
+describe("regresi — mesin user: 1920 fisik @ scaling 150% → 1280 CSS", () => {
+  it("1280px (maximize): drag dihormati, stage ≥340 — dulu gutter disembunyikan", () => {
+    // occupied: rail tertutup 66 + gutter 8 + padding 20 + 2 gap terlihat.
+    // kids = 2 (left + gutter) → 66 + 8 + 20 + 20 = 114.
+    const occ = 66 + 8 + 20 + 2 * 10;
+    const w = clampWorkspaceBasis(700, 1280, occ)!;
+    // panels = 1166; room = 826 → 700 sah; stage = 466 ≥ 340.
+    expect(w).toBe(700);
+    expect(1280 - occ - w).toBeGreaterThanOrEqual(STAGE_MIN);
+    // 50/50 eksplisit juga sah: 583 workspace, 583 stage.
+    const half = clampWorkspaceBasis(583, 1280, occ)!;
+    expect(half).toBe(583);
+  });
+
+  it("1280px bertumpuk: floor percakapan 372, bukan 722 (tech di bawah)", () => {
+    // Kontrak wsFloor via tame: nilai kecil hasil drag sadar tak dinaikkan.
+    const w = tameStoredWorkspaceBasis(372, 1280, 114)!;
+    expect(w).toBe(WORKSPACE_FLOOR);
+  });
+
+  it("invarian anti-gepeng: skala upper tak berubah meski workspace berubah", () => {
+    // Stage 715 (w=483) vs stage 466 (w=700) pada H sama → skala identik.
+    const H = 963; // 1280 CSS ≈ tinggi jendela maximize 150% scaling
+    const a = computeFrame(800, 1200, 715, H, "upper")!;
+    const b = computeFrame(800, 1200, 466, H, "upper")!;
+    expect(a.scale).toBe(b.scale);
   });
 });
 

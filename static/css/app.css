@@ -3719,11 +3719,11 @@ body.sb-resizing #sb-gutter::before {
    selektor global — kelas dipasang di <body> oleh projek.ts. */
 body.sb-resizing #agent-workspace { transition: none; }
 
-/* Empat kolom hanya layak saat lebar cukup. Pada 1280–1499px, panel teknis
-   tetap fungsional tetapi ditumpuk di bawah conversation agar Live2D tidak
-   diperas menjadi strip sempit. */
+/* Layout bertumpuk (tech pane di bawah percakapan). .app tetap flex ROW di
+   sini — flex-basis workspace tetap LEBAR, jadi splitter + inline basis dari
+   projek.ts bekerja normal. Default 372/540 dipakai bila tak ada ukuran
+   tersimpan (inline menimpa). */
 @media (max-width: 1499px) {
-  #sb-gutter { display: none; }
   #agent-workspace { flex-basis: 372px; }
   #agent-workspace.agent-wide {
     flex-basis: 540px;
@@ -3753,6 +3753,11 @@ body.sb-resizing #agent-workspace { transition: none; }
   #agent-tech.collapsed .as-tabs {
     justify-content: flex-end;
   }
+}
+/* Di bawah 1025px shell pindah ke arah kolom penuh (media 1024) — splitter
+   horizontal tidak berarti di sana. */
+@media (max-width: 1024px) {
+  #sb-gutter { display: none; }
 }
 
 

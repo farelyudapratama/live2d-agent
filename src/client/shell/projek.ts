@@ -254,17 +254,35 @@ export function startProjekRail(): () => void {
   const workspace = document.getElementById("agent-workspace");
   const LS_W = "live2d.agentWorkspace.w";
   const LEGACY_LS_W = "live2d.sidebar.w";
-  // <1500px layout bertumpuk (media query) — inline basis di arah kolom
-  // berarti HEIGHT, jadi di bawah itu basis inline sengaja tidak dipasang.
-  const MIN_DESKTOP_W = 1500;
+  // .app tetap flex ROW dari 1025px ke atas (hanya ≤1024 yang jadi kolom
+  // penuh — di sana splitter disembunyikan dan tak ada ukuran inline).
+  // ≥1500px: 4 kolom sejajar; 1025–1499px: tech pane bertumpuk di bawah
+  // percakapan (media query) — splitter tetap mengatur lebar workspace.
+  const MIN_DESKTOP_W = 1025;
+  const ROW_TECH_SIDE_W = 1500;
   function measureOccupied(): number {
-    // Kolom kiri (activity 56 + gap 10 + rail ±230) + gutter 6 + padding
-    // .app 2×10 + gap .app 3×10 (kiri|stage|gutter|workspace) = +56.
+    // Kolom kiri + gutter + padding .app (2×10) + gap 10 antar kolom yang
+    // terlihat (gutter display:none ≤1499 → otomatis terhitung 0).
+    let kids = 0;
+    let gutterW = 0;
+    const app = workspace?.parentElement;
+    if (app) {
+      for (const k of Array.from(app.children) as HTMLElement[]) {
+        if (k === workspace) continue;
+        if (k.offsetWidth > 0) kids++;
+        if (k.id === "sb-gutter") gutterW = k.offsetWidth;
+      }
+    }
     const left = document.getElementById("left-workspace")?.offsetWidth ?? 300;
-    return left + 56;
+    return left + gutterW + 20 + kids * 10;
   }
   function wsFloor(): number {
-    return workspaceFloor(workspace!.classList.contains("agent-wide"));
+    // Floor 722 (tech 340 + gap + percakapan min) hanya saat tech tampil DI
+    // SAMPING percakapan (≥1500). Bertumpuk → percakapan saja → 372.
+    const techSide =
+      workspace!.classList.contains("agent-wide") &&
+      window.innerWidth >= ROW_TECH_SIDE_W;
+    return workspaceFloor(techSide);
   }
   function applyWorkspaceW(px: number | null): void {
     if (!workspace) return;
@@ -276,6 +294,7 @@ export function startProjekRail(): () => void {
     workspace.style.flexBasis = clamped == null ? "" : clamped + "px";
   }
   function storedWorkspaceW(): number | null {
+    if (!workspace) return null;
     try {
       let raw = localStorage.getItem(LS_W);
       if (raw == null) {
@@ -329,8 +348,7 @@ export function startProjekRail(): () => void {
       if (w >= WORKSPACE_FLOOR && w <= WORKSPACE_CEIL) {
         try { localStorage.setItem(LS_W, String(w)); } catch {}
       }
-    });
-    gutter.addEventListener("dblclick", () => {
+    });    gutter.addEventListener("dblclick", () => {
       applyWorkspaceW(null);
       try { localStorage.removeItem(LS_W); } catch {}
     });

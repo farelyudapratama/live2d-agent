@@ -3692,7 +3692,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ── Splitter vertikal stage ↔ workspace agent ──────────────────── */
 #sb-gutter {
-  flex: 0 0 8px;
+  flex: 0 0 10px;
   align-self: stretch;
   position: relative;
   cursor: col-resize;
@@ -3706,16 +3706,17 @@ input[type="range"]::-moz-range-thumb {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 3px;
-  height: 56px;
+  width: 4px;
+  height: 96px;
   border-radius: 2px;
-  background: var(--line-strong);
-  transition: background 0.15s ease, height 0.15s ease;
+  background: var(--muted);
+  transition: background 0.15s ease, height 0.15s ease, width 0.15s ease;
 }
 #sb-gutter:hover::before,
 body.sb-resizing #sb-gutter::before {
   background: var(--lamp);
-  height: 96px;
+  height: 160px;
+  width: 5px;
 }
 /* Saat menggeser: transition flex-basis dimatikan (lineal, tanpa lag),
    selektor global — kelas dipasang di <body> oleh projek.ts. */

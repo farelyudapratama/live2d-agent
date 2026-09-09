@@ -1923,20 +1923,29 @@
     } catch (e) {}
 
     try {
+      // pixi-live2d 0.4.0: ExpressionManager punya `definitions` (array
+      // {Name, File} dari manifest) — BUKAN `deferred` (itu versi lebih
+      // baru; di 0.4.0 blok itu tidak pernah mengisi apa pun).
       const em =
         m.internalModel &&
         m.internalModel.motionManager &&
         m.internalModel.motionManager.expressionManager;
-      if (em && Array.isArray(em.deferred))
+      if (em && Array.isArray(em.definitions))
         exprs = exprs.concat(
-          em.deferred.map((x) => x && x.name).filter(Boolean),
+          em.definitions.map((x) => x && x.Name).filter(Boolean),
         );
     } catch (e) {}
 
     try {
       const st = m.internalModel && m.internalModel.settings;
       if (st && st.expressions && st.expressions.length > 0) {
-        state.modelExpressions = st.expressions.map((e) => e.Name);
+        // CONCAT, bukan assign: dulu ini menimpa exprs lalu DITIMPA BALIK
+        // oleh `state.modelExpressions = new Set(exprs)` di bawah — ekspresi
+        // native selalu hilang untuk SEMUA model (ren punya 5 .exp3 yang
+        // tidak pernah muncul di vocabulary).
+        exprs = exprs.concat(
+          st.expressions.map((e) => e && e.Name).filter(Boolean),
+        );
       }
     } catch (e) {}
     state.modelExpressions = Array.from(new Set(exprs.filter(Boolean)));

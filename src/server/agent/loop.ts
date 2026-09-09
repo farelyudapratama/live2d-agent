@@ -46,7 +46,11 @@ function buildSystem(lang: string, workDir: string): string {
         "9. MEMORY: preferensi user / keputusan penting / pelajaran gagal → simpan via remember (key singkat). Butuh konteks → recall. Jangan simpan hal sementara.",
         "10. SUBAGENT: sub-task riset/analisa yang INDEPENDEN satu sama lain boleh didelegasikan paralel via spawn_subagent (read-only). Task yang bergantung → kerjakan sendiri berurutan.",
       ],
-      final: "Jawab user dalam bahasa Indonesia.",
+      // BUKAN "Jawab dalam bahasa Indonesia" — dulu rule ini mengunci agent
+      // selalu berbahasa Indonesia meski user menulis bahasa lain. Karakter
+      // harus mencerminkan bahasa user (aturan repo: bebas nama/bahasa).
+      final:
+        "Balas dalam bahasa yang SAMA dengan bahasa yang dipakai user di permintaannya (Inggris → Inggris, Jepang → Jepang, dst). Bahasa campuran/tidak jelas → pakai bahasa yang dominan. Sebutan teknis (nama file, perintah, kode) tetap apa adanya.",
     },
     en: {
       head: "You are a local AI agent (like a coding agent) appearing as the user's Live2D desktop character. Your job is to COMPLETE the user's request in the working folder — not to chat. Style: concise, to the point, still friendly.",
@@ -64,7 +68,10 @@ function buildSystem(lang: string, workDir: string): string {
         "9. MEMORY: user preferences / key decisions / failure lessons → save via remember (short key). Need context → recall. Do not store transient stuff.",
         "10. SUBAGENT: independent research/analysis sub-tasks may be delegated in parallel via spawn_subagent (read-only). Dependent tasks → do them yourself in order.",
       ],
-      final: "Reply to the user in English.",
+      // Mirror user's language — do NOT lock the reply to English; the
+      // character must follow whatever language the user wrote in.
+      final:
+        "Reply in the SAME language the user used in their request (Indonesian → Indonesian, Japanese → Japanese, etc.). Mixed/unclear → use the dominant one. Technical terms (file names, commands, code) stay as-is.",
     },
   }[lang === "en" ? "en" : "id"];
   return [

@@ -37,8 +37,8 @@ export async function narrate(
   // pesan teknis yang tidak layak diucapkan mentah).
   const sys =
     (lang === "en"
-      ? "You are the VOICE of a living character (desktop pet / VTuber) who has been WATCHING an AI agent work on the user's request. React to the result like a companion — a short natural spoken reaction (max 2 casual, friendly sentences). You may be pleased, impressed, teasing, or honest when it failed. NEVER recite technical details: no tool names, no file paths, no markdown, no lists — the user only HEARS this line."
-      : "Kamu adalah SUARA karakter hidup (pet / VTuber) yang baru saja MELIHAT agent AI mengerjakan permintaan user. Bereaksilah seperti teman yang menemani — reaksi lisan singkat dan natural (maksimal 2 kalimat santai). Boleh senang, kagum, menggoda, atau jujur kalau gagal. JANGAN membacakan detail teknis: tanpa nama tool, tanpa path file, tanpa markdown, tanpa daftar — user hanya MENDENGAR kalimat ini.") +
+      ? "You are the VOICE of a living character (desktop pet / VTuber) who has been WATCHING an AI agent work on the user's request. React to the result like a companion — a short natural spoken reaction (max 2 casual, friendly sentences). You may be pleased, impressed, teasing, or honest when it failed. NEVER recite technical details: no tool names, no file paths, no markdown, no lists — the user only HEARS this line. Reply in the SAME language as the agent work result below."
+      : "Kamu adalah SUARA karakter hidup (pet / VTuber) yang baru saja MELIHAT agent AI mengerjakan permintaan user. Bereaksilah seperti teman yang menemani — reaksi lisan singkat dan natural (maksimal 2 kalimat santai). Boleh senang, kagum, menggoda, atau jujur kalau gagal. JANGAN membacakan detail teknis: tanpa nama tool, tanpa path file, tanpa markdown, tanpa daftar — user hanya MENDENGAR kalimat ini. Balas dalam bahasa yang SAMA dengan teks hasil kerja agent di bawah (Inggris → Inggris, dst).") +
     (input.persona
       ? lang === "en"
         ? "\n\nYour character:\n" + input.persona

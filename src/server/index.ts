@@ -17,6 +17,7 @@ import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive } from "./vtuber";
 import { assistantStart, assistantStop, assistantCancel, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
+import { translateForSpeech, ttsLangIsFixed } from "./persona/speech-lang";
 import { appRoot } from "../shared/paths";
 import { browserManager } from "./browser/manager";
 import { inspectBrowserUrl } from "./browser/policy";
@@ -347,6 +348,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/test") return handleTestConnection(req);
   if(method==="POST" && path==="/api/chat") return handleChat(req);
   if(method==="POST" && path==="/api/tts") return handleTTS(req);
+  if(method==="POST" && path==="/api/tts/translate") return handleTTSTranslate(req);
   if(method==="POST" && path==="/api/tts/test") return handleTTSTest(req);
   if(method==="GET" && path==="/api/tts/options") return handleTTSOptions(req);
   if(method==="GET" && path==="/api/model/avatar") return handleModelAvatar(req);
@@ -553,10 +555,18 @@ async function handleAssistantAsk(req: Request): Promise<Response> {
 // Versi streaming (SSE): event `delta`/`tool_call`/`tool_result`/`approval`
 // dikirim seiring proses, diakhiri `done`. Dipakai CLI; panel browser tetap
 // di jalur ask biasa.
-async function handleAssistantAskStream(req: Request): Promise<Response> {
-  const body = await readBody(req);
+//
+// HEARTBEAT: komentar SSE ": ka" tiap 5 dtk. Dua fungsi sekaligus — (1)
+// idleTimeout Bun tidak menghitung koneksi yang baru saja mengirim byte, dan
+// (2) proxy/browser yang menganggap koneksi mati kalau lama tak ada byte
+// tidak memutusnya. Parser klien (drainSse) melewatkan frame tanpa "data:",
+// jadi komentar ini aman.
+const SSE_HEARTBEAT_MS = 5000;
+function makeSseStream(
+  run: (send: (obj: unknown) => void) => Promise<void>,
+): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
-  const stream = new ReadableStream({
+  return new ReadableStream({
     async start(ctrl) {
       // Klien bisa putus di tengah (CLI ditutup / tab ditutup) — enqueue ke
       // stream yang sudah mati melempar TypeError yang sebelumnya menjalar
@@ -569,23 +579,37 @@ async function handleAssistantAskStream(req: Request): Promise<Response> {
         try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(obj) + "\n\n")); }
         catch { clientGone = true; }
       };
+      const beat = setInterval(() => {
+        if (clientGone) return;
+        try { ctrl.enqueue(enc.encode(": ka\n\n")); }
+        catch { clientGone = true; }
+      }, SSE_HEARTBEAT_MS);
       try {
-        const r = await assistantAsk(String(body?.text || ""), config, (e) => send(e));
-        send({ type: "done", ...r });
-      } catch (e: any) {
-        send({ type: "done", ok: false, error: e.message });
+        await run(send);
       } finally {
+        clearInterval(beat);
         try { ctrl.close(); } catch {}
       }
     },
   });
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
+}
+const SSE_HEADERS = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache",
+  Connection: "keep-alive",
+} as const;
+
+async function handleAssistantAskStream(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const stream = makeSseStream(async (send) => {
+    try {
+      const r = await assistantAsk(String(body?.text || ""), config, (e) => send(e));
+      send({ type: "done", ...r });
+    } catch (e: any) {
+      send({ type: "done", ok: false, error: e.message });
+    }
   });
+  return new Response(stream, { headers: SSE_HEADERS });
 }
 async function handleAssistantApprove(req: Request): Promise<Response> {
   const body = await readBody(req);
@@ -598,37 +622,18 @@ async function handleAssistantApprove(req: Request): Promise<Response> {
 // patah di titik approval. Route lama /approve tetap utuh untuk CLI/kompat.
 async function handleAssistantApproveStream(req: Request): Promise<Response> {
   const body = await readBody(req);
-  const enc = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(ctrl) {
-      // Pola sama dengan handleAssistantAskStream: klien yang hilang tidak
-      // menggagalkan resolve approval — event tinggal dibuang.
-      let clientGone = false;
-      const send = (obj: unknown) => {
-        if (clientGone) return;
-        try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(obj) + "\n\n")); }
-        catch { clientGone = true; }
-      };
-      try {
-        const r = await assistantResolveApproval(
-          String(body?.id || ""), !!body?.approve, config,
-          (e) => send(e),
-        );
-        send({ type: "done", ...r });
-      } catch (e: any) {
-        send({ type: "done", ok: false, error: e.message });
-      } finally {
-        try { ctrl.close(); } catch {}
-      }
-    },
+  const stream = makeSseStream(async (send) => {
+    try {
+      const r = await assistantResolveApproval(
+        String(body?.id || ""), !!body?.approve, config,
+        (e) => send(e),
+      );
+      send({ type: "done", ...r });
+    } catch (e: any) {
+      send({ type: "done", ok: false, error: e.message });
+    }
   });
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }
 async function handlePetClickThrough(req: Request): Promise<Response> {
   const body = await readBody(req);
@@ -928,9 +933,44 @@ async function handleTTS(req:Request):Promise<Response>{
     // body.tts opsional — dipakai tombol Tes Suara untuk mencoba nilai form
     // yang BELUM disimpan; tanpa itu, pakai config tersimpan.
     const cfgTTS:TTSConfig = (body.tts && typeof body.tts==="object") ? body.tts : (config.load().tts||{});
-    const {buf,type}=await ttsAudioCached(cfgTTS, String(body.text));
+    // body.ttsLang opsional ("Bahasa suara" tetap dari model, mis. ja-JP):
+    // teks diterjemahkan DULU di sini — SATU titik keputusan untuk semua
+    // jalur TTS remote, jadi ucapan selalu konsisten mengikuti dropdown
+    // (dulu terjemahan di client bisa gagal/timeout → kadang bahasa teks,
+    // kadang bahasa dropdown). Bubble/chat tetap menampilkan teks asli.
+    let text=String(body.text);
+    if(ttsLangIsFixed(String(body?.ttsLang||""))){
+      text=await translateForSpeech(text,String(body.ttsLang),(t,sys)=>
+        llmForRole("chat",
+          ()=>config.connections,
+          ()=>config.activeConnection,
+          (conns)=>config.saveConnections(conns,config.load().activeId),
+          [{role:"user",content:t}],sys).then(r=>r.reply),
+      );
+    }
+    const {buf,type}=await ttsAudioCached(cfgTTS, text);
     return new Response(new Uint8Array(buf),{headers:{"Content-Type":type}});
   }catch(e:any){ return json({error:"TTS error: "+e.message},502); }
+}
+// (Dihapus: terjemahan bicara kini terjadi DI DALAM /api/tts — satu titik
+// keputusan, deterministik. Route /api/tts/translate tidak lagi dipakai
+// client; tetap ada untuk kompatibilitas CLI/debug.)
+async function handleTTSTranslate(req:Request):Promise<Response>{
+  const body=await readBody(req);
+  const text=String(body?.text||"").slice(0,2000);
+  const ttsLang=String(body?.ttsLang||"");
+  if(!text) return json({text:""},200);
+  if(!ttsLangIsFixed(ttsLang)) return json({text},200);
+  try{
+    const out=await translateForSpeech(text,ttsLang,(t,sys)=>
+      llmForRole("chat",
+        ()=>config.connections,
+        ()=>config.activeConnection,
+        (conns)=>config.saveConnections(conns,config.load().activeId),
+        [{role:"user",content:t}],sys).then(r=>r.reply),
+    );
+    return json({text:out});
+  }catch(e:any){ return json({text,error:e.message}); }
 }
 // apiKey dari UI bisa (a) kosong → pakai yang tersimpan, atau (b) di-mask
 // ("abcd••••wxyz") → tetap pakai yang tersimpan. Yang dulu dipakai langsung.
@@ -1585,6 +1625,11 @@ let server: ReturnType<typeof Bun.serve> | null = null;
 if (import.meta.main) {
 server = Bun.serve({
   port: PORT,
+  // Bun ≥1.1 memutus koneksi yang senyap >10 dtk (default idleTimeout) —
+  // terbukti eksperimen: SSE/lambatnya LLM diputus ECONNRESET tepat 10 dtk,
+  // terlihat sebagai stream agent yang "kadang berhenti". 255 = maksimum
+  // yang diizinkan (detik); endpoint SSE juga diberi heartbeat terpisah.
+  idleTimeout: 255,
   // Default bind loopback seperti v1: server ini memegang apiKey plaintext di
   // config — tidak boleh telanjang ke LAN. Set HOST=0.0.0.0 bila memang mau
   // diakses dari jaringan (frontend pakai location.origin, jadi tetap jalan).

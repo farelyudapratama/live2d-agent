@@ -13,15 +13,36 @@
       const ab = buf instanceof ArrayBuffer ? buf : (buf && buf.buffer) || buf;
       const direct = orig(ab);
       if (direct) return direct;
+      // Fail-loud, bukan stamp buta. Dulu versi >4 di-stamp ke 4 supaya
+      // core lama tetap "memuat" — hasilnya layout moc salah dibaca:
+      // mask/clip/physics rusak SENYAP. Stamp hanya masih masuk akal untuk
+      // v5 (subsedia, makna identik v4-era); v6+ HARUS dimuat core yang
+      // mengenalnya — kalau gagal, core-nya basi, bukan moc-nya.
       try {
         const u8 = new Uint8Array(ab);
         if (u8.length > 8) {
           const v = u8[4] | (u8[5] << 8) | (u8[6] << 16) | (u8[7] << 24);
-          if (v > 4) {
+          if (v > 5) {
+            console.error(
+              "[core] moc3 versi " + v + " tidak dikenal core " +
+                "(getLatestMocVersion=" +
+                (core.Version && core.Version.getLatestMocVersion
+                  ? core.Version.getLatestMocVersion()
+                  : "?") +
+                "). Update static/js/live2dcubismcore.min.js dari SDK resmi — " +
+                "JANGAN stamp versi: layout moc salah dibaca = mask/clip/physics rusak senyap.",
+            );
+            return null;
+          }
+          if (v === 5) {
             u8[4] = 4;
             u8[5] = 0;
             u8[6] = 0;
             u8[7] = 0;
+            console.warn(
+              "[core] moc3 v5 gagal dimuat core ini — dicoba stamp ke v4 (subsedia). " +
+                "Kalau model tampil salah, update live2dcubismcore.min.js.",
+            );
             return orig(ab);
           }
         }
@@ -44,9 +65,8 @@
   const state = {
     model: null,
     blinkEnabled: true,
-    idleEnabled: true,
-    blinkInterval: null,
     idleRAF: null,
+    idleEnabled: true,
     aiLock: false,
     frozen: false,
     frozenTimer: null,
@@ -544,7 +564,8 @@
 
       fetchSheetFile().catch(() => {});
 
-      startBlink();
+      // kedip rAF — lihat tickBlink() dekat tick idle (interval natural,
+      // pulih aman saat freeze/model ganti)
       startIdle();
       installOverrideGuard(state.model.internalModel);
       state.visfxMap = visfxLoad();
@@ -616,26 +637,69 @@
     }
   }
 
-  function startBlink() {
-    if (state.blinkInterval) clearInterval(state.blinkInterval);
-    const blinkOnce = () => {
-      if (!state.model || !state.blinkEnabled) return;
-
-      if (state.frozen) return;
-      try {
-        pokeRoleNorm("eyeLOpen", 0);
-        pokeRoleNorm("eyeROpen", 0);
-        setTimeout(() => {
-          pokeRoleNorm("eyeLOpen", 1);
-          pokeRoleNorm("eyeROpen", 1);
-        }, 140);
-      } catch (e) {
-        /* swallow */
+  // Kedip hidup di tick rAF (dt-based), bukan setInterval: interval natural
+  // per kedip, tidak terkuantisasi ke titik cek 3 dtk, dan fase buka-penuh
+  // selalu dipulihkan saat freeze/model ganti (timer lama tidak bisa
+  // ditinggal mati — mata bisa tertinggal di 0 tanpa ini).
+  state.blinkState = null; // null=terbuka | {phase:"close"|"closed"|"open", t:number}
+  state.blinkNext = 2 + Math.random() * 3; // dtk sampai kedip berikutnya
+  function tickBlink(dt) {
+    if (!state.model) return;
+    const eyes = [
+      roleId("eyeLOpen"),
+      roleId("eyeROpen"),
+    ].filter(Boolean);
+    // Saat klip emosi/motion memutar, kurva klip bisa menganimasi mata
+    // (mis. wink) — kedip otomatis dijeda supaya tidak menimpanya.
+    const clipOwns = !!(state.clipUntil && performance.now() < state.clipUntil);
+    if (
+      !eyes.length ||
+      !state.blinkEnabled ||
+      state.frozen ||
+      clipOwns
+    ) {
+      // Pulihkan mata ke buka penuh bila sempat tertutup, lalu reset fase.
+      if (state.blinkState) {
+        for (const id of eyes) pokeRoleNorm(id, 1);
+        state.blinkState = null;
       }
-    };
-    state.blinkInterval = setInterval(() => {
-      if (Math.random() < 0.15) blinkOnce();
-    }, 3000);
+      return;
+    }
+    const CLOSE_MS = 100,
+      CLOSED_MS = 60,
+      OPEN_MS = 150;
+    if (!state.blinkState) {
+      state.blinkNext -= dt;
+      if (state.blinkNext <= 0) {
+        // Kembar (biasanya) atau kedip tunggal; kadang rentetan 2-3.
+        state.blinkNext = 2 + Math.random() * 4 - (Math.random() < 0.2 ? 1.2 : 0);
+        state.blinkState = { phase: "close", t: 0 };
+      }
+      return;
+    }
+    const bs = state.blinkState;
+    bs.t += dt * 1000;
+    if (bs.phase === "close") {
+      const v = 1 - Math.min(1, bs.t / CLOSE_MS);
+      for (const id of eyes) pokeRoleNorm(id, v);
+      if (bs.t >= CLOSE_MS) {
+        bs.phase = "closed";
+        bs.t = 0;
+      }
+    } else if (bs.phase === "closed") {
+      for (const id of eyes) pokeRoleNorm(id, 0);
+      if (bs.t >= CLOSED_MS) {
+        bs.phase = "open";
+        bs.t = 0;
+      }
+    } else {
+      const v = Math.min(1, bs.t / OPEN_MS);
+      for (const id of eyes) pokeRoleNorm(id, v);
+      if (bs.t >= OPEN_MS) {
+        for (const id of eyes) pokeRoleNorm(id, 1);
+        state.blinkState = null;
+      }
+    }
   }
 
   function startIdle() {
@@ -649,6 +713,8 @@
         state.idleRAF = requestAnimationFrame(tick);
         return;
       }
+
+      tickBlink(dt);
 
       state.impulse *= 0.9;
       if (state.impulse < 0.001) state.impulse = 0;
@@ -811,7 +877,12 @@
         target("angleZ", tiltLife + (state.aiLock ? bBz * 0.5 : 0));
       }
 
-      if (state.hasBreath && !state.frozen)
+      // Breath app.js hanya saat tick ini pemilik pose. Saat layer motion
+      // aktif, kurva motion3 bisa membawa breath sendiri — menimpanya tiap
+      // frame berarti kurva itu tak pernah terdengar. Framework bawaan
+      // (updateNaturalMovements) menambahkan breath tersendiri di bawah —
+      // aman karena tick menulis SETELAH framework (beforeModelUpdate).
+      if (state.hasBreath && !state.frozen && !motionLayersActive)
         pokeRoleNorm("breath", clamp(breath, 0, 1));
 
       if (state.emoCur) {
@@ -1690,21 +1761,35 @@
     try {
       if (typeof m.getParameterIds === "function")
         paramIds = m.getParameterIds() || [];
+      if (paramIds.length) state.capProbe = "pixi-api";
     } catch (e) {}
 
     if (!paramIds.length && cm) {
       try {
         const gm = cm.getModel && cm.getModel();
         const ids = gm && gm.parameters && gm.parameters.ids;
-        if (ids && ids.length) paramIds = Array.prototype.slice.call(ids);
+        if (ids && ids.length) {
+          paramIds = Array.prototype.slice.call(ids);
+          state.capProbe = "core-ids";
+        }
       } catch (e) {}
     }
+
+    // Semua jalur resmi (API pixi + permukaan core) habis — blok di bawah
+    // menyelam ke private field framework yang bisa berubah kapan saja.
+    // Kalau peringatan ini muncul di console, pixi-live2d kemungkinan besar
+    // baru di-update dan pencarian param perlu disesuaikan.
+    if (!paramIds.length)
+      console.warn(
+        "[cap] jalur resmi parameter habis — menyelam ke private field framework (fallback dalam, rapuh)",
+      );
 
     if (!paramIds.length && cm) {
       try {
         const gm = cm.getModel && cm.getModel();
         if (gm && typeof gm.getParameterIds === "function")
           paramIds = gm.getParameterIds() || [];
+        if (paramIds.length) state.capProbe = "core-getParameterIds";
       } catch (e) {}
     }
 
@@ -6949,6 +7034,90 @@
       return playEmotionClip(name) ? "clip" : null;
     },
 
+    // Diagnostik runtime: satu readout untuk semua mismatch senyap yang
+    // pernah menyusup (versi core vs moc, patch lib aktif, pemetaan role,
+    // rentang param model). Console.table(window.__live2dAgent.diagnostics())
+    diagnostics: () => {
+      const cm = coreModel();
+      const core = window.Live2DCubismCore;
+      const m = state.model;
+      const mocBytes = m && m.internalModel && m.internalModel.settings;
+      let mocVersion = null;
+      try {
+        const mocSrc = m && m.internalModel && m.internalModel.__moc;
+        if (mocSrc)
+          mocVersion = core.Version.getMocVersion(mocSrc, 0) || null;
+      } catch (e) {}
+      const patches = {
+        renderOrdersGetter: false,
+        offGroupFactor: false,
+        blendModesReader: false,
+        premultiplyUpload: false,
+      };
+      try {
+        patches.renderOrdersGetter =
+          !!cm &&
+          cm.getModel &&
+          !!cm.getModel() &&
+          cm.getModel().drawables.renderOrders !== undefined;
+        patches.offGroupFactor =
+          !!(cm && cm.getModel && cm.getModel() &&
+          typeof cm.getModel().__offGroupFactor === "function");
+        patches.blendModesReader =
+          !!cm && cm.getDrawableBlendMode
+            ? String(cm.getDrawableBlendMode).includes("blendModes")
+            : false;
+        patches.premultiplyUpload = String(
+          window.Texture && window.Texture.fromURL
+            ? window.Texture.fromURL
+            : "",
+        ).includes("alphaMode");
+      } catch (e) {}
+      const roles = {};
+      for (const role of Object.keys(state.caps.ids || {}))
+        roles[role] = state.caps.ids[role];
+      const ranges = {};
+      for (const role of [
+        "angleX",
+        "eyeLOpen",
+        "mouthOpenY",
+        "bodyAngleZ",
+        "breath",
+      ]) {
+        const id = roleId(role);
+        if (id && state.paramRange[id])
+          ranges[role] = id + " [" + state.paramRange[id].min + ".." +
+            state.paramRange[id].max + "] def " + state.paramRange[id].def;
+      }
+      return {
+        model: (m && m.internalModel && m.internalModel.settings &&
+          m.internalModel.settings.name) || null,
+        coreVersion: core && core.Version
+          ? core.Version.csmGetVersion()
+          : null,
+        mocVersion,
+        mocVersionNote:
+          mocVersion != null &&
+          core && core.Version &&
+          core.Version.csmGetLatestMocVersion() < mocVersion
+            ? "CORE BASI — moc lebih baru dari core. Update live2dcubismcore.min.js!"
+            : null,
+        canvasAlpha: typeof window.__l2dCanvasAlpha === "function"
+          ? window.__l2dCanvasAlpha()
+          : null,
+        patches,
+        roleCount: Object.keys(roles).length,
+        roles,
+        paramRanges: ranges,
+        emotions: Object.keys(
+          window.__live2dAgent.getExpressibleEmotions(),
+        ),
+        sheetStale: state.sheetStale || null,
+        capProbe: state.capProbe || null,
+        sheetKey: typeof currentModelKey === "function" ? currentModelKey() : null,
+      };
+    },
+
     lockAI: () => {
       state.aiLock = true;
       state.fidgetT = 0;
@@ -8445,6 +8614,21 @@
       );
       if (!res.ok) return null;
       const data = await res.json().catch(() => null);
+
+      // Sheet disk = cache scan. Server menandai _stale bila scannerVersion
+      // tidak cocok (logika role-mapping berubah) — jangan dipakai diam-diam:
+      // tampilkan peringatan + simpan flag untuk diagnostics.
+      if (data && data._stale) {
+        state.sheetStale = data._stale;
+        console.warn(
+          "[sheet] CACHE SCAN BASI — sheet di disk dibuat scanner versi lama",
+          "(punya:", data._stale.have ?? "(kosong)",
+          "perlu:", data._stale.want + ")",
+          ". Hasil resolusi role bisa sudah salah — jalankan re-scan model.",
+        );
+      } else if (state.sheetStale) {
+        state.sheetStale = null;
+      }
 
       const migrated = data && data.params ? migrateSheet(data) : null;
 

@@ -1428,17 +1428,37 @@ KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
 }
 
 // ── sheet ───────────────────────────────────────────────────────
+// Sheet di disk adalah CACHE scan (role-mapping, dsb.), bukan sumber
+// kebenaran. Naikkan versi ini tiap kali logika scanner berubah — sheet lama
+// otomatis ditandai basi saat dibaca (lihat handleSheetGet).
+const SHEET_SCANNER_VERSION = 2;
 async function handleSheetPost(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"sheet kosong"},400);
   const name=(body.modelName||"default"); const sheet=body.sheet||body;
   if(!sheet||typeof sheet!=="object"||Array.isArray(sheet)) return json({error:"sheet kosong"},400);
+  sheet.scannerVersion=SHEET_SCANNER_VERSION; // stamp waktu simpan — penanda fresh
   const target=sheetPathFor(name);
   try{ await queueJsonWrite(target, sheet); console.log("[server] character sheet saved ->", target); return json({ok:true, path:relative(DATA,target).split(sep).join("/")}); }catch(e:any){ return json({error:e.message},500); }
 }
 async function handleSheetGet(req:Request):Promise<Response>{
   const name=new URL(req.url).searchParams.get("name")||"default"; const p=sheetPathFor(name);
   if(!existsSync(p)) return json({error:"no sheet"},404);
-  try{ const raw=readFileSync(p,"utf8"); return new Response(raw,{headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});}catch(e:any){ return json({error:e.message},500); }
+  try{ const raw=readFileSync(p,"utf8");
+    // Tandai sheet basi: cache dari scanner versi lama menyimpan hasil
+    // resolusi role yang mungkin sudah salah — jangan dipercaya diam-diam.
+    let out=raw;
+    try{
+      const parsed=JSON.parse(stripBom(raw));
+      if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)){
+        if(parsed.scannerVersion!==SHEET_SCANNER_VERSION){
+          (parsed as any)._stale={reason:"scannerVersion",have:parsed.scannerVersion??null,want:SHEET_SCANNER_VERSION};
+          console.warn("[server] sheet basi (scannerVersion",parsed.scannerVersion??"(kosong)","≠",SHEET_SCANNER_VERSION+") ->",p,"— perlu re-scan");
+        }
+        out=JSON.stringify(parsed);
+      }
+    }catch{ /* JSON tak valid: biarkan mentah, konsumen yang memvalidasi */ }
+    return new Response(out,{headers:{"Content-Type":"application/json; charset=utf-8","Access-Control-Allow-Origin":"*"}});
+  }catch(e:any){ return json({error:e.message},500); }
 }
 
 // ── models ──────────────────────────────────────────────────────

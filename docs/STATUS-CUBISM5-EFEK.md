@@ -4,6 +4,382 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-09 (24) — GURATAN MERAH KELOPAK: TEKSTUR DI-PREMULTIPLY (BELUM COMMIT)
+
+User kirim screenshot close-up: dua guratan cokelat-merah simetris di atas
+kedua mata. Diagnosis: ren punya artmesh Atop (Face/Hairline, mis. ArtMesh82/
+188/189) yang teksturnya menyimpan shade sebagai **RGB berwarna dengan ALPHA
+0** (sample PNG di UV-nya: (116,46,46,0), (85,28,28,0)). Pixi 6 default
+alphaMode NPM=0 — texel itu masuk GPU apa adanya; kapan pun artmesh digambar
+(bahkan sebagai Over di antialias edge), RGB bocor → garis merah. Viewer
+resmi mem-premultiply saat upload sehingga texel itu menjadi (0,0,0,0).
+
+**PATCH 6:** opsi muat tekstur model di vendored lib (`Texture.fromURL`)
+ditambah `alphaMode: 1` (PREMULTIPLY_ON_UPLOAD) — satu properti, memperbaiki
+semua artmesh sekaligus tanpa menyentuh shader. Cache-bust lib ke `?v=3` di
+3 HTML (pelajaran entri 23: subresource JS bisa basi walau HTML fresh).
+Verifikasi (Browser Use, tab baru — capture clip di tab lama macet berulang,
+tab baru normal): guratan merah hilang di pose netral/menoleh kanan/kiri;
+model lain tak berubah (lumine tanpa texel semacam ini — premultiply
+identitas untuk texel opaque). Gate: **377 unit + 550 guard, 0 gagal**;
+tsc bersih. PATCH 3/4/5/6 + core 6.0.1 semuanya working tree (belum commit).
+
+## UPDATE 2026-09-09 (23) — KEPALA REN: ATOP/OUT VIA CANVAS ALPHA + BLENDFUNC BENAR (BELUM COMMIT)
+
+User: "bagian kepalanya masih aneh" — saat kepala menoleh muncul patch putih
+(di akar: artmesh alpha Atop/Out digambar Over), dan dua percobaan perbaikan
+pertamaku justru **wajah hitam bolong**. Diagnosis tuntas lewat instrumen:
+`preserveDrawingBuffer` sementara + `readPixels` → area "hitam" ternyata
+**RGBA(0,0,0,0) = wajah DIBOLONGKAN**, bukan dilukis hitam: blendFunc Out
+versi lama memakai faktor dst ZERO sehingga operator Porter-Duff Out MENGANTI
+seluruh dst — artmesh "Hair Shadow Out" (ArtMesh197, menutupi mulut-dagu)
+menghapus pixel wajah.
+
+Fix final (PATCH 4 lengkap):
+- **Canvas transparan**: app.js `backgroundAlpha: 0` (warna latar tetap dari
+  CSS #stage) → dst-alpha canvas = cakupan artmesh, prasyarat Atop/Out.
+- **PATCH 4c**: `getDrawableBlendMode` membaca `blendModes` — keluarga warna
+  → 3 mode lama (seperti 4a), byte alpha: Atop → case 3
+  `(DST_ALPHA, ONE_MINUS_SRC_ALPHA, ZERO, ONE)`; Out → case 4
+  `(ONE_MINUS_DST_ALPHA, ONE, ONE_MINUS_DST_ALPHA, ONE)` = "gambar hanya di
+  area kosong, dst DIPERTAHANKAN" — bukan mengganti dst (bolong!). Atop
+  Multiply (leher) → Multiplicative (butuh dst-RGB, blendFunc tak kuat).
+- Deteksi alpha canvas **LAZY** `window.__l2dCanvasAlpha()` — panggilan
+  getContext saat load-time MENCIPTAKAN context dan bisa merusak init pixi.
+- Cache-bust: tag script lib di 3 HTML di-bump `?v=2` (JS subresource bisa
+  basi di cache walau HTML fresh — bikin dua kesimpulan bisect palsu).
+PELAJARAN BISECT: matikan-part via setPartOpacity TIDAK valid utk model v6
+(cache faktor PATCH 5 beku + part opacity tak mengalir) — pakai
+__l2dCanvasAlphaResult=false + readPixels, bukan tebakan part.
+Hasil (Browser Use): kepala bersih di pose netral/menoleh kanan-kiri, hitam
+hilang, kalung terlihat, lengan tetap transparan. readPixels wajah
+(58,55,50,255) opaque, latar (22,18,12,0) transparan sesuai desain.
+Sisa batas: Atop iso-group belum sempurna (gloss bisa bocor ke artmesh
+non-group yang tumpang tindih), multiply-atop = aproksimasi.
+Gate: **377 unit + 548 guard, 0 gagal**; tsc bersih.
+
+## UPDATE 2026-09-09 (22) — LENGAN TRANSPARAN REN: PATCH 5 OPACITY GROUP OFFSCREEN (BELUM COMMIT)
+
+User menunjukkan referensi tampilan resmi: **lengan jaket harusnya transparan**
+(bahan bening, tangan terlihat menembus). Render kita masih solid. Peta akar
+dari probe + cdi3: 24 offscreen group moc3 v6 — group 9/10 = PartJacketArmL/R
+**op 0.50** (lengan transparan), 17/18 = ArmL/RDrawOrder **op 0.00** (layer
+tersembunyi by design), 4/5 = Display/See-through op 0.6/0.3, 13/14/19/20/21
+berisi artmesh Out (tabung gloss). Core 6 TIDAK membake opacity group itu ke
+drawable opacity, dan parts.opacity ↔ offscreens.opacity tidak sinkron dua
+arah via update() — framework lama menggambar semua full-opacity.
+
+**PATCH 5:** `getDrawableOpacity` di vendored lib mengalikan opacity drawable
+dengan faktor opacity group offscreen part-nya; peta part→faktor dibangun
+sekali di `patchCore6Compat` (`model.__offGroupFactor`, cache Float32Array
+per drawable). Group op 0 otomatis tak tergambar; lengan ×0.5 → transparan.
+**Jebakan yang kena (terdokumentasi guard A3):** peta dipasang di CORE model
+tapi versi pertama patch membacanya lewat `this.__offGroupFactor` (`this` =
+wrapper framework, SELALU undefined → faktor 1, visual tak berubah); koreksi
+`this._model.__offGroupFactor`. Verifikasi: Browser Use — lengan transparan
+sesuai referensi, tangan terlihat menembus kain.
+**Sisa batas (belum dikerjakan):** 16 artmesh alpha Atop/Out tetap digambar
+Over (tabung gloss sedikit beda dari viewer resmi); pipeline resmi
+5-r.5 = copy-buffer + frag shader Porter-Duff per group offscreen — port
+besar, baru layak kalau bedanya masih terasa.
+Gate: **377 unit + 544 guard, 0 gagal**; tsc bersih. Core 6.0.1 + PATCH 3/4a/5
+di working tree (belum commit).
+
+## UPDATE 2026-09-09 (21) — REN v6: BLENDMODES BARU + PELAJARAN PATCH YANG GAGAL (BELUM COMMIT)
+
+Laporan user setelah entri (20): "masih aneh" (render sudah tampil tapi ada
+artefak), lalu versi patch pertamaku justru bikin **wajah & kaos dalam jadi
+hitam solid** — regresi yang kupicu sendiri, kubuktikan sendiri via browser
+(Browser Use), kurevert sendiri.
+
+Fakta rig ren (moc3 v6) dari probe core:
+- `drawables.blendModes` (BARU di core 6, ada juga utk moc lama): low byte =
+  ColorBlendType (Normal=0, AddCompatible=1, MultiplyCompatible=2, Add=3,
+  AddGlow=4, Darken=5, Multiply=6, ColorBurn=7, Lighten=9, Screen=10,
+  HardLight=14, Color=17, dst.), high byte = AlphaBlendType (Over=0, Atop=1,
+  Out=2). Ren: 178 Normal, 5 Multiply, 4+1+2+1 glow/light/hardlight, 9 Atop,
+  7 Out. Semua constantFlags blend bits v6 = 0 → framework lama menggambar
+  SEMUA sebagai Normal (multiply tidak menggelapkan, glow tidak menyala).
+- 24 offscreen per-part compositing; 81/198 drawable anak part ber-offscreen;
+  offscreen opacity (0.6/0.3) TIDAK dibake ke drawable opacity oleh core, dan
+  parts.opacity ↔ offscreen.opacity TIDAK sinkron dua arah via update().
+
+**PATCH 4 (berlaku):** `getDrawableBlendMode` di vendored lib membaca
+`blendModes` lebih dulu dan memetakan HANYA keluarga warna → 3 mode lama
+(glow: Add/AddGlow/Lighten/Screen/ColorDodge/AddCompatible → Additive;
+darken: MultiplyCompatible/Darken/Multiply/ColorBurn/LinearBurn →
+Multiplicative; sisanya Normal). Fallback constantFlags utk core lama tetap.
+**PELAJARAN (jangan diulang):** versi pertamaku juga memetakan byte alpha
+Atop/Out ke blendFunc baru langsung di framebuffer utama — HASILNYA HITAM
+(wajah/kaos). Renderer resmi 5-r.5 menggambar Atop/Out di dalam offscreen
+render-target per group (isBlendModeEnabled → _modelRenderTargets) — tanpa
+pipeline itu, Atop/Out HARUS digambar Over biasa. Guard A2 di
+test-core6-compat.js sekarang MENOLAK kehadiran string Atop/Out blendFunc.
+**Batas arsitektur yang diketahui (belum dikerjakan):** (1) alpha Atop/Out 16
+artmesh digambar Over — highlight/gloss moc v6 bisa tampak sedikit beda dari
+viewer resmi; (2) offscreen compositing + opacity part (0.6/0.3) belum
+diterapkan; (3) ekspresi model ren: getExpressibleEmotions() kosong (belum
+diinvestigasi, terpisah dari render). Fidelity penuh = renderer 5-r.5.
+Verifikasi visual (Browser Use, bukan laporan user): model tampil benar,
+wajah normal, mask utuh saat ParamAngleX=30 + physics, console bersih.
+Gate: **377 unit + 538 guard, 0 gagal**; tsc bersih. Core 6.0.1 + PATCH 3 +
+PATCH 4a semuanya di working tree (belum commit).
+
+## UPDATE 2026-09-09 (20) — REGRESI CORE 6: renderOrders OBJECTS-UNION + PATCH 3 LIB (BELUM COMMIT)
+
+Lanjutan entri (19): setelah swap core 6.0.1, **karakter tak tergambar sama
+sekali** (blank, tanpa error console). Akar: core 6.0.1 menghapus
+`drawables.renderOrders` (dipindah ke `Model.getRenderOrders()`) DAN di moc v6
+nilai itu adalah **objects-union** — order gabungan drawable (0..count-1) +
+offscreens (count..count+offscreen-1); ren = 198 drawable + 24 offscreen =
+222 entri. Framework vendored era core 4 (pixi-live2d-0.4.0.js) membaca
+`drawables.renderOrders` → undefined → `_sortedDrawableIndexList` kosong →
+semua drawable dianggap tak terlihat. Bahkan delegasi naif salah: framework
+lama mengiterasi slot `0..count-1` pada array (bukan peta), nilai order sparse
+(dibumbui offset offscreen) membuat slot kosong = drawable terlewat senyap.
+
+Fix — **PATCH 3** di `static/js/pixi-live2d-0.4.0.js` (pola patch existing:
+#1 doDrawModel/__mcDraw, #2 setupShaderProgram multiplyColor): IIFE
+`patchCore6Compat` membungkus `Live2DCubismCore.Model.fromMoc`; saat
+`drawables.renderOrders === undefined` (core 6+) menempel getter yang
+mengembalikan **permutasi padat 0..n-1** drawable — sort drawable by order
+asli, rem tie by indeks; offscreen diabaikan (framework lama tak mengenalnya).
+Core lama 5.1.0 (moc v5 orders length === count) tak tersentuh — jalur
+passthrough. Perubahan user-terlihat: karakter tampil kembali + model moc3 v6
+(tesmodel/ren) render dengan mask/clip/physics benar.
+Guard baru **test-core6-compat.js** (10 assertion; suites 11→12): string-match
+level sumber PATCH 3 + **eksekusi nyata via Bun** — eval core+patch, `Model.
+fromMoc` moc v5 (lumine) & v6 (ren), wajib Int32Array sepanjang drawable count
+(jebakan v6: delegasi naif mengembalikan 222 entri untuk 198 drawable — guard
+menangkapnya). Urutan eval penting di probe: core dulu TANPA window (emscripten
+pilih env node), baru `globalThis.window=globalThis` sebelum eval patch.
+Gate: **377 unit + 533 guard, 0 gagal**; tsc bersih. Verifikasi user: Ctrl+F5.
+
+## UPDATE 2026-09-09 (19) — MODEL MOC3 v6: CORE DI-SWAP KE 6.0.1 (SDK WEB 5-r.5) (BELUM COMMIT)
+
+Laporan user: model baru ("tesmodel"/ren) **masking texture, physics, dan
+clipping berantakan**. Akar masalah TERBUKTI via probe Bun eksekusi sungguhan:
+`ren.moc3` = moc3 **versi 6** (byte ke-4 = 0x06, Cubism 5.1 export), sedangkan
+core terpasang **5.1.0** hanya mengenal sampai `MocVersion_50 = 5` —
+`Moc.fromArrayBuffer` mengembalikan NULL → shim `patchCubismCore` (app.js)
+men-stamp 6→4 buta → moc v6 dibaca dengan layout v4 → **mask/clip/texture dan
+physics rusak senyap**, persis pola kegagalan entri lama (shim stamp v5→v4).
+Inventaris: lumine = v5, 神宫白子 = v4, ren = v6 — hanya v6 yang korban.
+
+Fix: `static/js/live2dcubismcore.min.js` di-swap ke **Core 6.0.1** dari zip
+resmi `CubismSdkForWeb-5-r.5.zip` (cubism.live2d.com/sdk-web/bin/ — CDN core
+masih menyajikan 5.1.0 identik hash `25ae938c…`, jadi ambil dari zip SDK).
+Bukti: `MocVersion_53 = 6` ada di core baru; probe env node — ren v6 load **OK
+non-null** (getMocVersion 6), lumine v5 OK, 神宫白子 v4 OK (backward-compat
+terjaga). Changelog 5-r.5 (2026-04-02) bahkan menyebut fix "unnecessary
+multiply color and screen color settings in mask drawing". Wasm ter-embed
+base64 dalam satu file — tanpa fetch eksternal. Guard `test-multiply-color.js`
+tetap hijau (API `csmGetDrawableMultiplyColors` masih ada). Shim stamp 6→4 di
+app.js tidak diubah: moc v6 kini genuine-load jadi shim tak terpicu; kalau
+kelak ada moc v8+, shim itu akan salah stamp lagi (catatan kesadaran, bukan
+bengkel sekarang).
+Gate: **377 unit + 523 guard, 0 gagal**; tsc bersih. Verifikasi user: hard
+reload (Ctrl+F5) — core client-side, tak perlu restart server.
+
+## UPDATE 2026-09-09 (18) — UCAPAN DETERMINISTIK: TERJEMAHAN PINDAH KE SERVER (BELUM COMMIT)
+
+Laporan user: "kadang ngikutin teks yang ditulis user, kadang ngikutin
+dropdown" — suara tidak konsisten. Akar masalah: terjemahan ucapan dulu
+DILAKUKAN DI CLIENT (fetch /api/tts/translate sebelum TTS) — kalau LLM
+role "chat" lambat/gagal/timeout 30 dtk, client diam-diam jatuh ke teks
+asli → kadang audio bahasa user, kadang bahasa dropdown. Ditambah kebocoran
+tampilan: pipeline doRemoteTTS menampilkan kalimat yang dibacakan di bubble,
+jadi teks terjemahan ikut tampil berbahasa asing.
+
+Redesain — SATU titik keputusan di server:
+- **/api/tts menerima `ttsLang` opsional**: bila "Bahasa suara" tetap,
+  handleTTS menerjemahkan teks DULU (translateForSpeech — LLM role chat,
+  cache LRU) lalu menyintesis. Semua request TTS remote kini melalui logika
+  yang sama → ucapan TIDAK bisa berganti bahasa sendiri.
+- **Skip cerdas**: teks yang sudah berbahasa target TIDAK diterjemahkan
+  (detectSpeechLangBase — heuristic skrip+kata layak Indonesia, cermin
+  detectTextLang di app.js; dikunci test). User menulis Jepang + suara
+  ja-JP = nol panggilan LLM.
+- **Bubble tetap bahasa user**: client mengirim kalimat ASLI per segmen;
+  terjemahan hanya di sisi audio. (Dulu bubble ikut menampilkan terjemahan.)
+- speak() app.js: jalur remote TANPA pre-translate (cukup meneruskan
+  ttsLang); jalur suara browser tetap pre-translate via /api/tts/translate
+  (Web Speech butuh teks lokal). fetchTTSAudio: timeout 45 dtk saat
+  ttsLang aktif (menampung latensi LLM terjemahan). window.__debugSpeak
+  kini terpasang apa pun provider — jalur VTuber/mode-runtime selalu masuk
+  pipeline ini.
+Gate: **377 unit + 523 guard, 0 gagal**; build & tsc bersih. Entri (13)-(18)
+masih di working tree; perlu restart server + reload halaman.
+
+## UPDATE 2026-09-09 (17) — "BAHASA SUARA" TETAP = UCAPAN DITERJEMAHKAN, TEKS TETAP BAHASA USER (BELUM COMMIT)
+
+Pertanyaan user: dari dua setelan bahasa, mana yang mengurus ucapan narator?
+Dan bisa nggak: user menulis Indonesia → teks balasan tetap Indonesia tapi
+suara berbahasa lain (mis. Jepang)? Jawaban lama: "Bahasa" (UI) = UI +
+baseline balasan; "Bahasa suara" (ttsLang) HANYA pemilih voice TTS — teks
+tidak pernah diterjemahkan, voice ja-JP membaca teks Indonesia mentah-mentah
+(hasil aneh).
+
+Sekarang "Bahasa suara" punya makna penuh, dua mode:
+- **"Ikuti bahasa teks" (nilai `auto`, DEFAULT baru)** — suara mengikuti
+  bahasa balasan. Deteksi bahasa teks heuristic script tanpa jaringan
+  (`detectTextLang`: kana→ja, hanzi→zh, hangul→ko, kata layak Indonesia≥20%
+  →id, selainnya→en). browserTTS memakai `ttsLangForText()` untuk u.lang +
+  pemilihan voice; voice "Suara Sistem" yang dipin user tetap menang (itu
+  fungsinya — pilih "(otomatis)" bila mau suara mengikuti bahasa).
+- **Bahasa tetap (id-ID/ja-JP/en-US/zh-CN)** — teks yang DIBACAKAN adalah
+  TERJEMAHANNYA ke bahasa itu; teks di bubble & chat log tetap bahasa
+  balasan (cermin user). Terjemahan via route baru **POST /api/tts/translate**
+  (LLM role "chat", prompt bahasa target dari map locale, cache LRU 200 di
+  `src/server/persona/speech-lang.ts`, gagal = teks asli — TTS tetap jalan).
+  speak() app.js memanggilnya sebelum splitSpeechSegments; fallbackTimer
+  di-re-arm setelah terjemahan agar audio tidak terpotong.
+
+Perubahan file: speech-lang.ts (baru, murni + injectable LLM call),
+index.ts (route+handler), app.js (speak(), browserTTS, detectTextLang,
+ttsLangForText, MODEL_CONFIG_DEFAULTS ttsLang:"auto", normalisasi menerima
+"auto"), index.html (option auto + hint), dict-id/en (+2 kunci).
+Guard: config lama bersave id-ID/ja-JP tetap berlaku (mode tetap); yang
+belum pernah di-set dapat auto. Gate: **375 unit + 515 guard, 0 gagal**;
+build & tsc bersih. Entri (13)-(17) masih di working tree.
+
+## UPDATE 2026-09-09 (16) — KARAKTER CERMINKAN BAHASA USER (BELUM COMMIT)
+
+Laporan user: karakter selalu membalas bahasa Indonesia meski user menulis
+bahasa lain. Penyebab: (a) buildSystem di agent loop menulis literal
+"Jawab user dalam bahasa Indonesia." di kedua varian prompt; (b) prompt
+brain (mode chat) sepenuhnya Indonesia tanpa aturan bahasa sama sekali;
+(c) narrator memaksa bahasa config.i18n.
+
+Perubahan (aturan cermin, konsisten di 4 titik):
+- loop.ts `buildSystem` — rule final id: "Balas dalam bahasa yang SAMA
+  dengan bahasa yang dipakai user… (campuran → dominan; istilah teknis
+  tetap apa adanya)"; varian en dibuat mirror juga (bukan "Reply in
+  English"). Varian prompt id/en tetap ada — yang berubah hanya aturan
+  bahasa jawabannya.
+- brain.ts `buildSystemPrompt` — block "=== BAHASA ===" mirror-bahasa
+  ditambahkan untuk SEMUA lang, dengan penegasan kata kunci directive
+  tetap kosakata Indonesia (protokol). Block "=== LANGUAGE ===" (UI
+  pilihan en) ditambahkan SESUDAHNYA sehingga tetap menang bila user
+  eksplisit pilih English di UI.
+- narrator.ts — simpulan akhir meniru bahasa teks hasil kerja agent.
+- quip (/api/assistant/quip) SENGAJA TIDAK diubah: label event itu
+  teknis (nama tool Inggris) — mencerminkan label membuat komentar
+  sampingan berubah bahasa sendiri di UI Indonesia; quip tetap mengikuti
+  bahasa UI (config.i18n).
+Gate: **369 unit + 515 guard, 0 gagal**; build & tsc bersih. Entri (13)-
+(16) semua masih di working tree belum commit.
+
+## UPDATE 2026-09-09 (15) — EKSPRESI MODEL ASLI MENANG ATAS HARDCODE (BELUM COMMIT)
+
+Laporan user: ekspresi karakter ketimpa emosi hardcode engine padahal model
+punya .exp3/emote sendiri. Akar masalahnya TIGA lapis: (a)
+`refreshRoleEmotions()` mengisi `supportedEmotions` dari
+`EMOTION_ROLE_TEMPLATES` (hardcode senang/sedih/... di app.js); (b)
+`applyExpression()` memeriksa vocab itu SEBELUM mencoba `.exp3` bawaan model
+(cabang native hanya untuk nama yang TIDAK ada di vocab); (c)
+`getCapabilityProfile().emotions` mengiklankan emosi hardcode sebagai
+kemampuan model ke prompt LLM.
+
+Urutan prioritas BARU (app.js + brain.ts applyActions):
+1. **Preset emosi USER** (sheet.presets.user kategori emosi — aturan sheet
+   user > segalanya).
+2. **Ekspresi bawaan model (.exp3)** — pencocokan case-insensitive ke
+   `state.modelExpressions`.
+3. **Klip emosi terukur** dari disk (MotionTaxonomy EMOTION_VERBS →
+   playEmotionClip).
+4. **Template sintetis role-space** (state.roleEmotions dari
+   EMOTION_ROLE_TEMPLATES) — HANYA untuk model yang tidak punya apa-apa
+   sendiri; nama template tidak lagi masuk supportedEmotions sheet/state.
+
+Perubahan detail:
+- `refreshRoleEmotions()` — supportedEmotions = {} + klip emosi (nilai null
+  = "mainkan klip"); roleEmotions tetap dibangun sebagai fallback runtime.
+  Dipanggil ulang setelah loadMotionTaxonomy (dulu klip kosong karena
+  taxonomy async datang setelah detectModelCapabilities).
+- `projectEmotionPresets(sheet)` — sheet.supportedEmotions hanya berisi
+  preset user; emosi sintetis builtin TIDAK lagi diproyeksikan ke sheet.
+- `inspectModel()` — sheet baru dibuat dengan supportedEmotions = {} (dulu
+  menanam hasil buildRoleEmotions()).
+- `applyExpression()` ditulis ulang: user-preset → .exp3 (nativeName) →
+  klip (userEntry===null) → sintetis (state.roleEmotions) → fireOverlay
+  untuk nama asing. Log label baru (User emotion preset / Native
+  expression / Emotion clip / Synthetic emotion (fallback)).
+- `getExpressibleEmotions()` — via jujur: param(preset user) → native(.exp3)
+  → clip; emosi sintetis tidak diiklankan.
+- `getCapabilityProfile().emotions` — vocab model dulu, nama template
+  sintetis dicantumkan hanya sebagai cadangan kosakata prompt (runtime tetap
+  prioritaskan yang asli).
+- brain.ts `applyActions`: `emotionVia` dari getExpressibleEmotions — pose
+  inferensi & gesture fallback (EMOTION_GESTURE_FALLBACK) DILEWATI bila
+  emosi dimainkan dari native/clip (aset model membawa face+body sendiri;
+  menumpuk pose tebakan merusak ekspresi asli). [GESTURE:] eksplisit LLM
+  tetap selalu dipakai.
+Guard: test-emotion-overlay.js diperbarui (3 assertion baru: nativeName
+case-insensitive, Object.assign roleEmotions dihapus, inspectModel tak
+menanam sintetis) — 515 guard. Gate: **369 unit + 515 guard, 0 gagal**;
+build & tsc bersih. Sesi (13)(14)(15) semua masih di working tree.
+
+## UPDATE 2026-09-09 (14) — SSE AGENT TERPOTONG 10 DTK OLEH BUN idleTimeout (BELUM COMMIT)
+
+Laporan user: stream agent "kadang berhenti, nggak streaming terus, atau
+reconnect ulang". Diagnosis terukur: **Bun 1.4.0 memutus koneksi yang senyap
+>10 detik** (default `idleTimeout: 10`) — direproduksi dengan server uji:
+stream SSE yang tidak mengirim apa pun terpotong ECONNRESET tepat 10 dtk,
+Bun mencetak "timed out a request after 10 seconds. Pass `idleTimeout` to
+configure." Korban di app: ask-stream/approve-stream senyap saat tool
+berjalan lama, narrate di akhir tugas, atau menunggu approval → panel masuk
+jalur follow-bus (terlihat "berhenti/reconnect"); route non-SSE yang handler-
+nya menunggu LLM >10 dtk juga berpotensi terpotong.
+
+Perbaikan `src/server/index.ts`:
+- `Bun.serve({ idleTimeout: 255 })` — nilai maksimum yang diizinkan (detik).
+- Helper `makeSseStream()` (DRY untuk ask-stream & approve-stream):
+  **heartbeat** komentar SSE `": ka\n\n"` tiap 5 dtk (parser klien drainSse
+  melewatkan frame tanpa `data:` — dikunci test baru). Heartbeat menutupi
+  senyap >255 dtk (menunggu approval ber menit) dan menjaga proxy/browser
+  tak menganggap koneksi mati.
+- Perilaku `clientGone` (enqueue ke stream mati tak menggagalkan tugas)
+  dipertahankan persis.
+Test: `drainSse` komentar heartbeat → 0 event (test/agent-panel.test.ts).
+Gate: **369 unit + 512 guard, 0 gagal**; build & tsc bersih. CATATAN:
+perlu **restart server** (`bun run start`) supaya idleTimeout & heartbeat
+aktif; perubahan (13) dan (14) keduanya masih di working tree.
+
+## UPDATE 2026-09-09 (13) — AKTING AGENT: LLM-DULU, TEMPLATE JADI JARING PENGAMAN (BELUM COMMIT)
+
+Laporan user: di mode agent karakter cuma mengucap kata template
+(`as.actor.*`: "Oke, aku pantauin ya…", "Hmm, dia lagi periksa berkas…")
+dan tidak memantau/melaporkan/menyimpulkan pekerjaan agent. Diagnosis:
+LLM role "chat" sehat (probe /api/assistant/quip merespons berkarakter),
+tapi actor.ts (a) mengucapkan fallback template LANGSUNG lalu quip LLM
+menyusul di belakang, (b) mayoritas event di-hardcode `allowLLM: false`
+(tool_call_start, final_answer, plan_revised, verification_result,
+subagent_spawned — alias seluruh momen kerja), dan (c) cooldown quip
+berarti template dikucurkan tanpa henti.
+
+Perubahan `src/client/agent/panel/actor.ts`:
+- **Urutan dibalik**: quip LLM diminta DULU; template hanya diucapkan bila
+  quip gagal (post reject → segera) atau tak datang dalam `fallbackMs`
+  (default 4500 ms, injectable untuk test). Quip datang → template
+  DIBATALKAN (timer fallback diclear). Quip datang setelah template
+  terlanjur → dibuang (tidak dobel bicara).
+- **Semua event kerja kini boleh minta quip** (allowLLM true): tool_call_start,
+  final_answer, plan_revised, verification_result gagal, subagent_spawned,
+  error, thinking_start. `tool_call_end` tanpa komentar (reaksi pandang saja).
+- **Label event asli dikirim ke prompt quip** (`event: ev.label` — mis.
+  "read_file package.json") supaya komentar spesifik, bukan generik.
+- **Cooldown quip 25s → 15s, dan dalam cooldown = DIAM** (bukan template
+  kaleng). Cooldown berarti "baru bicara", bukan izin spam.
+- `speak` (bus) kini menclear fallback timer — komentar persona server tidak
+  tertimpa template yang menggantung.
+Test: test/agent-panel.test.ts ditulis ulang untuk semantik baru (9 test
+actor: quip menang, fallback timer, reject → template segera, cooldown =
+diam, label ke prompt, dsb). Gate: **368 unit + 512 guard, 0 gagal**;
+build & tsc bersih. CATATAN: perubahan ini ADA DI WORKING TREE BELUM
+DI-COMMIT — bercampur WIP lain (brain timer, panel draft-clear, stage-hint,
+vtuber inject "agent", dsb.) dari sesi sebelumnya.
+
 ## UPDATE 2026-09-08 (12) — MODE AGENT: LEBAR DEFAULT + PANGGUNG BERSIH PER-MODE (a2ef22e)
 
 Finalisasi permintaan user (hanya mode Agent; mode lain TANPA perubahan):

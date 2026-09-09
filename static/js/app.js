@@ -291,7 +291,11 @@
     view: $("#live2d-canvas"),
     width: _sz.w,
     height: _sz.h,
-    backgroundColor: 0x0a0a14,
+    // Transparan — warna latar tetap dari #stage CSS. Canvas alpha
+    // dibutuhkan blend Atop/Out moc3 v6 (patchCore6Compat membaca
+    // getContextAttributes().alpha); canvas opaque membuat Out jadi quad hitam.
+    backgroundColor: 0x16120c,
+    backgroundAlpha: 0,
     autoDensity: true,
     resolution: Math.min(window.devicePixelRatio || 1, 2),
     antialias: true,
@@ -530,6 +534,10 @@
       // Panel terbuka saat model selesai dimuat → framing lama memakai
       // stageArea sempit. Hitung ulang dengan lebar penuh.
       applyCharacterIdentity();
+      // Daftar model di drawer menandai model aktif — gambar ulang setelah
+      // state.modelPath berubah (hook dipasang wireUI; jalur auto-load boot
+      // tidak lewat loadUserModel yang sudah memanggil refreshModels sendiri).
+      if (typeof window.__refreshModels === "function") window.__refreshModels();
 
       console.log("[Live2D] Model loaded:", state.model);
       rememberModel(modelPath);
@@ -548,9 +556,15 @@
 
       loadMotionTaxonomy()
         .then(() => initMotionRegistry())
+        // Klip emosi terukur baru tersedia setelah taxonomy dari server —
+        // vocabulary supportedEmotions dihitung ulang di sini (detectModel
+        // Capabilities berjalan SEBELUM taxonomy datang, jadi daftar klipnya
+        // masih kosong di sana).
+        .then(() => refreshRoleEmotions())
         .catch((e) => {
           console.warn("[taxonomy] load error", e);
           initMotionRegistry();
+          refreshRoleEmotions();
         });
 
       refreshUserNoteUI().catch((e) =>
@@ -1583,14 +1597,32 @@
   }
 
   function refreshRoleEmotions() {
+    // HARDcode emosi (EMOTION_ROLE_TEMPLATES) TIDAK BOLEH masuk
+    // supportedEmotions bila model punya ekspresi/emote sendiri (.exp3, klip
+    // emosi) — ekspresi asli karaktermu harus menang, sintetis paling akhir.
+    // supportedEmotions kini HANYA berisi emosi milik model:
+    //   - klip emosi terukur (nilai null → applyExpression memainkan klip),
+    //   - preset emosi user (ditambahkan projectEmotionPresets setelah sheet
+    //     dibaca — jangan dibaca di sini: lastSheet bisa basi saat ganti model).
+    // Template sintetis tetap dibangun ke state.roleEmotions sebagai FALLBACK
+    // terakhir untuk model yang tidak punya apa-apa sendiri.
     state.roleEmotions = buildRoleEmotions();
-    state.supportedEmotions = Object.assign({}, state.roleEmotions);
+    state.supportedEmotions = {};
+    const T = state.motionTaxonomy;
+    if (T && T.byVerb && typeof MotionTaxonomy !== "undefined") {
+      const EV = MotionTaxonomy.EMOTION_VERBS || {};
+      for (const emo of Object.keys(EV)) {
+        if (emo === "normal") continue;
+        if (EV[emo].some((v) => (T.byVerb[v] || []).length > 0))
+          state.supportedEmotions[emo] = null;
+      }
+    }
     console.log(
-      "[emotion] role-derived vocabulary:",
-      Object.keys(state.roleEmotions).join(", ") ||
-        "(none — model lacks facial roles)",
+      "[emotion] model-own emotion vocabulary (exp3 di modelExpressions, klip:",
+      Object.keys(state.supportedEmotions).join(", ") ||
+        "(tidak ada — sintetis hardcode jadi fallback)",
     );
-    return state.roleEmotions;
+    return state.supportedEmotions;
   }
 
   function setEmotionTargets(preset, intensity) {
@@ -2035,36 +2067,41 @@
       }
     }
 
-    if (state.emotionMode === "native") {
-      if (state.supportedEmotions.hasOwnProperty(name)) {
-        if (state.activeEmotion === name && intensity === undefined) {
-          state.activeEmotion = "normal";
-          state.activeProperty = "default";
-          resetEmotion();
-          $$(".expr-btn").forEach((b) =>
-            b.classList.toggle("active", b.dataset.expr === "normal"),
-          );
-          return;
-        }
-        state.activeEmotion = name;
+    // ── URUTAN PRIORITAS EKSPRESI (yang punya model menang, hardcode akhir) ──
+    // 1) Preset emosi USER (sheet) — aturan sheet: user > segalanya.
+    // 2) Ekspresi bawaan model (.exp3) — pencocokan case-insensitive.
+    // 3) Klip emosi model (terukur dari disk lewat MotionTaxonomy).
+    // 4) Template sintetis role-space (state.roleEmotions) — HANYA untuk
+    //    model yang tidak punya apa-apa sendiri. Dulu langkah 4 ini menimpa
+    //    .exp3 model karena supportedEmotions diisi hardcode — itu yang
+    //    bikin ekspresi asli karakter tidak pernah kepakai.
+    const userEntry = state.supportedEmotions[name];
+    if (userEntry && typeof userEntry === "object") {
+      if (state.activeEmotion === name && intensity === undefined) {
+        state.activeEmotion = "normal";
         state.activeProperty = "default";
-        const preset = state.supportedEmotions[name];
-        setEmotionTargets(preset, intensity);
-
-        playEmotionClip(name);
-        fireOverlay(name);
+        resetEmotion();
         $$(".expr-btn").forEach((b) =>
-          b.classList.toggle("active", b.dataset.expr === name),
-        );
-        console.log(
-          "[Live2D] Universal emotion (native) ->",
-          name,
-          "intensity:",
-          intensity,
+          b.classList.toggle("active", b.dataset.expr === "normal"),
         );
         return;
       }
+      state.activeEmotion = name;
+      state.activeProperty = "default";
+      setEmotionTargets(userEntry, intensity);
+      playEmotionClip(name); // body follows the face (see native branch)
+      fireOverlay(name);
+      $$(".expr-btn").forEach((b) =>
+        b.classList.toggle("active", b.dataset.expr === name),
+      );
+      console.log("[Live2D] User emotion preset ->", name, "intensity:", intensity);
+      return;
+    }
 
+    const nativeName = (state.modelExpressions || []).find(
+      (n) => String(n).toLowerCase() === String(name).toLowerCase(),
+    );
+    if (nativeName) {
       if (state.activeEmotion === name || state.activeProperty === name) {
         state.activeEmotion = "normal";
         state.activeProperty = "default";
@@ -2077,21 +2114,36 @@
       state.activeEmotion = name;
       state.activeProperty = "default";
       resetEmotion();
-
       fireOverlay(name);
       try {
-        await state.model.expression(name);
+        await state.model.expression(nativeName);
         $$(".expr-btn").forEach((b) =>
           b.classList.toggle("active", b.dataset.expr === name),
         );
-        console.log("[Live2D] Native expression ->", name);
+        console.log("[Live2D] Native expression ->", nativeName);
       } catch (err) {
         console.warn("[Live2D] Native expression error:", err);
       }
       return;
     }
 
-    if (state.supportedEmotions.hasOwnProperty(name)) {
+    if (userEntry === null) {
+      // Emosi yang hanya punya klip (didaftar refreshRoleEmotions dengan
+      // nilai null) — mainkan klip emote modelnya, bukan param sintetis.
+      state.activeEmotion = name;
+      state.activeProperty = "default";
+      playEmotionClip(name);
+      fireOverlay(name);
+      $$(".expr-btn").forEach((b) =>
+        b.classList.toggle("active", b.dataset.expr === name),
+      );
+      console.log("[Live2D] Emotion clip ->", name);
+      return;
+    }
+
+    // Fallback terakhir: emosi sintetis role-space (hardcode universal).
+    const synth = state.roleEmotions && state.roleEmotions[name];
+    if (synth) {
       if (state.activeEmotion === name && intensity === undefined) {
         name = "normal";
       }
@@ -2100,23 +2152,23 @@
       if (name === "normal") {
         resetEmotion();
       } else {
-        const preset = state.supportedEmotions[name];
-        setEmotionTargets(preset, intensity);
-        playEmotionClip(name);   // body follows the face (see native branch)
+        setEmotionTargets(synth, intensity);
+        playEmotionClip(name); // body follows the face (see native branch)
         fireOverlay(name);
       }
       $$(".expr-btn").forEach((b) =>
         b.classList.toggle("active", b.dataset.expr === name),
       );
       console.log(
-        "[Live2D] Synthetic emotion ->",
+        "[Live2D] Synthetic emotion (fallback) ->",
         name,
         "intensity:",
         intensity,
       );
-    } else {
-      fireOverlay(name);
+      return;
     }
+
+    fireOverlay(name);
   }
 
   function toggleAccessory(paramId, val) {
@@ -2140,6 +2192,7 @@
     const bubble = $("#bubble");
     const textEl = $("#bubble-text");
     if (bubbleTimeout) clearTimeout(bubbleTimeout);
+    bubble.classList.remove("waiting");
     textEl.textContent = text;
     bubble.classList.remove("hidden");
     bubbleTimeout = setTimeout(() => bubble.classList.add("hidden"), duration);
@@ -2244,6 +2297,32 @@
     else stopAgentIdle();
   };
 
+  // Deteksi bahasa teks (heuristic script, tanpa jaringan) — dipakai jalur
+  // TTS ketika "Bahasa suara" = auto (ikuti bahasa teks). Latin murni tanpa
+  // tanda khas → cek kata layak Indonesia dulu; selain itu beri en-US agar
+  // bahasa campuran/teknis tidak terbaca voice Indonesia.
+  function detectTextLang(text) {
+    const t = String(text || "");
+    if (/[\u3040-\u30ff]/.test(t)) return "ja-JP"; // kana selalu Jepang
+    if (/[\u4e00-\u9fff]/.test(t)) return "zh-CN"; // hanzi (tanpa kana) → Mandarin
+    if (/[\uac00-\ud7af]/.test(t)) return "ko-KR";
+    if (/[a-z]/i.test(t)) {
+      const words = t.toLowerCase().match(/[a-z]+/g) || [];
+      if (!words.length) return "en-US";
+      const idWords =
+        /^(yang|dan|di|ke|dari|untuk|dengan|ini|itu|aku|kamu|kita|saya|tidak|bisa|sudah|akan|ada|juga|tapi|kalau|gak|nggak|banget|ya|kok|dong|deh|sih)$/;
+      const hits = words.filter((w) => idWords.test(w)).length;
+      if (hits / words.length >= 0.2) return "id-ID";
+      return "en-US";
+    }
+    return "id-ID";
+  }
+  // Resolusi bahasa TTS: ttsLang tetap (kode BCP-47) menang; "auto"/kosong
+  // mengikuti bahasa teks.
+  function ttsLangForText(text, ttsLang) {
+    return ttsLang && ttsLang !== "auto" ? ttsLang : detectTextLang(text);
+  }
+
   function applyFallbackPresence(p) {
     if (window.__cameraActive) return;
     if (window.__agent) window.__agent.setPresence(p);
@@ -2275,7 +2354,9 @@
       const u = new SpeechSynthesisUtterance(text);
 
       const vcfg = currentModelConfig();
-      u.lang = vcfg.ttsLang;
+      // ttsLang "auto" = ikuti bahasa TEKS (heuristic script ringan; murah
+      // dan tanpa jaringan). Bahasa tetap (id-ID/ja-JP/...) dipakai apa adanya.
+      u.lang = ttsLangForText(text, vcfg.ttsLang);
       u.rate = vcfg.ttsRate;
       u.pitch = vcfg.ttsPitch;
       u.volume = 1;
@@ -2284,7 +2365,8 @@
       const pickVoice = () => {
         const vs = speechSynthesis.getVoices() || [];
 
-        const base = String(vcfg.ttsLang || "")
+        const wantLang = ttsLangForText(text, vcfg.ttsLang);
+        const base = String(wantLang || "")
           .split("-")[0]
           .toLowerCase();
         const langRe = new RegExp("^" + base, "i");
@@ -2296,8 +2378,7 @@
             : null) ||
           vs.find(
             (x) =>
-              String(x.lang).toLowerCase() ===
-              String(vcfg.ttsLang).toLowerCase(),
+              String(x.lang).toLowerCase() === String(wantLang).toLowerCase(),
           ) ||
           vs.find((x) => langRe.test(x.lang)) ||
           (base === "id" ? vs.find((x) => /indonesia/i.test(x.name)) : null);
@@ -2346,19 +2427,23 @@
     return out.length ? out : [t];
   }
 
-  async function fetchTTSAudio(text) {
+  async function fetchTTSAudio(text, ttsLang) {
     // Timeout + retry: kadang koneksi request pertama (dari handler klik)
     // menggantung di server tanpa jawaban. Abort menutup socket beku; retry
     // memakai koneksi segar — dan teks yang sama biasanya sudah ter-cache
-    // di server sehingga nyaris instan.
+    // di server sehingga nyaris instan. Saat bahasa suara tetap aktif,
+    // server menerjemahkan dulu (+latensi LLM) → batas dilonggarkan 45 dtk.
+    const hasLang = !!ttsLang;
     for (let attempt = 0; ; attempt++) {
       const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 20000);
+      const to = setTimeout(() => ctrl.abort(), hasLang ? 45000 : 20000);
       try {
         const resp = await fetch(API + "/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(
+            hasLang ? { text, ttsLang } : { text },
+          ),
           signal: ctrl.signal,
         });
         if (!resp.ok) {
@@ -2430,7 +2515,7 @@
     return out;
   }
 
-  async function doRemoteTTS(text, markDone, fallbackTimer, reveal) {
+  async function doRemoteTTS(text, markDone, fallbackTimer, reveal, ttsLang) {
     if (!ttsRemoteActive()) {
       reveal && reveal();
       browserTTS(text, markDone, fallbackTimer);
@@ -2449,7 +2534,7 @@
     // Teks pendek → jalur lama (satu request), tanpa overhead pipeline.
     if (segments.length <= 1) {
       try {
-        const blob = await fetchTTSAudio(text);
+        const blob = await fetchTTSAudio(text, ttsLang);
         reveal && reveal();
         const fallbackTimer2 = setTimeout(markDone, 45000);
         playTTSAudio(blob, () => {
@@ -2482,7 +2567,7 @@
       if (aborted || i >= segments.length || pending.has(i)) return;
       pending.set(
         i,
-        fetchTTSAudio(segments[i]).catch((e) => {
+        fetchTTSAudio(segments[i], ttsLang).catch((e) => {
           pending.delete(i);
           throw e;
         }),
@@ -2587,14 +2672,65 @@
       }, dur);
     };
 
+    // Fase menunggu audio TTS (latensi remote 10-16 dtk): bubble "…" MATI
+    // terasa seperti karakter hang. Class "waiting" menghidupkannya — tiga
+    // titik berkedip, dibersihkan showBubble() berikutnya / markDone().
+    $("#bubble").classList.add("waiting");
     showBubble("…", 1e9);
-    const fallbackTimer = setTimeout(
+    let fallbackTimer = setTimeout(
       markDone,
       ttsRemoteActive() ? 45000 : Math.max(1400, text.length * 75) + 800,
     );
+    const rearmFallback = () => {
+      // Terjemahan ucapan menambah latensi sebelum audio — timer mati-diam
+      // di-re-arm supaya markDone tidak memotong di tengah menunggu.
+      clearTimeout(fallbackTimer);
+      fallbackTimer = setTimeout(
+        markDone,
+        ttsRemoteActive() ? 45000 : Math.max(1400, text.length * 75) + 800,
+      );
+    };
+
+    // "Bahasa suara" TETAP (mis. ja-JP) + balasan tetap bahasa user →
+    // yang dibacakan suara adalah TERJEMAHANNYA. Keputusannya DI SERVER
+    // (/api/tts menerima ttsLang): satu titik untuk semua request TTS
+    // remote, jadi ucapan TIDAK bisa berganti bahasa sendiri (dulu
+    // terjemahan di client kadang gagal/timeout → jatuh ke teks asli).
+    // Bubble & chat log tetap menampilkan teks asli.
+    const vcfgSpeak = currentModelConfig();
+    const fixedLang =
+      vcfgSpeak.ttsLang && vcfgSpeak.ttsLang !== "auto"
+        ? vcfgSpeak.ttsLang
+        : "";
+    // Hook bicara lintas-scope (mode-runtime VTuber dsb.) — terpasang
+    // apa pun providernya, sehingga SEMUA omongan lewat satu pipeline ini.
+    window.__debugSpeak = (t) => speak(String(t || ""));
     if (ttsRemoteActive()) {
-      window.__debugSpeak = (t) => speak(String(t || ""));
-      doRemoteTTS(text, markDone, fallbackTimer, reveal);
+      doRemoteTTS(text, markDone, fallbackTimer, reveal, fixedLang);
+      return;
+    }
+    // Jalur suara browser: Web Speech membaca teks lokal → terjemahkan dulu
+    // via /api/tts/translate (gagal → teks asli, suara tetap jalan).
+    if (fixedLang) {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 30000);
+      fetch(API + "/api/tts/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, ttsLang: fixedLang }),
+        signal: ctrl.signal,
+      })
+        .then((r) => r.json())
+        .then((d) =>
+          d && typeof d.text === "string" && d.text ? d.text : text,
+        )
+        .catch(() => text)
+        .then((spoken) => {
+          clearTimeout(to);
+          rearmFallback();
+          reveal();
+          browserTTS(spoken, markDone, fallbackTimer);
+        });
     } else {
       reveal();
       browserTTS(text, markDone, fallbackTimer);
@@ -2789,6 +2925,9 @@
     }
 
     window.__addChat = addChat;
+    // Hook lintas-scope: loadModel (scope luar) memicu gambar-ulang daftar
+    // model di drawer setelah state.modelPath berubah (penanda "aktif").
+    window.__refreshModels = refreshModels;
 
     window.__l2dDebug = {
       state,
@@ -2800,15 +2939,14 @@
       renderer: app.renderer,
     };
 
-    function sendBubble() {
-      const input = $("#bubble-input");
-      const text = input.value.trim();
-      if (!text) return;
+    // Jalur kirim bersama: input manual & quick phrase menempuh alur yang
+    // sama (entri chat + bubble + mood + Mode Otak) supaya dua pintu "bicara
+    // ke karakter" tidak berperilaku berbeda.
+    function submitUtterance(text) {
       addChat("user", text);
       showBubble(text);
       resetAgentIdle();
       const brainOn = $("#toggle-brain") && $("#toggle-brain").checked;
-      input.value = "";
 
       const g =
         window.__agent && window.__agent.guessEmotion
@@ -2832,6 +2970,14 @@
         speak(text);
       }
     }
+
+    function sendBubble() {
+      const input = $("#bubble-input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      submitUtterance(text);
+    }
     $("#btn-bubble").addEventListener("click", sendBubble);
     $("#bubble-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") sendBubble();
@@ -2840,9 +2986,8 @@
     $$(".phrase-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const p = btn.textContent.trim() || btn.dataset.phrase;
-        resetAgentIdle();
-        showBubble(p, 3500);
-        speak(p);
+        if (!p) return;
+        submitUtterance(p);
       });
     });
 
@@ -2968,10 +3113,12 @@
           : '<span class="conn-role-tag wild">' + __t("conn.allRoles") + "</span>";
         const enabled = c.enabled !== false;
         card.classList.toggle("disabled", !enabled);
+        // Badge hanya saat membawa informasi yang tidak ditunjukkan toggle:
+        // status tes/cooldown, atau kombinasi aktif+off (dilewati). "off" polos
+        // redundan dengan toggle — jangan digambar dua kali.
+        const showBadge = enabled || c.id === activeId;
         const badgeTextFinal = !enabled
-          ? c.id === activeId
-            ? __t("conn.offSkipped")
-            : "⏸ off"
+          ? __t("conn.offSkipped")
           : badgeText;
         card.innerHTML = `
           <div class="conn-head">
@@ -2980,16 +3127,16 @@
               <span class="slider"></span>
             </label>
             <span class="conn-name">${esc(c.name || c.id)}</span>
-            <span class="conn-badge ${!enabled ? "default" : cooling ? "default" : badgeClass(status)}">${badgeTextFinal}</span>
+            ${showBadge ? `<span class="conn-badge ${!enabled ? "default" : cooling ? "default" : badgeClass(status)}">${badgeTextFinal}</span>` : ""}
           </div>
           <div class="conn-meta">${esc(c.provider || "")} · ${esc(c.model || "")}</div>
           <div class="conn-role-tags">${roleTags}</div>
           ${c.lastError ? `<div class="conn-err">${esc(c.lastError)}</div>` : ""}
           <div class="conn-actions">
-            <button data-act="active" class="${c.id === activeId ? "act-active" : ""}">${c.id === activeId ? "● Active" : "Set Active"}</button>
-            <button data-act="edit">Edit</button>
-            <button data-act="test">Test</button>
-            <button data-act="delete">Delete</button>
+            <button data-act="active" class="${c.id === activeId ? "act-active" : ""}">${c.id === activeId ? __t("conn.isActive") : __t("conn.setActive")}</button>
+            <button data-act="edit">${__t("conn.edit")}</button>
+            <button data-act="test">${__t("conn.test")}</button>
+            <button data-act="delete">${__t("conn.delete")}</button>
           </div>`;
         card
           .querySelector('[data-act="toggle"]')
@@ -3165,9 +3312,15 @@
         for (const name of models) {
           const item = document.createElement("div");
           item.className = "model-item";
-          item.innerHTML = `<span class="m-name">${esc(name)}</span>
+          // Tandai model yang sedang dimuat — user dengan banyak model tidak
+          // perlu menebak mana yang live.
+          const isActive = state.modelPath
+            ? decodeURIComponent(state.modelPath.split("/")[1] || "") === name
+            : document.title.startsWith(name + " —");
+          if (isActive) item.classList.add("active");
+          item.innerHTML = `<span class="m-name">${esc(name)}${isActive ? ` <span class="m-active">${__t("model.activeMark")}</span>` : ""}</span>
             <span class="m-actions">
-              <button class="load" data-name="${esc(name)}">Load</button>
+              <button class="load" data-name="${esc(name)}"${isActive ? " disabled" : ""}>${__t("model.load")}</button>
               <button class="del" data-name="${esc(name)}">${__t("sheet.del")}</button>
             </span>`;
           item
@@ -3586,7 +3739,7 @@
       if (cfgEls.sysVoice) cfgEls.sysVoice.value = c.ttsVoiceName || "";
 
       bgImageDraft = undefined;
-      if (cfgEls.bgColor) cfgEls.bgColor.value = c.bgColor || "#0d0d10";
+      if (cfgEls.bgColor) cfgEls.bgColor.value = c.bgColor || "#16120c";
       if (cfgEls.bgDim) cfgEls.bgDim.value = String(c.bgDim);
       if (cfgEls.bgDimOut) cfgEls.bgDimOut.textContent = c.bgDim.toFixed(2);
     }
@@ -3677,7 +3830,7 @@
     if (cfgEls.bgReset) {
       cfgEls.bgReset.addEventListener("click", () => {
         bgImageDraft = "CLEAR";
-        if (cfgEls.bgColor) cfgEls.bgColor.value = "#0d0d10";
+        if (cfgEls.bgColor) cfgEls.bgColor.value = "#16120c";
         applyStageBackground(
           Object.assign({}, state.modelConfig, { bgColor: "", bgImage: "" }),
         );
@@ -4373,6 +4526,9 @@
         elP.textContent = __t(
           p === true ? "live.presence.here" : p === false ? "live.presence.away" : "live.presence.unknown",
         );
+        // Warna ikut state (CSS) — hijau mint eksklusif untuk "hadir";
+        // "pergi"/"tidak tahu" tidak boleh memancarkan sinyal online.
+        elP.dataset.state = p === true ? "here" : p === false ? "away" : "unknown";
 
         const mood =
           st && st.userMood && st.userMood !== "normal"
@@ -5741,7 +5897,9 @@
     framing: "upper",
     ttsRate: 1,
     ttsPitch: 1.15,
-    ttsLang: "id-ID",
+    // Default "auto" = suara mengikuti bahasa teks balasan (dulu id-ID tetap
+    // — teks bisa saja bukan Indonesia sementara voice selalu Indonesia).
+    ttsLang: "auto",
     ttsVoiceName: "",
 
     displayName: "",
@@ -6532,19 +6690,20 @@
     )
       sheet.supportedEmotions = {};
 
-    const builtin = state.roleEmotions || {};
-
     const userNames = new Set(
       (sheet.presets.user || [])
         .filter((p) => p.category === "emosi")
         .map((p) => p.name),
     );
-    for (const name in EMOTION_ROLE_TEMPLATES) {
+    // Sheet hanya menyimpan PRESET EMOSI USER. Dulu emosi sintetis hardcode
+    // (builtin) ikut diproyeksikan ke sini lalu menimpa ekspresi bawaan
+    // model di applyExpression — itu yang bikin .exp3 karakter tak pernah
+    // kepakai. Sekarang nama non-user dibuang; vocab model tetap di
+    // state.supportedEmotions (refreshRoleEmotions), preset user ditambahkan
+    // sebagai lapisan tertinggi.
+    for (const name in sheet.supportedEmotions) {
       if (!userNames.has(name)) delete sheet.supportedEmotions[name];
-      if (state.supportedEmotions && !userNames.has(name))
-        delete state.supportedEmotions[name];
     }
-    for (const name in builtin) sheet.supportedEmotions[name] = builtin[name];
     for (const p of (sheet.presets.user || [])) {
       if (p.category !== "emosi") continue;
       sheet.supportedEmotions[p.name] = p.values || {};
@@ -6759,8 +6918,13 @@
       const add = (name, via) => {
         if (name && !out[name]) out[name] = via;
       };
+      // Prioritas first-wins: preset emosi user (param) → ekspresi bawaan
+      // model (.exp3 "native") → klip emote terukur. supportedEmotions kini
+      // HANYA berisi emosi milik model (preset user + klip; nilai null =
+      // klip) — emosi sintetis hardcode sengaja TIDAK diiklankan sebagai
+      // kemampuan model.
       for (const k of Object.keys(state.supportedEmotions || {}))
-        add(k, "param");
+        add(k, state.supportedEmotions[k] ? "param" : "clip");
       for (const n of state.modelExpressions || []) add(n, "native");
       const T = state.motionTaxonomy;
       if (T && T.byVerb && typeof MotionTaxonomy !== "undefined") {
@@ -6985,7 +7149,8 @@
       c.ttsPitch = clamp(p, TTS_PITCH_RANGE.min, TTS_PITCH_RANGE.max);
     if (
       typeof raw.ttsLang === "string" &&
-      /^[a-zA-Z]{2}(-[a-zA-Z0-9]{2,8})*$/.test(raw.ttsLang)
+      (/^[a-zA-Z]{2}(-[a-zA-Z0-9]{2,8})*$/.test(raw.ttsLang) ||
+        raw.ttsLang === "auto")
     ) {
       c.ttsLang = raw.ttsLang;
     }
@@ -7432,7 +7597,10 @@
     if (!app || app.destroyed) return;
     const c = normalizeModelConfig(cfg);
     try {
-      const hex = c.bgColor ? cssColorToHex(c.bgColor) : 0x0d0d10;
+      // Fallback saat bgColor kosong: hangat hangat gelap (nuansa amber
+      // menyatu dengan aksen UI) — bukan hitam-biru dingin. Setelan user
+      // (picker #cfg-bg-color / gambar) selalu menang di atas nilai ini.
+      const hex = c.bgColor ? cssColorToHex(c.bgColor) : 0x16120c;
 
       if (app.renderer.background && "color" in app.renderer.background) {
         app.renderer.background.color = hex;
@@ -7902,7 +8070,12 @@
       .map((p) => p.id)
       .concat(parts.filter((p) => p.def === 0).map((p) => p.id));
 
-    const supportedEmotions = buildRoleEmotions();
+    // supportedEmotions di sheet = HANYA preset emosi buatan user. Dulu
+    // hasil inspeksi menanam emosi sintetis buildRoleEmotions() ke sini —
+    // itu yang membuat template hardcode menimpa .exp3 bawaan model.
+    // Vocab sintetis tetap tersedia sebagai fallback runtime lewat
+    // state.roleEmotions (refreshRoleEmotions), bukan disimpan di sheet.
+    const supportedEmotions = {};
 
     const nativeExprs = state.modelExpressions || [];
 
@@ -8359,7 +8532,17 @@
         return acc;
       }, {}),
       paramDetails: sheet.params,
-      emotions: Object.keys(sheet.supportedEmotions),
+      // Kosakata [EMOTION:] untuk prompt LLM: emosi MILIK model dulu
+      // (exp3/klip/preset user), lalu nama template sintetis sebagai
+      // cadangan kosakata. Runtime-nya tetap prioritaskan yang asli —
+      // nama yang sama tidak pernah menimpa ekspresi bawaan model.
+      emotions: Array.from(
+        new Set(
+          Object.keys(sheet.supportedEmotions).concat(
+            Object.keys(EMOTION_ROLE_TEMPLATES),
+          ),
+        ),
+      ),
       nativeExpressions: sheet.nativeExpressions,
 
       accessories: sheet.accessories.concat(presetNames('aksesoris')),
@@ -8702,4 +8885,72 @@
       state.gesture.timer = null;
     }
   }
+
+  // ── Toggle panel Review/Terminal/Browser dari header + auto-hide panggung ──
+  // Tombol ini independen dari bundle.js: dia cuma baca/tulis class "collapsed"
+  // di #agent-tech (sumber kebenaran yang sama dipakai tombol ‹/› internal
+  // bundle.js) via MutationObserver, jadi tetap sinkron dari kedua arah tanpa
+  // perlu tahu detail internal bundle.js/mode-runtime.js.
+  (function wireTechToggleHeader() {
+    const btn = document.getElementById("btn-tech-toggle");
+    const techEl = document.getElementById("agent-tech");
+    const modeAssistantEl = document.getElementById("mode-assistant");
+    const appEl = document.querySelector(".app");
+    if (!btn || !techEl || !modeAssistantEl || !appEl) return;
+
+    const LS_KEY = "live2d.agentTech.collapsed";
+
+    function isAssistantModeActive() {
+      return !modeAssistantEl.classList.contains("hidden");
+    }
+    function isTechCollapsed() {
+      return techEl.classList.contains("collapsed");
+    }
+
+    function syncButtonVisibility() {
+      btn.classList.toggle("hidden", !isAssistantModeActive());
+    }
+    function syncStageForTech() {
+      const open = isAssistantModeActive() && !isTechCollapsed();
+      appEl.classList.toggle("agent-tech-open", open);
+      btn.classList.toggle("active", open);
+      btn.setAttribute("aria-pressed", open ? "true" : "false");
+      const label = open
+        ? (__t("as.tech.headerCloseTip") || "Tutup panel Review/Terminal/Browser")
+        : (__t("as.tech.headerOpenTip") || "Buka panel Review/Terminal/Browser");
+      btn.setAttribute("aria-label", label);
+      btn.title = label;
+    }
+
+    btn.addEventListener("click", () => {
+      const next = !isTechCollapsed();
+      techEl.classList.toggle("collapsed", next);
+      try {
+        localStorage.setItem(LS_KEY, next ? "1" : "0");
+      } catch (e) {}
+      // Sinkronkan glyph tombol ‹/› bawaan bundle.js di dalam panel (kalau
+      // sudah dirender) supaya tidak menunjuk arah yang salah.
+      const innerBtn = techEl.querySelector(".as-tech-collapse");
+      if (innerBtn) {
+        innerBtn.textContent = next ? "‹" : "›";
+        const innerLabel = __t(next ? "as.tech.expand" : "as.tech.collapse");
+        innerBtn.title = innerLabel;
+        innerBtn.setAttribute("aria-label", innerLabel);
+        innerBtn.setAttribute("aria-expanded", next ? "false" : "true");
+      }
+      syncStageForTech();
+    });
+
+    new MutationObserver(syncStageForTech).observe(techEl, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    new MutationObserver(() => {
+      syncButtonVisibility();
+      syncStageForTech();
+    }).observe(modeAssistantEl, { attributes: true, attributeFilter: ["class"] });
+
+    syncButtonVisibility();
+    syncStageForTech();
+  })();
 })();

@@ -335,7 +335,9 @@ a:hover { text-decoration: underline; }
   min-width: 340px;
   border-radius: var(--r-xl);
   overflow: hidden;
-  background: #07090C;
+  /* Selaras fallback renderer (0x16120c) — tanpa kilat dingin sebelum
+     canvas tergambar pertama kali. */
+  background: #16120C;
   border: 1px solid var(--line);
   border-top-color: var(--line-strong);
   user-select: none;
@@ -395,6 +397,24 @@ a:hover { text-decoration: underline; }
   background: var(--ink-1);
   border-right: 1px solid var(--line-strong);
   border-bottom: 1px solid var(--line-strong);
+}
+/* Fase menunggu audio TTS: teks "…" disembunyikan, diganti tiga titik
+   berkedip — karakter terasa "menyiapkan suara", bukan hang. */
+#bubble.waiting { min-width: 64px; min-height: 38px; }
+#bubble.waiting #bubble-text { display: none; }
+#bubble.waiting::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  box-shadow: 9px 0 0 var(--text-dim), 18px 0 0 var(--text-dim);
+  transform: translateX(-9px);
+  animation: ellipsis-dot 1.2s infinite;
 }
 
 /* ── Kontrol & HUD panggung ─────────────────────────────────────── */
@@ -473,9 +493,13 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .ls-item + .ls-item { border-left: 1px solid var(--line-soft); }
-#ls-presence { color: var(--mint); }
+/* Presence berwarna hanya saat "hadir" (data-state dari app.js). Hijau bukan
+   warna default — "pergi"/"tidak tahu" tidak boleh terbaca sebagai online. */
+#ls-presence { color: var(--muted); }
+#ls-presence[data-state="here"] { color: var(--mint); }
+#ls-presence[data-state="away"] { color: var(--lamp-soft); }
 #ls-mood { color: var(--text); }
-#ls-quiet { color: var(--muted); }
+#ls-quiet { color: var(--text-dim); }
 
 #hint {
   position: absolute;
@@ -486,12 +510,19 @@ a:hover { text-decoration: underline; }
   border-radius: var(--r-sm);
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--text-dim);
   background: var(--ink-1);
   border: 1px solid var(--line-soft);
   pointer-events: none;
   user-select: none;
   white-space: nowrap;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+/* Sudah pernah berinteraksi dengan panggung (drag/zoom) → hint memudar
+   permanen; dipasang modul TS shell/stage-hint.ts. */
+#hint.faded {
+  opacity: 0;
+  visibility: hidden;
 }
 
 /* Aktivitas agent di panggung — menghubungkan karakter dengan pekerjaan
@@ -651,6 +682,26 @@ a:hover { text-decoration: underline; }
   border-top-color: var(--line-strong);
 }
 #agent-tech.hidden { display: none; }
+
+/* Tombol toggle panel Review/Terminal/Browser di header (sb-header). */
+#btn-tech-toggle.active {
+  color: var(--lamp);
+  border-color: var(--lamp);
+  background: var(--accent-subtle);
+}
+
+/* Panel ke-4 dibuka lewat tombol header → panggung Live2D otomatis
+   disembunyikan supaya ruang horizontalnya pindah ke agent-workspace,
+   bukan berebut lebar dengan karakter. Ditutup lagi → panggung balik normal.
+   Class agent-tech-open dipasang/dicabut oleh app.js (wireTechToggleHeader). */
+.app.agent-tech-open #stage,
+.app.agent-tech-open #sb-gutter {
+  display: none;
+}
+.app.agent-tech-open #agent-workspace,
+.app.agent-tech-open #agent-workspace.agent-wide {
+  flex: 1 1 auto;
+}
 #as-tech-root {
   height: 100%;
   min-height: 0;
@@ -705,6 +756,11 @@ body.mode-agent #hint,
 body.mode-agent #btn-fullbody,
 body.mode-agent #live-state { display: none !important; }
 
+/* Mode Chat: strip telemetri (hadir/mood/masa tenang) disembunyikan — itu
+   instrumen pacing siaran untuk VTuber; saat ngobrol, countdown internal
+   agent bukan informasi untuk user. */
+body.mode-chat #live-state { display: none !important; }
+
 .sb-header {
   display: flex;
   align-items: center;
@@ -722,6 +778,7 @@ body.mode-agent #live-state { display: none !important; }
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 15px;
+  text-transform: uppercase;
   color: var(--text-dim);
   background: var(--ink-2);
   border: 1px solid var(--line);
@@ -810,6 +867,7 @@ body.mode-agent #live-state { display: none !important; }
   border-radius: var(--r-sm);
   font-size: 12px;
   font-weight: 600;
+  text-transform: uppercase;
   background: var(--ink-2);
   border: 1px solid var(--line);
   color: var(--text-dim);
@@ -829,6 +887,8 @@ body.mode-agent #live-state { display: none !important; }
   line-height: 1.55;
   word-break: break-word;
   white-space: pre-wrap;
+  /* Jangan tinggalkan satu kata/emoji yatim di baris terakhir. */
+  text-wrap: pretty;
 }
 /* Agent = permukaan; user = amber tipis. Arah bicara terbaca dari warna,
    bukan cuma dari sisi. */
@@ -1400,6 +1460,22 @@ input[type="range"]::-moz-range-thumb {
   background: var(--ink-3);
   border-color: var(--line-strong);
   border-left-color: var(--lamp);
+}
+/* Model yang sedang dimuat — border amber permanen + penanda teks kecil. */
+.model-item.active,
+.model-item.active:hover {
+  border-color: var(--accent-border);
+  border-left-color: var(--lamp);
+  background: var(--accent-subtle);
+}
+.model-item.active .m-name { color: var(--lamp-soft); }
+.model-item .m-active {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--lamp);
+  margin-left: 4px;
 }
 .model-item .m-name {
   font-weight: 500;
@@ -2768,6 +2844,12 @@ input[type="range"]::-moz-range-thumb {
   min-height: 0;
 }
 
+.vt-feed-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 130px;
+  display: flex;
+}
 .vt-feed {
   flex: 1 1 auto;
   min-height: 130px;
@@ -2779,6 +2861,30 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+/* Placeholder tampil hanya saat #vt-feed kosong — begitu bundle.js
+   nambahin baris .vt-line, :has(#vt-feed:empty) berhenti cocok dan
+   placeholder otomatis hilang. Tanpa ini, feed kosong cuma kotak
+   hitam polos yang kesannya belum jadi. */
+.vt-feed-empty {
+  display: none;
+}
+.vt-feed-wrap:has(#vt-feed:empty) .vt-feed-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  padding: 16px;
+  max-width: 200px;
+  height: max-content;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  pointer-events: none;
 }
 /* Baris feed dibedakan oleh aksen kiri, bukan latar penuh — feed panjang
    tetap tenang. */
@@ -2983,6 +3089,9 @@ input[type="range"]::-moz-range-thumb {
 }
 .as-ws input {
   flex: 1 1 auto;
+  /* Path panjang jangan menyita baris — biarkan ellipsis bekerja, sisakan
+     ruang tetap untuk 4 tombol ikon di kanannya. */
+  flex-basis: 0;
   min-width: 0;
   height: 24px;
   padding: 2px 6px;
@@ -3002,6 +3111,29 @@ input[type="range"]::-moz-range-thumb {
   display: grid;
   place-items: center;
   font-size: 11px;
+}
+/* Ikon toolbar workspace: netral (cancel/reset/memory) vs danger (stop/matikan
+   agent) — sebelumnya glyph teks (■ × ↺ M) ambigu, terutama × dan ■ yang
+   keduanya kesannya "berhenti". Sekarang ikon beda bentuk + as-stop dikasih
+   warna rose supaya jelas ini aksi yang lebih berat (matikan runtime). */
+.as-toolicon svg { display: block; }
+.as-toolicon--danger {
+  color: var(--rose);
+  border-color: var(--mint-border, var(--line));
+}
+.as-toolicon--danger:hover {
+  color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 16%, var(--ink-2));
+  border-color: var(--rose);
+}
+.as-toolicon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.as-toolicon:disabled:hover {
+  background: var(--ink-2);
+  border-color: var(--line);
+  color: var(--text-dim);
 }
 .as-statusbar {
   display: flex;
@@ -3717,26 +3849,27 @@ input[type="range"]::-moz-range-thumb {
 .as-send:hover { background: var(--lamp-soft); }
 .as-send:disabled { opacity: 0.4; }
 
-/* Quick actions — utility shortcuts, sengaja tenang (bukan CTA pills). */
+/* Quick actions — satu gestur dengan quick phrase mode chat: tombol kecil
+   berbingkai, bukan teks telanjang (affordance klik harus kelihatan). */
 .as-quick {
   flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 3px 10px;
+  gap: 5px;
   padding: 1px 2px;
 }
 .as-quick-chip {
   font: inherit;
   font-size: 10.5px;
-  color: var(--muted);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  padding: 2px 0;
+  color: var(--text-dim);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 3px 9px;
   cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
-.as-quick-chip:hover { color: var(--text-dim); border-bottom-color: var(--line-strong); }
+.as-quick-chip:hover { color: var(--text); border-color: var(--line-strong); background: var(--ink-3); }
 
 /* ── Splitter vertikal stage ↔ right panel ──────────────────── */
 #sb-gutter {
@@ -3770,37 +3903,20 @@ body.sb-resizing #agent-workspace { transition: none; }
    sini — flex-basis workspace tetap LEBAR, jadi splitter + inline basis dari
    projek.ts bekerja normal. Default 372/540 dipakai bila tak ada ukuran
    tersimpan (inline menimpa). */
+/* Window sempit: 4 panel TETAP horizontal (row) — tidak pernah pindah ke
+   susunan bertumpuk. Yang menyesuaikan cuma lebar workspace gabungan &
+   lebar minimum panel teknis, biar tetap muat tanpa ganti arah layout. */
 @media (max-width: 1499px) {
   #agent-workspace { flex-basis: 372px; }
   #agent-workspace.agent-wide {
-    flex-basis: 540px;
-    flex-direction: column;
-  }
-  #agent-workspace.agent-wide #sidebar {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 260px;
+    flex-basis: clamp(560px, 100vw - 360px, 900px);
   }
   #agent-tech {
-    flex: 0 1 38dvh;
-    width: auto;
-    min-width: 0;
-    max-height: 38dvh;
-  }
-  /* Dalam layout bertumpuk, collapse menjadi bar horizontal 38px — bukan
-     rail vertikal sempit yang menyisakan ruang kosong di kanan. */
-  #agent-tech.collapsed {
-    flex: 0 0 38px;
-    width: auto;
-    min-width: 0;
-    min-height: 38px;
-    max-height: 38px;
-    padding: 6px 8px;
-  }
-  #agent-tech.collapsed .as-tabs {
-    justify-content: flex-end;
+    flex: 0 0 260px;
+    min-width: 220px;
   }
 }
+
 /* Di bawah 1025px shell pindah ke arah kolom penuh (media 1024) — splitter
    horizontal tidak berarti di sana. */
 @media (max-width: 1024px) {
@@ -3885,54 +4001,22 @@ body.sb-resizing #agent-workspace { transition: none; }
 
 /* ── Responsif ──────────────────────────────────────────────────── */
 
+/* Window sangat sempit (≤1024px): TETAP horizontal, tidak pernah pindah ke
+   susunan bertumpuk — cuma padding & lebar minimum tiap panel yang mengecil
+   supaya masih muat. Kalau window lebih sempit dari total lebar minimum,
+   biarkan menyempit alami lewat flex-shrink daripada memaksa ganti arah. */
 @media (max-width: 1024px) {
-  .app {
-    flex-direction: column;
-    padding: 8px;
-    gap: 8px;
-  }
-  /* Workspace kiri jadi baris shell penuh; rail projek tetap di bawah activity. */
-  #left-workspace {
-    flex: 0 0 auto;
-    flex-direction: column;
-  }
-  #activity {
-    flex: 0 0 auto;
-    flex-direction: row;
-    justify-content: flex-start;
-    padding: 6px 8px;
-  }
-  .act-sep { width: 1px; height: 24px; margin: 0 4px; }
-  .mode-switch { flex-direction: row; }
-  .mode-switch button { width: auto; padding: 0 10px; font-size: 11.5px; }
-  .mode-switch button::before { content: none; }
-  /* Rail projek jadi blok full-width di bawah activity bar. */
-  #projek-rail {
-    flex: 0 0 auto;
-    max-height: 30dvh;
-  }
-  #stage {
-    flex: 1 1 auto;
-    min-height: 44dvh;
-  }
-  /* Workspace agent jadi panel bawah; teknis tetap di bawah percakapan. */
+  .app { padding: 8px; gap: 8px; }
+  #activity { padding: 6px 0; }
+  #stage { min-width: 220px; }
   #agent-workspace,
   #agent-workspace.agent-wide {
-    flex: 0 0 auto;
-    width: auto;
-    max-height: 54dvh;
-    flex-direction: column;
+    flex-basis: clamp(420px, 100vw - 300px, 700px);
   }
-  #sidebar {
-    flex: 1 1 auto;
-    width: auto;
-    min-height: 260px;
-    max-height: none;
-    padding: 10px;
-  }
+  #sidebar { padding: 10px; }
   #agent-tech {
-    flex: 0 1 38dvh;
-    max-height: 38dvh;
+    flex: 0 0 220px;
+    min-width: 200px;
     padding: 10px;
   }
   #chat-log { min-height: 130px; }

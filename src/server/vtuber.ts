@@ -56,7 +56,12 @@ export function vtuberEvents(since: number): { events: VtEvent[]; cursor: number
 
 export function vtuberInjectEvent(body: { type?: string; user?: string; text?: string; amount?: string }): VtEvent | null {
   if (!runtime) return null;
-  const type = body.type === "donation" ? "donation" : "chat";
+  // "agent" diizinkan: mock-event adalah pintu resmi client menandai balasan
+  // AI (kelas .agent di Feed Live) — jangan dipaksa jadi "chat".
+  const type =
+    body.type === "donation" || body.type === "agent"
+      ? body.type
+      : "chat";
   return pushEvent({ type, user: String(body.user || "Guest"), text: String(body.text || "").slice(0, 400), amount: body.amount });
 }
 

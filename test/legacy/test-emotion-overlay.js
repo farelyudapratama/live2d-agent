@@ -101,13 +101,19 @@ ok('modul dimuat di index.html setelah voice-input',
 ok('app.js menyalakan overlay di jalur native universal',
   /playEmotionClip\(name\);\s*\n\s*fireOverlay\(name\);/.test(appSrc));
 ok('app.js menyalakan overlay di jalur .exp3 native — SEBELUM try, karena justru ekspresi tak terdaftar di model3.json yang membuat expression() melempar',
-  /fireOverlay\(name\);\s*try \{\s*await state\.model\.expression\(name\);/.test(appSrc));
-ok('app.js menyalakan overlay di jalur synthetic',
-  /playEmotionClip\(name\);   \/\/ body follows the face \(see native branch\)\s*\n\s*fireOverlay\(name\);/.test(appSrc));
+  /fireOverlay\(name\);\s*try \{\s*await state\.model\.expression\(nativeName\);/.test(appSrc));
+ok('app.js menyalakan overlay di jalur synthetic (fallback terakhir)',
+  /playEmotionClip\(name\); \/\/ body follows the face \(see native branch\)\s*\n\s*fireOverlay\(name\);/.test(appSrc));
 ok('resetEmotion memadamkan overlay',
   /function resetEmotion\(\)[\s\S]{0,800}__emotionOverlay && window\.__emotionOverlay\.clear\(\)/.test(appSrc));
-ok('mode synthetic: nama tak dikenal (mis. exp_heart) tetap memicu overlay',
-  /\[Live2D\] Synthetic emotion ->[\s\S]{0,400}?\} else \{[\s\S]{0,400}?fireOverlay\(name\);/.test(appSrc));
+ok('ekspresi bawaan model dicocokkan case-insensitive dari modelExpressions (menang atas sintetis)',
+  /const nativeName = \(state\.modelExpressions \|\| \[\]\)\.find\(/.test(appSrc));
+ok('supportedEmotions TIDAK lagi diisi emosi sintetis — hardcode hanya fallback terakhir',
+  !/state\.supportedEmotions = Object\.assign\(\{\}, state\.roleEmotions\)/.test(appSrc));
+ok('inspectModel tidak menanam emosi sintetis ke sheet baru',
+  !/const supportedEmotions = buildRoleEmotions\(\)/.test(appSrc));
+ok('nama tak dikenal (mis. exp_heart) tetap memicu overlay setelah blok fallback sintetis',
+  /const synth = state\.roleEmotions && state\.roleEmotions\[name\];[\s\S]{0,700}?\n    fireOverlay\(name\);\n  \}/.test(appSrc));
 ok('config.json "overlay" diteruskan server ke client',
   serverSrc.includes('overlay:cfg.overlay||{}'));
 ok('app.js membaca config overlay',

@@ -59,6 +59,9 @@
     // Mode Agent saja: panggung bersih — HUD (hint/Full Body/strip status)
     // disembunyikan via CSS body.mode-agent. Mode lain tanpa perubahan.
     document.body.classList.toggle("mode-agent", mode === "assistant");
+    // Mode Chat: strip telemetri (presence/mood/masa tenang) ikut disembunyikan
+    // — itu instrumen pacing siaran (VTuber), bukan bagian dari ngobrol.
+    document.body.classList.toggle("mode-chat", mode === "chat");
     const labels = { chat: "Chat", vtuber: "VTuber", assistant: "Assistant", pet: "Pet" };
     const lbl = $("#mode-label");
     if (lbl) lbl.textContent = labels[mode] || mode;
@@ -167,6 +170,18 @@
     }
 
     // wiring tombol start/stop
+    const vtStartBtn = $("#vt-start");
+    const vtStopBtn = $("#vt-stop");
+    const setStatus = (text, color) => {
+      status.textContent = text;
+      status.style.color = color || "";
+    };
+    const reflectRunning = (running) => {
+      // State tombol = state stream: tidak ada dua aksi aktif sekaligus.
+      vtStartBtn.disabled = running;
+      vtStopBtn.disabled = !running;
+    };
+    reflectRunning(false);
     const onStart = async () => {
       const provider = ($("#vt-provider") || {}).value || "mock";
       const body = { provider };
@@ -175,22 +190,24 @@
         body.videoId = ($("#vt-video-id") || {}).value || "";
         body.apiKey = ($("#vt-yt-key") || {}).value || "";
       }
+      vtStartBtn.disabled = true; // cegah dobel-klik selama request
       try {
         await post("/api/vtuber/start", body);
-        status.textContent = "AKTIF (" + provider + ")";
-        status.style.color = "var(--mint)";
+        setStatus("AKTIF (" + provider + ")", "var(--mint)");
+        reflectRunning(true);
         cursor = 0;
         feed.textContent = "";
       } catch (e) {
-        status.textContent = "gagal: " + e.message;
-        status.style.color = "var(--coral)";
+        setStatus("gagal: " + e.message, "var(--coral)");
+        reflectRunning(false);
       }
     };
     const onStop = async () => {
       stopped = true;
+      vtStopBtn.disabled = true;
       try { await post("/api/vtuber/stop"); } catch (e) {}
-      status.textContent = __t("vt.inactive");
-      status.style.color = "";
+      setStatus(__t("vt.inactive"));
+      reflectRunning(false);
     };
     const onProviderChange = () => {
       const v = ($("#vt-provider") || {}).value;
@@ -217,6 +234,7 @@
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       post("/api/vtuber/stop").catch(() => {});
       feed.textContent = "";
+      reflectRunning(false);
     };
   }
 

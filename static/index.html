@@ -112,6 +112,9 @@
           <div class="sb-name">Live2D Agent</div>
           <div class="sb-status"><span class="dot"></span> <span id="sb-state" data-i18n="sys.online">Online</span></div>
         </div>
+        <button id="btn-tech-toggle" class="mini-btn hidden" aria-pressed="false" aria-label="Buka panel Review/Terminal/Browser" title="Buka panel Review/Terminal/Browser">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/></svg>
+        </button>
         <button id="btn-clear-chat" data-i18n-title="chat.clearTip" data-i18n="chat.clear">Clear</button>
         <!-- ⚙ panel kontrol sudah pindah ke dasar activity bar — gear ganda
              di header ini dulu mati (ID kembar) dan bikin header ramai. -->
@@ -138,14 +141,13 @@
         <input type="text" id="bubble-input" data-i18n-ph="chat.inputPh" placeholder="Ketik pesan lalu Enter..." />
         <button id="btn-bubble" data-i18n-title="chat.sendTip" data-i18n="chat.send">Kirim</button>
       </div>
+      <!-- Quick phrase: 4 icebreaker saja (dipangkas dari 7 — dock bawah
+           tidak boleh lebih ramai dari inputnya; sisanya tetap bisa diketik). -->
       <div class="quick-phrases">
         <button class="phrase-btn" data-phrase="Halo~" data-i18n="chat.phrase1">Halo~</button>
         <button class="phrase-btn" data-phrase="Apa kabar?" data-i18n="chat.phrase2">Apa kabar?</button>
         <button class="phrase-btn" data-phrase="Ceritakan tentang dirimu" data-i18n="chat.phrase3">Cerita dong</button>
-        <button class="phrase-btn" data-phrase="Yay~!" data-i18n="chat.phrase4">Yay~!</button>
         <button class="phrase-btn" data-phrase="Semangat ya!" data-i18n="chat.phrase5">Semangat!</button>
-        <button class="phrase-btn" data-phrase="Hmmm..." data-i18n="chat.phrase6">Hmmm...</button>
-        <button class="phrase-btn" data-phrase="Maaf ya..." data-i18n="chat.phrase7">Maaf ya...</button>
       </div>
       <label class="brain-toggle">
         <input type="checkbox" id="toggle-brain" checked />
@@ -168,7 +170,13 @@
         </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
         <div class="section-title" data-i18n="vt.feedTitle">Feed Live</div>
-        <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
+        <div class="vt-feed-wrap">
+          <div id="vt-feed" class="vt-feed" aria-live="polite"></div>
+          <div class="vt-feed-empty" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H8l-4 4V5Z"/></svg>
+            <span data-i18n="vt.feedEmpty">Belum ada aktivitas. Klik Mulai untuk mulai memantau chat &amp; donasi.</span>
+          </div>
+        </div>
 
         <!-- Popup pengaturan — ID input tidak berubah (mode-runtime & poll
              aman). Escape & ✕ menutup; wiring di app.js. -->
@@ -232,10 +240,18 @@
         <div class="as-ws">
           <span class="as-ws-label" data-i18n="as.workspace">Workspace</span>
           <input id="as-workdir" type="text" data-i18n-ph="as.workdirPh" placeholder="(folder project ini)" />
-          <button id="as-cancel" class="mini-btn" data-i18n-title="as.cancel" disabled>■</button>
-          <button id="as-stop" class="mini-btn" data-i18n-title="as.stop">×</button>
-          <button id="as-reset" class="mini-btn" data-i18n-title="as.resetTip">↺</button>
-          <button id="as-memory" class="mini-btn" data-i18n-title="as.memoryBtn">M</button>
+          <button id="as-cancel" class="mini-btn as-toolicon" data-i18n-title="as.cancel" aria-label="Batalkan tugas berjalan" disabled>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+          <button id="as-stop" class="mini-btn as-toolicon as-toolicon--danger" data-i18n-title="as.stop" aria-label="Matikan agent">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v7"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+          </button>
+          <button id="as-reset" class="mini-btn as-toolicon" data-i18n-title="as.resetTip" aria-label="Reset sesi">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 1 2.5 6"/><path d="M3.5 17v-5h5"/></svg>
+          </button>
+          <button id="as-memory" class="mini-btn as-toolicon" data-i18n-title="as.memoryBtn" aria-label="Lihat memory">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4a3.2 3.2 0 0 0-3.2 3.2c0 .5.1.9.3 1.3A3 3 0 0 0 7 11.3v.4A3 3 0 0 0 6 14v.5A3.2 3.2 0 0 0 9.2 17.7"/><path d="M12 4a3.2 3.2 0 0 1 3.2 3.2c0 .5-.1.9-.3 1.3A3 3 0 0 1 17 11.3v.4A3 3 0 0 1 18 14v.5a3.2 3.2 0 0 1-3.2 3.2"/><path d="M12 4v13.7"/></svg>
+          </button>
         </div>
         <div id="as-root" class="as-root"></div>
         <!-- Quick actions: task umum satu-klik (teks = prompt, satu sumber
@@ -375,12 +391,14 @@
             <label class="cfg-row" for="cfg-tts-lang">
               <span class="cfg-label" data-i18n="cfg.voiceLang">Bahasa suara</span>
               <select id="cfg-tts-lang">
+                <option value="auto" data-i18n="cfg.ttsLang.auto">Ikuti bahasa teks</option>
                 <option value="id-ID" data-i18n="cfg.ttsLang.id">Indonesia (id-ID)</option>
                 <option value="ja-JP" data-i18n="cfg.ttsLang.ja">Jepang (ja-JP)</option>
                 <option value="en-US" data-i18n="cfg.ttsLang.en">Inggris (en-US)</option>
                 <option value="zh-CN" data-i18n="cfg.ttsLang.zh">Mandarin (zh-CN)</option>
               </select>
             </label>
+            <p class="hint" data-i18n="cfg.speechFollowsHint">Ikuti bahasa teks = suara menyesuaikan bahasa balasan. Pilih bahasa tetap (mis. Jepang) = teks tetap bahasa user, tapi yang dibacakan suara adalah terjemahannya.</p>
 
             <label class="cfg-row" for="cfg-tts-sysvoice">
               <span class="cfg-label" data-i18n="cfg.sysVoice">Suara Sistem</span>
@@ -941,7 +959,7 @@
 
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>
-  <script src="js/pixi-live2d-0.4.0.js"></script>
+  <script src="js/pixi-live2d-0.4.0.js?v=3"></script>
   <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain + i18n, terpasang sebagai
        window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent / __i18n.
        Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js —

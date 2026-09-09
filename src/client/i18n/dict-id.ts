@@ -86,6 +86,7 @@ export const DICT_ID: Record<string, string> = {
   "vt.stop": "Berhenti",
   "vt.inactive": "tidak aktif",
   "vt.feedTitle": "Feed Live",
+  "vt.feedEmpty": "Belum ada aktivitas. Klik Mulai untuk mulai memantau chat & donasi.",
   "vt.hint": "Twitch anonim: cukup nama channel. YouTube: butuh API Key + video ID yang sedang live. Donasi: superchat YT asli; Twitch & mock = simulasi.",
 
   // ── as — panel AI Assistant ────────────────────────────────────
@@ -145,6 +146,8 @@ export const DICT_ID: Record<string, string> = {
   "cfg.voiceLang": "Bahasa suara",
   "cfg.sysVoice": "Suara Sistem",
   "cfg.sysVoiceAuto": "(otomatis sesuai bahasa)",
+  "cfg.ttsLang.auto": "Ikuti bahasa teks",
+  "cfg.speechFollowsHint": "Ikuti bahasa teks = suara menyesuaikan bahasa balasan. Pilih bahasa tetap (mis. Jepang) = teks tetap bahasa user, tapi yang dibacakan suara adalah terjemahannya.",
   "cfg.ttsLang.id": "Indonesia (id-ID)",
   "cfg.ttsLang.ja": "Jepang (ja-JP)",
   "cfg.ttsLang.en": "Inggris (en-US)",
@@ -413,6 +416,14 @@ export const DICT_ID: Record<string, string> = {
   "conn.delConfirm": "Hapus connection ini?",
   "conn.allRoles": "semua peran",
   "conn.offSkipped": "⏸ off — dilewati",
+  "conn.setActive": "Set Aktif",
+  "conn.isActive": "● Aktif",
+  "conn.edit": "Edit",
+  "conn.test": "Tes",
+  "conn.delete": "Hapus",
+  "conn.off": "⏸ off",
+  "model.load": "Muat",
+  "model.activeMark": "aktif",
   "conn.switchTip": "Aktif / nonaktifkan koneksi (nonaktif = dilewati semua role)",
 
   // ── mode-runtime ───────────────────────────────────────────────
@@ -456,6 +467,7 @@ export const DICT_ID: Record<string, string> = {
   "as.status.off": "mati",
   "as.status.idle": "siap",
   "as.status.busy": "bekerja…",
+  "as.status.busyTimer": "bekerja… {s} dtk",
   "as.status.busyOther": "bekerja (klien lain)",
   "as.status.thinking": "berpikir…",
   "as.status.approval": "nunggu izinmu…",

@@ -107,8 +107,31 @@ function addChat(role: "user" | "agent", text: string): void {
 }
 function setThinking(on: boolean): void {
   const el = document.getElementById("thinking");
-  if (el) el.classList.toggle("hidden", !on);
+  if (!el) return;
+  if (thinkingTick) {
+    clearInterval(thinkingTick);
+    thinkingTick = null;
+  }
+  if (!on) {
+    el.classList.toggle("hidden", true);
+    el.removeAttribute("data-since");
+    return;
+  }
+  // Hitungan waktu berjalan — user tahu aplikasinya hidup, bukan mati
+  // diam saat LLM/TTS lambat. Teks dasar ("Mikir...") menyusul via i18n
+  // sweep; detik ditambahkan tiap detik.
+  el.dataset.since = String(Date.now());
+  const base = el.getAttribute("data-i18n-text") || el.textContent || "Mikir...";
+  const paint = () => {
+    const since = Number(el.dataset.since || 0);
+    const s = Math.round((Date.now() - since) / 1000);
+    el.textContent = s > 0 ? `${base} ${s}s` : base;
+  };
+  paint();
+  thinkingTick = setInterval(paint, 1000);
+  el.classList.toggle("hidden", false);
 }
+let thinkingTick: ReturnType<typeof setInterval> | null = null;
 
 export class AgentBrain {
   // Jeda pamit: user pergi → karakter baru "menyadari" dan bicara setelah
@@ -271,7 +294,16 @@ Contoh pendek:
       typeof (window as any).__i18n.getLang === "function"
         ? (window as any).__i18n.getLang()
         : "id";
-    let langBlock = "";
+    // Bahasa balasan: CERMINKAN bahasa user. Dulu prompt sepenuhnya Indonesia
+    // tanpa aturan bahasa — model terbias Indonesia walau user menulis
+    // bahasa lain. Block EN eksplisit (UI lang=en, pilihan user) ditambahkan
+    // SESUDAH aturan ini sehingga tetap menang atas cerminan.
+    let langBlock =
+      "\n=== BAHASA ===\n" +
+      "Balas dalam bahasa yang SAMA dengan bahasa yang dipakai user di pesannya " +
+      "(Inggris → Inggris, Jepang → Jepang, dst). Bahasa campuran/tidak jelas → bahasa dominan. " +
+      "Kata kunci directive ([EMOTION:], [GESTURE:], dll) TETAP kosakata Indonesia di atas — " +
+      "itu protokol yang dibaca aplikasi, bukan teks ucapan.\n";
     if (lang === "en") {
       langBlock +=
         "\n=== LANGUAGE ===\n" +
@@ -547,11 +579,18 @@ Contoh pendek:
 
     // Emotion — pakai intensity (default 0.85) dan fallback preset
     // "user:<nama>" untuk sheet preset yang bukan emosi param/native bawaan.
+    // Prioritas ekspresi: yang PUNYA model menang atas hardcode. Vocab dari
+    // getExpressibleEmotions(): "param" (preset user) → "native" (.exp3) →
+    // "clip" (klip emote terukur). Engine (applyExpression) yang memilih
+    // jalurnya; emosi sintetis hardcode TIDAK diiklankan di vocab — nama
+    // asing jatuh ke "user:<nama>" (preset user) atau fallback engine.
+    let emotionVia: string | undefined;
     if (actions.emotion) {
-      const supported =
-        (agent._getSupportedEmotions && agent._getSupportedEmotions()) || {};
+      const vocab =
+        (agent.getExpressibleEmotions && agent.getExpressibleEmotions()) || {};
+      emotionVia = vocab[actions.emotion];
       const int = actions.intensity != null ? actions.intensity : 0.85;
-      if (supported[actions.emotion] || actions.emotion === "normal") {
+      if (actions.emotion === "normal" || emotionVia) {
         agent.setExpression(actions.emotion, int);
       } else {
         agent.setExpression("user:" + actions.emotion, int);
@@ -572,10 +611,14 @@ Contoh pendek:
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
     // If explicit head/eyes/body are provided, use them; otherwise infer
-    // natural pose from emotion.
-    const inferred = actions.emotion
-      ? this.inferMovementFromEmotion(actions.emotion)
-      : null;
+    // natural pose from emotion. POSE INFERENSI HANYA untuk emosi yang
+    // diturunkan sintetis (tidak ada di vocab model): .exp3/klip milik model
+    // sudah membawa face+body sendiri — menumpuk pose tebakan di atasnya
+    // justru merusak ekspresi asli karaktermu.
+    const inferred =
+      actions.emotion && !emotionVia
+        ? this.inferMovementFromEmotion(actions.emotion)
+        : null;
 
     if (actions.head) {
       pose.head = {
@@ -654,9 +697,15 @@ Contoh pendek:
       if (!handledByMotion)
         console.warn("[agent] motion tidak dikenal/ditolak:", actions.motion);
     }
+    // Gesture fallback (hardcode per-emosi) hanya untuk emosi yang TIDAK
+    // dimainkan dari aset model — .exp3/klip sudah membawa gerak tubuhnya
+    // sendiri. [GESTURE:] eksplisit dari LLM tetap selalu dipakai.
     const gestureToPlay =
       actions.gesture ||
-      (actions.emotion && EMOTION_GESTURE_FALLBACK[actions.emotion]) ||
+      (actions.emotion &&
+        emotionVia !== "native" &&
+        emotionVia !== "clip" &&
+        EMOTION_GESTURE_FALLBACK[actions.emotion]) ||
       null;
     if (gestureToPlay && agent.playGesture) agent.playGesture(gestureToPlay);
   }

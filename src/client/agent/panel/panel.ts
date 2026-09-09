@@ -255,6 +255,12 @@ export function startAssistantPanel(): () => void {
   function send(text: string): void {
     const txt = String(text || "").trim();
     if (!txt || liveAsk) return;
+    // Draft terkirim → composer kosong lagi (tinggi ikut normal). Dulu teks
+    // tetap nanggung di input setiap kali mengirim — seperti chat mati.
+    if (input) {
+      input.value = "";
+      onInputGrow();
+    }
     transcript.appendUser(txt);
     render();
     runStream("/api/assistant/ask-stream", { text: txt }, { path: "/api/assistant/ask", body: { text: txt } });
@@ -370,9 +376,12 @@ export function startAssistantPanel(): () => void {
     // Transisi busy→false: tarik history (jawaban final dari sesi CLI/drop).
     if (prevBusy && !st.busy && !liveAsk) await syncHistory();
     prevBusy = !!st.busy;
-    // Cermin workdir dari server (bila input sedang tidak diedit)
+    // Cermin workdir dari server (bila input sedang tidak diedit).
+    // Title ikut nilai penuh — tampilan terpotong ellipsis, path lengkap
+    // tetap terbaca lewat tooltip.
     if (st.workDir && workdir && document.activeElement !== workdir) {
       workdir.value = st.workDir;
+      workdir.title = st.workDir;
     }
   }
 
@@ -419,7 +428,6 @@ export function startAssistantPanel(): () => void {
     const chip = (e.target as HTMLElement).closest(".as-quick-chip") as HTMLElement | null;
     if (!chip || !input) return;
     const text = chip.textContent || "";
-    input.value = text;
     send(text);
   };
   // Rail projek memindahkan sesi (switch/new/delete) → hydrate ulang

@@ -78,6 +78,7 @@ export const DICT_EN: Record<string, string> = {
   "vt.stop": "Stop",
   "vt.inactive": "inactive",
   "vt.feedTitle": "Live Feed",
+  "vt.feedEmpty": "No activity yet. Click Start to begin monitoring chat & donations.",
   "vt.hint": "Twitch anonymous: channel name is enough. YouTube: needs an API Key + a currently-live video ID. Donations: real YT superchat; Twitch & mock = simulated.",
 
   // ── as — AI Assistant panel ────────────────────────────────────
@@ -137,6 +138,8 @@ export const DICT_EN: Record<string, string> = {
   "cfg.voiceLang": "Voice language",
   "cfg.sysVoice": "System Voice",
   "cfg.sysVoiceAuto": "(automatic by language)",
+  "cfg.ttsLang.auto": "Follow reply language",
+  "cfg.speechFollowsHint": "Follow reply language = the voice adapts to the reply's language. Pick a fixed language (e.g. Japanese) = text stays in the user's language, but the voice reads its translation.",
   "cfg.ttsLang.id": "Indonesian (id-ID)",
   "cfg.ttsLang.ja": "Japanese (ja-JP)",
   "cfg.ttsLang.en": "English (en-US)",
@@ -405,6 +408,14 @@ export const DICT_EN: Record<string, string> = {
   "conn.delConfirm": "Delete this connection?",
   "conn.allRoles": "all roles",
   "conn.offSkipped": "⏸ off — skipped",
+  "conn.setActive": "Set Active",
+  "conn.isActive": "● Active",
+  "conn.edit": "Edit",
+  "conn.test": "Test",
+  "conn.delete": "Delete",
+  "conn.off": "⏸ off",
+  "model.load": "Load",
+  "model.activeMark": "active",
   "conn.switchTip": "Enable/disable connection (disabled = skipped for all roles)",
 
   // ── mode-runtime ───────────────────────────────────────────────
@@ -448,6 +459,7 @@ export const DICT_EN: Record<string, string> = {
   "as.status.off": "off",
   "as.status.idle": "ready",
   "as.status.busy": "working…",
+  "as.status.busyTimer": "working… {s}s",
   "as.status.busyOther": "working (other client)",
   "as.status.thinking": "thinking…",
   "as.status.approval": "waiting for your approval…",

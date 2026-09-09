@@ -27,6 +27,7 @@ import "./agent/brain"; // installs window.__agent at module load
 import { startAssistantPanel } from "./agent/panel/panel";
 import { startProjekRail } from "./shell/projek";
 import { startBrowserPanel } from "./browser/panel";
+import { startStageHintFade } from "./shell/stage-hint";
 
 if (typeof window !== "undefined") {
   (window as any).MotionDSL = MotionDSL;
@@ -48,6 +49,8 @@ if (typeof window !== "undefined") {
   (window as any).__shellProjek = { start: startProjekRail };
   (window as any).__browserPanel = { start: startBrowserPanel };
   try { startProjekRail(); } catch {}
+  // Hint panggung memudar setelah interaksi pertama (drag/zoom).
+  try { startStageHintFade(); } catch {}
   // Mount ada setelah panel Assistant membangun halaman teknis; panel memanggil
   // start ulang saat tab Browser tersedia.
   i18n.init();

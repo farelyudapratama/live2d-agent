@@ -67,6 +67,16 @@ describe("drainSse", () => {
     expect(events[0].type).toBe("done");
     expect((events[0] as any).reply).toBe("selesai");
   });
+
+  it("melewati komentar heartbeat ': ka' dari server tanpa jadi event", () => {
+    // Server mengirim ": ka\n\n" tiap 5 dtk (anti idleTimeout) — parser wajib
+    // mengabaikannya, event sesudahnya tetap terbaca.
+    const { events, rest } = drainSse(
+      ": ka\n\ndata: {\"type\":\"delta\",\"text\":\"x\"}\n\n: ka\n\n",
+    );
+    expect(events).toEqual([{ type: "delta", text: "x" }]);
+    expect(rest).toBe("");
+  });
 });
 
 describe("decideFallback (protokol dua-kasus)", () => {
@@ -607,8 +617,8 @@ describe("TermLog", () => {
 // ═══════════════════════════════════════════════════════════════
 
 function makeTestActor() {
-  const calls: { gaze: string[]; emotion: string[]; spoke: string[]; quips: number } = {
-    gaze: [], emotion: [], spoke: [], quips: 0,
+  const calls: { gaze: string[]; emotion: string[]; spoke: string[]; quips: string[] } = {
+    gaze: [], emotion: [], spoke: [], quips: [],
   };
   let clock = 100000; // jauh di atas semua cooldown awal (lastQuip/lastMotion = 0)
   const actor = makeActor({
@@ -617,19 +627,28 @@ function makeTestActor() {
       expressEmotion: (e: string) => calls.emotion.push(e),
     },
     t: (k: string) => k,
-    post: async () => { calls.quips++; return { quip: "" }; },
+    post: async (_p: string, body: any) => {
+      calls.quips.push(String(body?.event));
+      return { quip: "" };
+    },
     speakAsCharacter: (s: string) => calls.spoke.push(s),
     now: () => clock,
+    // Timer fallback nyata — dipersingkat agar test bisa menunggunya.
+    fallbackMs: 10,
   });
   return { actor, calls, tick: (ms: number) => { clock += ms; } };
 }
 
+const waitMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 describe("actor — mapping per-event", () => {
-  it("verification gagal → kesal; lolos → senang tanpa komentar", () => {
+  it("verification gagal → kesal + quip LLM; lolos → senang tanpa komentar", async () => {
     const { actor, calls, tick } = makeTestActor();
     actor.onActivity({ type: "verification_result", label: "gagal: build error" });
     expect(calls.emotion).toContain("kesal");
-    expect(calls.spoke.length).toBe(1); // komentar fallback
+    expect(calls.spoke.length).toBe(0); // LLM dulu — belum ada yang bicara
+    await waitMs(30); // quip kosong → timer fallback menggugat template
+    expect(calls.spoke).toEqual(["as.actor.error"]);
     tick(3000);
     calls.spoke.length = 0;
     actor.onActivity({ type: "verification_result", label: "lolos: build bersih" });
@@ -637,11 +656,40 @@ describe("actor — mapping per-event", () => {
     expect(calls.spoke.length).toBe(0); // lolos → tanpa komentar
   });
 
-  it("plan_revised → gaze think + komentar revised", () => {
+  it("quip LLM menang — template tidak diucapkan", async () => {
+    const calls: { spoke: string[] } = { spoke: [] };
+    let clock = 100000;
+    const actor = makeActor({
+      t: (k: string) => k,
+      post: async () => ({ quip: "dia lagi baca config nih" }),
+      speakAsCharacter: (s: string) => calls.spoke.push(s),
+      now: () => clock,
+      fallbackMs: 10,
+    });
+    actor.onActivity({ type: "tool_call_start", label: "read_file package.json" });
+    await waitMs(5);
+    expect(calls.spoke).toEqual(["dia lagi baca config nih"]); // quip saja
+    await waitMs(30);
+    expect(calls.spoke.length).toBe(1); // template DIBATALKAN
+  });
+
+  it("label event asli dikirim ke prompt quip — komentar spesifik, bukan generik", async () => {
+    const { actor, calls } = makeTestActor();
+    actor.onActivity({ type: "tool_call_start", label: "read_file package.json {}" });
+    expect(calls.quips[0]).toContain("read_file package.json");
+  });
+
+  it("plan_revised → gaze think + quip revised (fallback saat gagal)", async () => {
     const { actor, calls, tick } = makeTestActor();
     actor.onActivity({ type: "plan_revised", label: "tambah item" });
     expect(calls.gaze).toContain("think");
-    expect(calls.spoke).toContain("as.actor.revised");
+    expect(calls.spoke.length).toBe(0);
+    await waitMs(30);
+    expect(calls.spoke).toEqual(["as.actor.revised"]);
+    tick(16000); // lepas cooldown quip
+    calls.spoke.length = 0;
+    actor.onActivity({ type: "plan_revised", label: "ubah arah" });
+    expect(calls.quips.length).toBe(2);
   });
 
   it("permission_resolved: disetujui → lega; ditolak → TANPA reaksi", () => {
@@ -656,10 +704,12 @@ describe("actor — mapping per-event", () => {
     expect(calls.gaze.length).toBe(gazeAfter);
   });
 
-  it("subagent_completed → reaksi ringan tanpa komentar; spawned → komentar", () => {
+  it("subagent_completed → reaksi ringan; spawned → quip (fallback saat gagal)", async () => {
     const { actor, calls, tick } = makeTestActor();
     actor.onActivity({ type: "subagent_spawned", label: "sub1: riset" });
-    expect(calls.spoke.length).toBe(1);
+    expect(calls.spoke.length).toBe(0);
+    await waitMs(30);
+    expect(calls.spoke).toEqual(["as.actor.tool"]);
     tick(3000);
     actor.onActivity({ type: "subagent_completed", label: "sub1: 3 file" });
     expect(calls.emotion).toContain("senang");
@@ -677,15 +727,33 @@ describe("actor — mapping per-event", () => {
     expect(calls.gaze.length).toBeGreaterThan(gazeAfterFirst);
   });
 
-  it("quip LLM hanya lewat cooldown 25 dtk", () => {
+  it("cooldown quip 15 dtk: dalam cooldown → DIAM (tanpa template, tanpa quip)", async () => {
     const { actor, calls, tick } = makeTestActor();
     actor.onActivity({ type: "thinking_start", label: "tugas" });
-    expect(calls.quips).toBe(1);
+    expect(calls.quips.length).toBe(1);
+    await waitMs(30); // fallback pertama bicara
+    calls.spoke.length = 0;
     tick(5000);
-    actor.onActivity({ type: "thinking_start", label: "tugas 2" });
-    expect(calls.quips).toBe(1); // masih dalam cooldown
-    tick(26000);
-    actor.onActivity({ type: "thinking_start", label: "tugas 3" });
-    expect(calls.quips).toBe(2);
+    actor.onActivity({ type: "tool_call_start", label: "list_dir {}" });
+    expect(calls.quips.length).toBe(1); // masih cooldown — quip tak diminta
+    expect(calls.spoke.length).toBe(0); // dan BUKAN template juga
+    tick(16000); // lepas cooldown
+    actor.onActivity({ type: "tool_call_start", label: "read_file {}" });
+    expect(calls.quips.length).toBe(2);
+  });
+
+  it("quip gagal (reject) → template segera, tanpa menunggu timer", async () => {
+    const calls: { spoke: string[] } = { spoke: [] };
+    let clock = 100000;
+    const actor = makeActor({
+      t: (k: string) => k,
+      post: async () => { throw new Error("LLM mati"); },
+      speakAsCharacter: (s: string) => calls.spoke.push(s),
+      now: () => clock,
+      fallbackMs: 10_000, // timer panjang — template harus datang dari catch
+    });
+    actor.onActivity({ type: "error", label: "boom" });
+    await waitMs(5);
+    expect(calls.spoke).toEqual(["as.actor.error"]);
   });
 });

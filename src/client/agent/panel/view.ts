@@ -106,6 +106,9 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
   const pill = el("span", "as-pill");
   const pillDot = el("span", "as-pill-dot");
   const pillLabel = el("span", "as-pill-label");
+  let pillTimer: ReturnType<typeof setInterval> | null = null;
+  let pillBusySince = 0;
+  let pillPrevState: PillState | null = null;
   pill.appendChild(pillDot);
   pill.appendChild(pillLabel);
   statusbar.appendChild(pill);
@@ -573,8 +576,12 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
   ): void {
     reviewPage.textContent = "";
     const bar = el("div", "as-page-bar");
-    const ttl = el("span", "as-page-ttl", t("as.review.title", { n: entries.length }));
-    bar.appendChild(ttl);
+    // Judul jumlah file hanya saat ada isinya — "0 file tersentuh" berdampingan
+    // dengan pesan kosong itu dua kali mengatakan hal yang sama.
+    if (entries.length) {
+      const ttl = el("span", "as-page-ttl", t("as.review.title", { n: entries.length }));
+      bar.appendChild(ttl);
+    }
     const refresh = el("button", "mini-btn", t("as.review.refresh")) as HTMLButtonElement;
     refresh.type = "button";
     refresh.addEventListener("click", () => opts.onRefresh());
@@ -701,14 +708,34 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
   type PillState = "off" | "idle" | "busy" | "busyOther" | "thinking" | "approval";
   function setPill(state: PillState): void {
     pill.dataset.state = state;
-    pillLabel.textContent = t(
-      state === "off" ? "as.status.off"
-        : state === "busy" ? "as.status.busy"
-        : state === "busyOther" ? "as.status.busyOther"
-        : state === "thinking" ? "as.status.thinking"
-        : state === "approval" ? "as.status.approval"
-        : "as.status.idle",
-    );
+    const wasBusy = pillPrevState === "busy";
+    pillPrevState = state;
+    if (pillTimer) {
+      clearInterval(pillTimer);
+      pillTimer = null;
+    }
+    if (state !== "busy") {
+      pillLabel.textContent = t(
+        state === "off" ? "as.status.off"
+          : state === "busyOther" ? "as.status.busyOther"
+          : state === "thinking" ? "as.status.thinking"
+          : state === "approval" ? "as.status.approval"
+          : "as.status.idle",
+      );
+      return;
+    }
+    // Bekerja + hitungan waktu — bedakan "hidup dan maju" dari "macet
+    // diam": <3 dtk cukup "bekerja…", setelah itu detik tampil. Acuan
+    // waktu HANYA di-reset saat transisi masuk busy — refreshStatus
+    // memanggil setPill("busy") tiap poll, jangan nol-kan ulang.
+    if (!wasBusy) pillBusySince = Date.now();
+    const paint = () => {
+      const s = Math.floor((Date.now() - pillBusySince) / 1000);
+      pillLabel.textContent =
+        s < 3 ? t("as.status.busy") : t("as.status.busyTimer", { s });
+    };
+    paint();
+    pillTimer = setInterval(paint, 1000);
   }
 
   function clearTranscript(): void {

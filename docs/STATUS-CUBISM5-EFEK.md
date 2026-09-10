@@ -4,6 +4,50 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-10 (25) — AUDIT KODE + PERBAIKAN: KOMIT RENDER, SHIM FAIL-LOUD, KEDIP rAF, ROLE-MAPPING TS (COMMIT)
+
+Sesi audit implementasi Cubism dari kode (bukan dokumen). Seluruh WIP entri
+(13)-(24) di-commit dalam 5 commit logis (27b95f8 render/core6, 1474b75
+server TTS/bahasa/SSE, 9556c84 panel/akting, a1aa0ef app.js/UI, 80fd9a0 docs)
+— tree bersih, gate penuh hijau sebelum tiap fase.
+
+Perbaikan (semua sudah di-commit):
+- **Shim core fail-loud** (app.js): moc3 v6+ TIDAK di-stamp lagi — log error
+  eksplisit suruh update core; v5 masih di-stamp dengan warning. Stamp buta
+  = kelas kegagalan senyap entri (19) tidak bisa terulang.
+- **Kedip pindah ke tick rAF** (`tickBlink`, dt-based): setInterval 3 dtk +
+  random-gate dihapus; interval natural, fase close/closed/open selalu
+  dipulihkan saat freeze/model ganti, DIJEDA saat klip emosi memutar (kurva
+  wink tidak ditimpa).
+- **Breath sadar-motion**: `pokeRoleNorm("breath")` dilewati saat
+  `motionLayersActive` — kurva motion3 yang membawa breath tidak ditimpa.
+- **BUG EKSPRESI DITEMUKAN & DIPERBAIKI** (b88b825): `state.modelExpressions`
+  dari `settings.expressions` DITIMPA baris berikutnya + `em.deferred` tidak
+  ada di pixi-live2d 0.4.0 (yang benar `em.definitions`) → ekspresi native
+  SELALU kosong untuk semua model (ren punya 5 .exp3 deklaratif, tak pernah
+  muncul di vocabulary). Urutan prioritas ekspresi kini benar-benar sampai
+  cabang native.
+- **Diagnostik runtime**: `window.__live2dAgent.diagnostics()` — versi core
+  vs moc (+peringatan core basi), status 4 patch lib, peta role + rentang
+  param, probe sumber caps, flag sheet basi.
+- **Stamp scannerVersion sheet** (server+client): simpan = stamp, GET =
+  tandai `_stale` bila versi beda; client warning + flag `state.sheetStale`.
+- **detectModelCapabilities**: warning eksplisit saat jalur resmi habis dan
+  pencarian menyelam ke private field framework.
+- **ROLE-MAPPING PORT KE TS** (`src/client/engine/role-mapping.ts`, sumber
+  kebenaran tunggal): ROLE_KEYWORDS/GROUP_PATTERNS/mapRoles/pickFromGroup +
+  role-space math (toActual/roleClampActual/normToRange/roleDefaultOf/
+  writeRef/detectAccessories) — murni, diuji bun test. app.js jadi delegasi
+  tipis via `window.__roleMapping` (fallback inline utk harness vm).
+  Guard duplikat test-role-mapping.js & test-param-scaling.js (salinan port
+  "keep in sync" manual) DIHAPUS — diganti test/role-mapping.test.ts (25
+  test, termasuk rename-invariance & sheet-nyata). Guard app.js tetap:
+  tabel bebas id bernomor kini menguji app.js TIDAK memuat tabel sendiri.
+- **Belum dikerjakan (dicatat)**: pipeline offscreen Porter-Duff penuh
+  (Atop iso-group masih aproksimasi) — tunggu bukti visual yang mengganggu;
+  sheet lama perlu re-scan manual (GET kini menandai basi, belum auto).
+Gate: **402 unit + 463 guard, 0 gagal**; build & tsc bersih.
+
 ## UPDATE 2026-09-09 (24) — GURATAN MERAH KELOPAK: TEKSTUR DI-PREMULTIPLY (BELUM COMMIT)
 
 User kirim screenshot close-up: dua guratan cokelat-merah simetris di atas

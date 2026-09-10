@@ -1253,152 +1253,12 @@
     }
   }
 
-  const ROLE_KEYWORDS = {
-    angleX: [
-      "ParamAngleX",
-      "AngleX",
-      "angle_x",
-      "yaw",
-      "turnx",
-      "rotx",
-      "頭",
-      "头",
-      "横向",
-      "左右",
-      "朝向x",
-      "方向x",
-    ],
-    angleY: [
-      "ParamAngleY",
-      "AngleY",
-      "angle_y",
-      "pitch",
-      "turny",
-      "roty",
-      "縦",
-      "纵向",
-      "上下",
-      "朝向y",
-      "方向y",
-    ],
-    angleZ: [
-      "ParamAngleZ",
-      "AngleZ",
-      "angle_z",
-      "roll",
-      "tilt",
-      "傾",
-      "倾",
-      "回転z",
-      "旋转z",
-      "歪",
-    ],
-    eyeBallX: [
-      "ParamEyeBallX",
-      "EyeBallX",
-      "eyeball_x",
-      "lookx",
-      "瞳X",
-      "瞳",
-      "眼球",
-      "目玉",
-      "视x",
-    ],
-    eyeBallY: [
-      "ParamEyeBallY",
-      "EyeBallY",
-      "eyeball_y",
-      "looky",
-      "瞳Y",
-      "瞳",
-      "眼球",
-      "目玉",
-      "视y",
-    ],
-    eyeLOpen: ["ParamEyeLOpen", "EyeLOpen", "eye_l_open", "左目", "左眼"],
-    eyeROpen: ["ParamEyeROpen", "EyeROpen", "eye_r_open", "右目", "右眼"],
-    eyeLSmile: [
-      "ParamEyeLSmile",
-      "EyeLSmile",
-      "eye_l_smile",
-      "左目笑",
-      "左眼笑",
-    ],
-    eyeRSmile: [
-      "ParamEyeRSmile",
-      "EyeRSmile",
-      "eye_r_smile",
-      "右目笑",
-      "右眼笑",
-    ],
-    eyeForm: ["ParamEyeForm", "EyeForm", "eye_form", "目形", "眼形"],
-    mouthOpenY: [
-      "ParamMouthOpenY",
-      "MouthOpenY",
-      "mouth_open",
-      "口開",
-      "张口",
-      "张嘴",
-    ],
-    mouthForm: [
-      "ParamMouthForm",
-      "MouthForm",
-      "mouth_form",
-      "口角",
-      "口形",
-      "嘴形",
-      "口型",
-    ],
-    mouthOpenX: ["ParamMouthOpenX", "MouthOpenX", "mouth_wide", "口幅", "嘴宽"],
-    bodyAngleX: [
-      "ParamBodyAngleX",
-      "BodyAngleX",
-      "body_angle_x",
-      "bodyx",
-      "体",
-      "胴",
-      "躯",
-    ],
-    bodyAngleY: [
-      "ParamBodyAngleY",
-      "BodyAngleY",
-      "body_angle_y",
-      "bodyy",
-      "体",
-      "胴",
-      "躯",
-    ],
-    bodyAngleZ: [
-      "ParamBodyAngleZ",
-      "BodyAngleZ",
-      "body_angle_z",
-      "bodyz",
-      "体",
-      "胴",
-      "躯",
-    ],
-    breath: ["ParamBreath", "Breath", "breath", "呼吸", "breathe", "息"],
-    browLForm: ["ParamBrowLForm", "BrowLForm", "brow_l", "左眉", "眉"],
-    browRForm: ["ParamBrowRForm", "BrowRForm", "brow_r", "右眉", "眉"],
-    browLY: ["ParamBrowLY", "BrowLY", "brow_l_y", "左眉Y", "左眉上下"],
-    browRY: ["ParamBrowRY", "BrowRY", "brow_r_y", "右眉Y", "右眉上下"],
-    browLAngle: ["ParamBrowLAngle", "BrowLAngle", "brow_l_angle", "左眉角"],
-    browRAngle: ["ParamBrowRAngle", "BrowRAngle", "brow_r_angle", "右眉角"],
-
-    blush: [
-      "ParamBlush",
-      "Blush",
-      "blush",
-      "ParamCheekRed",
-      "CheekRed",
-      "頬紅",
-      "ほお染め",
-      "照れ",
-      "脸红",
-      "腮红",
-      "害羞",
-    ],
-  };
+  // Tabel role hidup di src/client/engine/role-mapping.ts (sumber kebenaran
+  // tunggal, di-bundle ke window.__roleMapping). Duplikat di guard legacy
+  // sudah dikonversi ke bun test — tidak ada lagi "keep in sync" manual.
+  const RM =
+    typeof window !== "undefined" ? window.__roleMapping : null;
+  const ROLE_KEYWORDS = RM ? RM.ROLE_KEYWORDS : {};
 
   function getOfficialGroups(m) {
     const out = { eyeBlinkIds: [], lipSyncIds: [] };
@@ -1427,7 +1287,10 @@
     return out;
   }
 
+  const GROUP_PATTERNS = RM ? RM.GROUP_PATTERNS : {};
+
   function pickFromGroup(list, patterns) {
+    if (RM) return RM.pickFromGroup(list, patterns);
     if (!Array.isArray(list) || !list.length) return null;
     for (const re of patterns) {
       const hit = list.find((id) => typeof id === "string" && re.test(id));
@@ -1436,31 +1299,10 @@
     return null;
   }
 
-  const GROUP_PATTERNS = {
-    mouthOpenY: [
-      /openy$/i,
-      /mouthopen/i,
-      /open/i,
-      /口開|開口|口を開/,
-      /张口|张嘴|开口/,
-    ],
-    eyeLOpen: [
-      /eyelopen/i,
-      /^parameyel.*open/i,
-      /_l_?open/i,
-      /left.*open/i,
-      /左目|左眼/,
-    ],
-    eyeROpen: [
-      /eyeropen/i,
-      /^parameyer.*open/i,
-      /_r_?open/i,
-      /right.*open/i,
-      /右目|右眼/,
-    ],
-  };
-
   function mapRoles(paramSet, official) {
+    if (RM) return RM.mapRoles(paramSet, official);
+    // Fallback lengkap bila bundle belum termuat (test harness vm tanpa
+    // bundle) — logika sama, tapi sumber kebenaran tetap modul TS.
     const ids = {};
     if (!paramSet || !paramSet.size) return ids;
     const list = Array.from(paramSet).map((id) => id.toLowerCase());
@@ -1522,17 +1364,20 @@
   const roleId = (role) =>
     (state.caps && state.caps.ids && state.caps.ids[role]) || null;
 
-  const REF_HALF = 30;
+  const REF_HALF = RM ? RM.REF_HALF : 30;
 
-  const DEGREE_ROLES = new Set([
-    "angleX",
-    "angleY",
-    "angleZ",
-    "bodyAngleX",
-    "bodyAngleY",
-    "bodyAngleZ",
-  ]);
-  const refHalfFor = (role) => (DEGREE_ROLES.has(role) ? REF_HALF : 1);
+  const DEGREE_ROLES = RM
+    ? RM.DEGREE_ROLES
+    : new Set([
+        "angleX",
+        "angleY",
+        "angleZ",
+        "bodyAngleX",
+        "bodyAngleY",
+        "bodyAngleZ",
+      ]);
+  const refHalfFor = (role) =>
+    RM ? RM.refHalfFor(role) : DEGREE_ROLES.has(role) ? REF_HALF : 1;
   function roleRange(role) {
     const id = roleId(role);
     if (!id || !state.paramRange || !state.paramRange[id]) return null;
@@ -1542,6 +1387,7 @@
   function toActual(role, vRef) {
     const RH = refHalfFor(role);
     const r = roleRange(role);
+    if (RM) return RM.toActual(role, vRef, r);
     if (!r) return clamp(vRef, -RH, RH);
     const mid = (r.max + r.min) / 2,
       half = (r.max - r.min) / 2;
@@ -1550,6 +1396,7 @@
 
   function roleClampActual(role, v) {
     const r = roleRange(role);
+    if (RM) return RM.roleClampActual(role, v, r);
     if (!r) return clamp(v, -42, 42);
     return clamp(v, r.min, r.max);
   }
@@ -1558,7 +1405,7 @@
     const id = roleId(role);
     if (!id) return false;
     const r = roleRange(role);
-    const v = r ? r.min + clamp(t, 0, 1) * (r.max - r.min) : clamp(t, 0, 1);
+    const v = RM ? RM.normToRange(t, r) : r ? r.min + clamp(t, 0, 1) * (r.max - r.min) : clamp(t, 0, 1);
     pokeParam(id, v, 1);
     return true;
   }
@@ -1571,6 +1418,7 @@
 
   function roleDefault(role) {
     const r = roleRange(role);
+    if (RM) return RM.roleDefaultOf(r);
     if (r && typeof r.def === "number") return r.def;
     return 0;
   }
@@ -1639,7 +1487,7 @@
     const r = roleRange(role);
     if (NORM_TEMPLATE_ROLES.has(role)) {
       const t = clamp(v, 0, 1);
-      return r ? r.min + t * (r.max - r.min) : t;
+      return RM ? RM.normToRange(t, r) : r ? r.min + t * (r.max - r.min) : t;
     }
     const RH = refHalfFor(role);
     return r ? roleClampActual(role, toActual(role, v)) : clamp(v, -RH, RH);

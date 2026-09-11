@@ -100,6 +100,33 @@
     log("moc v" + headerV + " → model OK: " + d.count + " drawable, " +
         parts.count + " part, " + model.parameters.count + " param");
 
+    // ── 4.5 PHASE 6A: model.update() — WAJIB (docs resmi: update() merefleksi
+    // parameter ke vertex ArtMesh; renderer hanya mengambil hasilnya). Tanpa
+    // ini, pipeline Core→renderer tidak punya siklus hidup. ──
+    if (typeof model.update !== "function") {
+      throw new Error("core tidak mengekspos Model.update() — cek versi core");
+    }
+    model.update(); // evaluasi awal pada parameter default
+    // self-test sinkron: param berubah → update() → vertex berubah?
+    const syncTest = (() => {
+      const p = model.parameters;
+      let angleX = -1;
+      for (let i = 0; i < p.count; i++) if (p.ids[i] === "ParamAngleX") angleX = i;
+      if (angleX < 0) return { ok: null, angleX };
+      const vp0 = d.vertexPositions.subarray ? d.vertexPositions : d.vertexPositions[0];
+      const probe0 = vp0[0];
+      p.values[angleX] = 30;
+      model.update();
+      const changed = vp0[0] !== probe0;
+      p.values[angleX] = 0;
+      model.update();
+      return { ok: changed, angleX };
+    })();
+    log("model.update() ✓ (evaluasi awal)" +
+      (syncTest.angleX >= 0
+        ? " — self-test sync: vertex " + (syncTest.ok ? "BERUBAH saat param berubah ✓" : "TIDAK berubah ✗")
+        : " — ParamAngleX tidak ada, self-test dilewati"));
+
     // ── 4. Tekstur — PREMULTIPLY saat upload (pelajaran PATCH 6: texel kelopak
     // v6 = RGB berwarna + alpha 0; tanpa premultiply → garis merah bocor) ──
     PIXI.TextureSource.defaultOptions.alphaMode = "premultiply-alpha-on-upload";
@@ -153,7 +180,8 @@
     };
     const seenColor = new Map(), seenAlpha = new Map();
 
-    // ── 8. Baca geometri drawable (layout flat core, offset per-drawable) ──
+    // ── 8. Normalisasi geometri SEKALI (PHASE 6A): layout core dideteksi satu
+    // kali di sini — jalur render/mask/audit di bawah TIDAK bercabang lagi. ──
     const vc = d.vertexCounts, ic = d.indexCounts;
     let vOff = 0, iOff = 0;
     const vOffsets = new Array(n), iOffsets = new Array(n);
@@ -161,47 +189,52 @@
       vOffsets[i] = vOff; iOffsets[i] = iOff;
       vOff += vc[i]; iOff += ic[i];
     }
-
-    // ── 9. Skala/posisi dari BOUNDS vertex model (framing harness; adapter
-    // nanti memakai canvasinfo origin — field OriginX/Y tidak terekspose
-    // konsisten di core 6.0.1, bounds diukur dari data asli).
-    // PENTING: drawables.vertexPositions = Array-of-Float32Array PER-DRAWABLE
-    // (bukan satu array flat) — pola akses yang sama dipakai mesh di atas. ──
-    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    const flatLayout = !!d.vertexPositions.subarray;
+    const geom = new Array(n);
     for (let i = 0; i < n; i++) {
-      const pos = d.vertexPositions.subarray
-        ? d.vertexPositions
-        : d.vertexPositions[i];
-      const base = d.vertexPositions.subarray ? vOffsets[i] : 0;
-      for (let v = 0; v < vc[i]; v++) {
-        const x = pos[(base + v) * 2], y = pos[(base + v) * 2 + 1];
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-      }
+      geom[i] = {
+        positions: flatLayout
+          ? d.vertexPositions.subarray(vOffsets[i] * 2, (vOffsets[i] + vc[i]) * 2)
+          : d.vertexPositions[i],
+        uvs: flatLayout
+          ? d.vertexUvs.subarray(vOffsets[i] * 2, (vOffsets[i] + vc[i]) * 2)
+          : d.vertexUvs[i],
+        indices: flatLayout
+          ? d.indices.subarray(iOffsets[i], iOffsets[i] + ic[i])
+          : d.indices[i],
+      };
     }
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    const s = Math.min(app.screen.width / (maxX - minX), app.screen.height / (maxY - minY)) * 0.92;
+
+    // ── 9. Transform Cubism dari CANVAS SPACE (PHASE 6A): model matrix resmi =
+    // canvas rect (CanvasWidth/PPU × CanvasHeight/PPU), titik origin model di
+    // (CanvasOriginX, CanvasOriginY) px dari kiri-atas canvas, Y ke atas.
+    // Bukan bounding-box vertex — itu framing hack yang sudah diganti. ──
+    const ci = model.canvasinfo;
+    const unitW = ci.CanvasWidth / ci.PixelsPerUnit;
+    const unitH = ci.CanvasHeight / ci.PixelsPerUnit;
+    // pusat canvas dalam ruang model (unit, relatif titik origin, Y ke atas):
+    const uC = (ci.CanvasWidth / 2 - ci.CanvasOriginX) / ci.PixelsPerUnit;
+    const vC = (ci.CanvasOriginY - ci.CanvasHeight / 2) / ci.PixelsPerUnit;
+    const s = Math.min(app.screen.width / unitW, app.screen.height / unitH) * 0.92;
     const root = new PIXI.Container();
-    // screen = root + (s·x, −s·y) → pusat model di tengah layar:
-    root.position.set(app.screen.width / 2 - s * cx, app.screen.height / 2 + s * cy);
+    // screen = root + (s·u, −s·v); pusat canvas di tengah layar:
+    root.position.set(app.screen.width / 2 - s * uC, app.screen.height / 2 + s * vC);
     root.scale.set(s, -s); // Y cubism = atas → layar = bawah
     app.stage.addChild(root);
+    log("framing: canvas space " + unitW.toFixed(2) + "×" + unitH.toFixed(2) +
+        " unit, origin (" + (ci.CanvasOriginX / ci.PixelsPerUnit).toFixed(3) + ", " +
+        (ci.CanvasOriginY / ci.PixelsPerUnit).toFixed(3) + ")");
 
     // ── 10. Drawable → mesh Pixi 8, urut render order padat ──
     const meshes = new Array(n);
+    const allGeoms = []; // geometri hidup — di-update tiap frame setelah model.update()
     for (const i of idx) {
-      const vcI = vc[i];
       const geometry = new PIXI.MeshGeometry({
-        positions: d.vertexPositions.subarray
-          ? d.vertexPositions.subarray(vOffsets[i] * 2, (vOffsets[i] + vcI) * 2)
-          : d.vertexPositions[i],
-        uvs: d.vertexUvs.subarray
-          ? d.vertexUvs.subarray(vOffsets[i] * 2, (vOffsets[i] + vcI) * 2)
-          : d.vertexUvs[i],
-        indices: d.indices.subarray
-          ? d.indices.subarray(iOffsets[i], iOffsets[i] + ic[i])
-          : d.indices[i],
+        positions: geom[i].positions,
+        uvs: geom[i].uvs,
+        indices: geom[i].indices,
       });
+      allGeoms.push(geometry);
       const mesh = new PIXI.Mesh({ geometry, texture: textures[d.textureIndices[i]] });
       const colorId = d.blendModes ? d.blendModes[i] & 255 : 0;
       const alphaId = d.blendModes ? (d.blendModes[i] >>> 8) & 255 : 0;
@@ -244,21 +277,15 @@
       for (let k = 0; k < count; k++) {
         const src = d.masks[i * d.maskCountMax + k] ?? d.masks[i][k];
         if (src === undefined || src < 0) continue;
-        const vcS = vc[src];
         const g = new PIXI.Mesh({
           geometry: new PIXI.MeshGeometry({
-            positions: d.vertexPositions.subarray
-              ? d.vertexPositions.subarray(vOffsets[src] * 2, (vOffsets[src] + vcS) * 2)
-              : d.vertexPositions[src],
-            uvs: d.vertexUvs.subarray
-              ? d.vertexUvs.subarray(vOffsets[src] * 2, (vOffsets[src] + vcS) * 2)
-              : d.vertexUvs[src],
-            indices: d.indices.subarray
-              ? d.indices.subarray(iOffsets[src], iOffsets[src] + ic[src])
-              : d.indices[src],
+            positions: geom[src].positions,
+            uvs: geom[src].uvs,
+            indices: geom[src].indices,
           }),
           texture: textures[d.textureIndices[src]],
         });
+        allGeoms.push(g.geometry);
         maskContainer.addChild(g);
       }
       meshes[i].mask = maskContainer;
@@ -323,10 +350,9 @@
       let pMinX = 1e9, pMaxX = -1e9, pMinY = 1e9, pMaxY = -1e9;
       for (let i = 0; i < n; i++) {
         if (meshes[i] && meshes[i].mask) continue;
-        const pos = d.vertexPositions.subarray ? d.vertexPositions : d.vertexPositions[i];
-        const base = d.vertexPositions.subarray ? vOffsets[i] : 0;
+        const pos = geom[i].positions;
         for (let v = 0; v < vc[i]; v++) {
-          const x = pos[(base + v) * 2], y = pos[(base + v) * 2 + 1];
+          const x = pos[v * 2], y = pos[v * 2 + 1];
           if (x < pMinX) pMinX = x; if (x > pMaxX) pMaxX = x;
           if (y < pMinY) pMinY = y; if (y > pMaxY) pMaxY = y;
         }
@@ -356,9 +382,25 @@
       };
     }
 
-    // ── 12. Render + watchdog rAF (pelajaran tab ter-occlude) ──
+    // ── 12. Loop hidup (PHASE 6A-8): param → model.update() → upload vertex →
+    // render. Head-turn sin membuktikan rantai sinkron Core→Pixi bekerja
+    // (vertex buffer ikut berubah tiap frame). Matikan via ?static. Watchdog
+    // 250ms tetap (pelajaran tab ter-occlude). ──
+    const STATIC = new URLSearchParams(location.search).has("static");
+    const params = model.parameters;
+    const angleXIdx = (() => { for (let i = 0; i < params.count; i++) if (params.ids[i] === "ParamAngleX") return i; return -1; })();
+    const angleYIdx = (() => { for (let i = 0; i < params.count; i++) if (params.ids[i] === "ParamAngleY") return i; return -1; })();
     let lastTick = performance.now();
-    app.ticker.add(() => { lastTick = performance.now(); });
+    app.ticker.add(() => {
+      const t = app.ticker.lastTime / 1000;
+      if (!STATIC && angleXIdx >= 0) {
+        params.values[angleXIdx] = Math.sin(t * 1.1) * 30;
+        if (angleYIdx >= 0) params.values[angleYIdx] = Math.sin(t * 0.7) * 15;
+        model.update(); // core hitung ulang vertex dari parameter
+        for (const geo of allGeoms) geo.getBuffer("aPosition").update(); // upload ke GPU
+      }
+      lastTick = performance.now();
+    });
     setInterval(() => {
       if (performance.now() - lastTick > 250) app.ticker.update();
     }, 250);
@@ -383,6 +425,9 @@
         ? "OK (mesh lokal identitas, prediksi≈aktual Δ" + audit.coord.maxDelta.toFixed(3) + "px)"
         : "GAGAL " + JSON.stringify(audit.coord)),
       warnings.length ? "fallback/warning: " + warnings.length : "tanpa fallback",
+      "update(): awal + per frame | sync self-test: " +
+        (syncTest.angleX >= 0 ? (syncTest.ok ? "OK (vertex berubah)" : "GAGAL") : "n/a") +
+        " | anim: " + (STATIC ? "static (?static)" : "ParamAngleX/Y ✓"),
       "render: PixiJS " + PIXI.VERSION + " → canvas ✓ (offscreen=" + OFFSCREEN_MODE + ")",
     ].join("\n"), warnings.length ? "warn" : "ok");
 

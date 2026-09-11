@@ -27,6 +27,7 @@ import {
   segmentTextFallback,
   EMOTION_GESTURE_FALLBACK,
 } from "./directive-parser";
+import { scaleRoleFraction } from "./param-range";
 import type {
   ChatMessage,
   ParsedSegment,
@@ -323,15 +324,8 @@ Contoh pendek:
     eyes: { x: number; y: number };
     body: { x: number; y: number; z: number };
   } {
-    const pct = (role: string, fraction: number): number => {
-      const cap = this.capProfile as any;
-      if (!cap || !cap.sheet) return fraction * 30; // fallback: assume -30..30
-      const id = cap.roleIds && cap.roleIds[role];
-      if (!id) return 0;
-      const r = cap.sheet.paramRange && cap.sheet.paramRange[id];
-      if (!r) return fraction * 30;
-      return fraction > 0 ? fraction * r.max : fraction * Math.abs(r.min);
-    };
+    const pct = (role: string, fraction: number): number =>
+      scaleRoleFraction(this.capProfile, role, fraction);
     const movements: Record<
       string,
       { head: { x: number; y: number }; eyes: { x: number; y: number }; body: { x: number; y: number; z: number } }

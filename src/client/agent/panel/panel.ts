@@ -14,6 +14,8 @@
  *     ada di stream.ts (decideFallback).
  */
 
+import { createLifecycle } from "../../lifecycle";
+import { createAssistantApi, bootThenPoll } from "./api";
 import { Transcript, CONTINUATION_PROMPT } from "./transcript";
 import type { Block } from "./transcript";
 import { decideFallback, readSseStream, postJson } from "./stream";
@@ -24,29 +26,24 @@ import { createPanelView } from "./view";
 import type { TechnicalTab } from "./view";
 
 const API = location.origin;
+const assistantApi = createAssistantApi(API);
+let activeDestroy: (() => void) | null = null;
 
-type StatusResp = {
-  running?: boolean;
-  busy?: boolean;
-  workDir?: string | null;
-  pendingApprovals?: Array<{ id: string; tool: string; args: any }>;
-  plan?: any[];
-  notes?: { filesTouched?: string[] };
-  tools?: Array<{ name: string; level: "safe" | "mutating" }>;
-};
+type StatusResp = Awaited<ReturnType<typeof assistantApi.status>>;
 
 function getT() {
-  const i = (window as any).__i18n;
+  const i = window.__i18n;
   return (k: string, v?: Record<string, string | number>) => (i ? i.t(k, v) : k);
 }
 
 function speakAsCharacter(text: string): void {
   if (!text) return;
-  try { (window as any).__addChat?.("agent", text); } catch {}
-  try { (window as any).__live2dAgent?.speak?.(text); } catch {}
+  try { window.__addChat?.("agent", text); } catch {}
+  try { window.__live2dAgent?.speak?.(text); } catch {}
 }
 
 export function startAssistantPanel(): () => void {
+  activeDestroy?.();
   const t = getT();
   const root = document.getElementById("as-root");
   const techRoot = document.getElementById("as-tech-root");
@@ -54,6 +51,8 @@ export function startAssistantPanel(): () => void {
   const rootEl: HTMLElement = root;
   const techRootEl: HTMLElement | null = techRoot;
 
+  const lifecycle = createLifecycle();
+  const requestSignal = lifecycle.controller().signal;
   let transcript = new Transcript();
   const registry = new ChangeRegistry(); // perubahan file sesi (tab Review)
   const termLog = new TermLog(); // riwayat run_command (tab Terminal)
@@ -67,7 +66,7 @@ export function startAssistantPanel(): () => void {
     toolLevel: (name) => toolLevels.get(name) ?? null,
   });
   const actor = makeActor({
-    L: (window as any).__live2dAgent,
+    L: window.__live2dAgent,
     t,
     post: (p, b) => postJson(API + p, b),
     speakAsCharacter,
@@ -88,8 +87,6 @@ export function startAssistantPanel(): () => void {
   const memBtn = document.getElementById("as-memory") as HTMLButtonElement | null;
 
   let destroy = false;
-  let statusIv: ReturnType<typeof setInterval> | null = null;
-  let busIv: ReturnType<typeof setInterval> | null = null;
   let lastSeq = 0;
   let prevBusy = false;
   let liveAsk: { abort: AbortController; receivedAnyEvent: boolean } | null = null;
@@ -112,7 +109,7 @@ export function startAssistantPanel(): () => void {
     } else if (tab === "term") {
       view.renderTerm(termLog.list());
     } else if (!destroyBrowserPanel) {
-      destroyBrowserPanel = (window as any).__browserPanel?.start?.() ?? null;
+      destroyBrowserPanel = window.__browserPanel?.start?.() ?? null;
     }
   }
 
@@ -138,12 +135,13 @@ export function startAssistantPanel(): () => void {
   }
 
   async function fetchStatus(): Promise<StatusResp> {
-    return fetch(API + "/api/assistant/status").then((r) => r.json());
+    return assistantApi.status(requestSignal);
   }
 
   async function syncHistory(): Promise<void> {
     try {
-      const hist = await fetch(API + "/api/assistant/history").then((r) => r.json());
+      const hist = await assistantApi.history(requestSignal);
+      if (destroy) return;
       transcript.syncFromHistory(hist);
       render();
     } catch {}
@@ -390,7 +388,7 @@ export function startAssistantPanel(): () => void {
     if (destroy) return;
     let d: { latest?: number; busy?: boolean; events?: any[] };
     try {
-      d = await fetch(API + "/api/assistant/events?since=" + lastSeq).then((r) => r.json());
+      d = await assistantApi.events(lastSeq, requestSignal);
     } catch {
       return;
     }
@@ -457,42 +455,46 @@ export function startAssistantPanel(): () => void {
   window.addEventListener("agent:session-changed", onSessionChanged);
 
   // ── Boot ────────────────────────────────────────────────────────
-  (async () => {
+  void bootThenPoll(lifecycle, async (signal) => {
     let persona = "";
     try {
-      const prof = await (window as any).__live2dAgent?.getCapabilityProfile?.();
+      const prof = await window.__live2dAgent?.getCapabilityProfile?.();
       persona = String(prof?.userNote || "").slice(0, 800);
     } catch {}
     try {
       await postJson(API + "/api/assistant/start", {
         workDir: workdir?.value || undefined,
         persona,
-      });
+      }, signal);
+      if (!lifecycle.alive) return;
       actor.setPersona(persona);
       await syncHistory();
+      if (!lifecycle.alive) return;
       transcript.status(t("as.activeDefault"), "ok");
       render();
     } catch (e: any) {
+      if (!lifecycle.alive) return;
       transcript.status(t("as.startFail", { msg: e?.message || e }), "err");
       render();
     }
-    // Baseline bus: TIDAK di-replay — mulai dari seq terkini.
+    // Baseline bus tidak di-replay; polling tetap hidup walau start gagal.
     try {
-      const d = await fetch(API + "/api/assistant/events?since=0").then((r) => r.json());
+      const d = await assistantApi.events(0, signal);
       lastSeq = d.latest || 0;
     } catch {}
-    statusIv = setInterval(refreshStatus, 2000);
-    busIv = setInterval(pollBus, 1500);
-    refreshStatus();
-  })();
+  }, [
+    { run: () => { void refreshStatus(); }, ms: 2000 },
+    { run: () => { void pollBus(); }, ms: 1500 },
+  ]);
 
   // ── Destroy: lepas UI saja (runtime tetap hidup) ────────────────
-  return function destroyPanel() {
+  const destroyPanel = () => {
+    if (destroy) return;
     destroy = true;
+    lifecycle.destroy();
+    view.destroy();
     actor.stop();
     liveAsk?.abort.abort();
-    if (statusIv) clearInterval(statusIv);
-    if (busIv) clearInterval(busIv);
     sendBtn?.removeEventListener("click", onSend);
     input?.removeEventListener("keydown", onKey);
     input?.removeEventListener("input", onInputGrow);
@@ -505,5 +507,8 @@ export function startAssistantPanel(): () => void {
     destroyBrowserPanel?.();
     rootEl.textContent = "";
     if (techRootEl) techRootEl.textContent = "";
+    if (activeDestroy === destroyPanel) activeDestroy = null;
   };
+  activeDestroy = destroyPanel;
+  return destroyPanel;
 }

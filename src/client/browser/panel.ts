@@ -1,5 +1,5 @@
 /** Control plane Browser pada tab teknis; DOM aman tanpa innerHTML. */
-import type { BrowserState } from "../../server/browser/types";
+import type { BrowserState } from "../../shared/browser-types";
 import { t } from "../i18n/index";
 
 const DEFAULT_URL = "https://example.com";

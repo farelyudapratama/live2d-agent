@@ -113,7 +113,7 @@ ok('supportedEmotions TIDAK lagi diisi emosi sintetis — hardcode hanya fallbac
 ok('inspectModel tidak menanam emosi sintetis ke sheet baru',
   !/const supportedEmotions = buildRoleEmotions\(\)/.test(appSrc));
 ok('nama tak dikenal (mis. exp_heart) tetap memicu overlay setelah blok fallback sintetis',
-  /const synth = state\.roleEmotions && state\.roleEmotions\[name\];[\s\S]{0,700}?\n    fireOverlay\(name\);\n  \}/.test(appSrc));
+  /const synth = state\.roleEmotions && state\.roleEmotions\[name\];[\s\S]*?\r?\n    fireOverlay\(name\);\r?\n  \}/.test(appSrc));
 ok('config.json "overlay" diteruskan server ke client',
   serverSrc.includes('overlay:cfg.overlay||{}'));
 ok('app.js membaca config overlay',

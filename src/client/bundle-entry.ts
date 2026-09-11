@@ -15,12 +15,14 @@
  * classes (with their static factory facades) are installed directly, not wrapped
  * in a namespace. No render loop is started here, so there is no conflict.
  */
+import type {} from "./window-contract";
 import * as MotionDSL from "./animation/motion-dsl";
 import { MotionRegistry } from "./animation/motion-registry";
 import { MotionRuntime } from "./animation/motion-runtime";
 import * as MotionTaxonomy from "./engine/motion-taxonomy";
 import * as Framing from "./engine/framing";
 import * as RoleMapping from "./engine/role-mapping";
+import { collectNativeExpressions } from "./engine/native-expressions";
 import * as LipSync from "./speech/lip-sync";
 import * as i18n from "./i18n/index";
 import "./agent/directive-parser";
@@ -31,27 +33,28 @@ import { startBrowserPanel } from "./browser/panel";
 import { startStageHintFade } from "./shell/stage-hint";
 
 if (typeof window !== "undefined") {
-  (window as any).MotionDSL = MotionDSL;
-  (window as any).MotionRegistry = MotionRegistry;
-  (window as any).MotionRuntime = MotionRuntime;
-  (window as any).MotionTaxonomy = MotionTaxonomy;
-  (window as any).LipSync = LipSync;
+  window.MotionDSL = MotionDSL;
+  window.MotionRegistry = MotionRegistry;
+  window.MotionRuntime = MotionRuntime;
+  window.MotionTaxonomy = MotionTaxonomy;
+  window.LipSync = LipSync;
   // Role mapping & skala referensi (murni) — sumber kebenaran tunggal;
   // app.js legacy memanggil lewat window.__roleMapping (wrapper tipis).
-  (window as any).__roleMapping = RoleMapping;
+  window.__roleMapping = RoleMapping;
+  window.__nativeExpressions = { collect: collectNativeExpressions };
   // Rumus framing panggung (murni) — dipakai legacy frameModel. upper/full
   // hanya fungsi TINGGI stage (anti-gepeng saat splitter didrag).
-  (window as any).__framing = Framing;
+  window.__framing = Framing;
   // i18n: init() sinkron menyweep atribut data-i18n* di DOM statis SEBELUM
   // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
   // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.
-  (window as any).__i18n = i18n;
+  window.__i18n = i18n;
   // Panel agent (mode Assistant) — dipanggil mode-runtime.js saat tab
   // assistant aktif. Remake tampilan ala ZCode tinggal di sini (TS).
-  (window as any).__agentPanel = { start: startAssistantPanel };
+  window.__agentPanel = { start: startAssistantPanel };
   // Rail projek shell (activity bar kiri) — start sekali di boot app.
-  (window as any).__shellProjek = { start: startProjekRail };
-  (window as any).__browserPanel = { start: startBrowserPanel };
+  window.__shellProjek = { start: startProjekRail };
+  window.__browserPanel = { start: startBrowserPanel };
   try { startProjekRail(); } catch {}
   // Hint panggung memudar setelah interaksi pertama (drag/zoom).
   try { startStageHintFade(); } catch {}

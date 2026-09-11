@@ -4,7 +4,35 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-11 (26) — REFACTOR CLIENT: ROLE-SPACE, LIFECYCLE, KONTRAK BRIDGE, EKSPRESI TS (BELUM COMMIT)
+
+Audit maintainability client dilanjutkan dengan tranche kecil, tanpa rewrite
+`app.js` atau perubahan renderer/motion pipeline:
+- **Inferensi emosi AgentBrain dikunci di role-space referensi**: pecahan
+  semantik memakai `refHalfFor(role)` dan baru dipetakan sekali oleh render
+  loop melalui `toActual`. Ini mencegah scaling ganda pada rig 0..100 atau
+  asimetris; role yang tidak dimiliki model tetap menghasilkan nol.
+- **Lifecycle UI eksplisit dan idempotent** (`src/client/lifecycle.ts`): timer,
+  listener, dan AbortController dimiliki satu scope. Panel Assistant tidak
+  dapat memasang poll setelah teardown, PanelView membersihkan timer status,
+  dan rail projek melepas seluruh listener splitter serta menolak hasil draw
+  async yang sudah basi. Start panel/rail kedua membongkar instance lama.
+- **Boundary client lebih jelas**: API status/history/events Assistant dipisah
+  ke modul typed, kontrak global `Window` dipusatkan, dan tipe wire browser
+  dipindah ke `src/shared/browser-types.ts` dengan re-export kompatibilitas.
+- **Kolektor ekspresi native dipindah ke TS murni**: union stabil dari
+  `model.expressions`, `expressionManager.definitions`, dan
+  `settings.expressions`; nama asli rigger dipertahankan dan getter rusak
+  tidak menjatuhkan sumber lain. `app.js` sekarang adapter tipis dan fail-loud
+  bila bundle belum dibangun, bukan diam-diam mengosongkan ekspresi.
+- Guard source yang rapuh karena batas jarak karakter diperbarui agar tetap
+  mengunci urutan perilaku fungsi lengkap; test baru mencakup role-space,
+  lifecycle race, kolektor ekspresi, dan urutan bootstrap bridge.
+
+Gate: **414 unit + 463 guard, 0 gagal**; build & `tsc --noEmit` bersih.
+
 ## UPDATE 2026-09-10 (25) — AUDIT KODE + PERBAIKAN: KOMIT RENDER, SHIM FAIL-LOUD, KEDIP rAF, ROLE-MAPPING TS (COMMIT)
+
 
 Sesi audit implementasi Cubism dari kode (bukan dokumen). Seluruh WIP entri
 (13)-(24) di-commit dalam 5 commit logis (27b95f8 render/core6, 1474b75

@@ -5,6 +5,7 @@
  * Anggaran render dijaga: warna solid + hairline, tanpa blur/gradient.
  */
 
+import { createLifecycle } from "../../lifecycle";
 import type { Block } from "./transcript";
 import { changeFromTool, MAX_RENDER_ROWS } from "./diff";
 import type { FileChange } from "./diff";
@@ -100,6 +101,7 @@ function buildMd(tokens: MdToken[]): HTMLElement {
 }
 
 export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null, deps: PanelViewDeps) {
+  const lifecycle = createLifecycle();
   const t = deps.t;
   // ── Skeleton panel ──────────────────────────────────────────────
   const statusbar = el("div", "as-statusbar");
@@ -125,7 +127,7 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     btn.type = "button";
     btn.dataset.tab = name;
     btn.textContent = t(name === "review" ? "as.tab.review" : name === "term" ? "as.tab.terminal" : "as.tab.browser");
-    btn.addEventListener("click", () => setTab(name));
+    lifecycle.listen(btn, "click", () => setTab(name));
     tabBtns[name] = btn;
     tabsBar.appendChild(btn);
   }
@@ -147,7 +149,7 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     techCollapse.setAttribute("aria-expanded", on ? "false" : "true");
     try { localStorage.setItem("live2d.agentTech.collapsed", on ? "1" : "0"); } catch {}
   }
-  techCollapse.addEventListener("click", () => setTechCollapsed(!techShell?.classList.contains("collapsed")));
+  lifecycle.listen(techCollapse, "click", () => setTechCollapsed(!techShell?.classList.contains("collapsed")));
 
   const reviewPage = el("div", "as-page as-review");
   const termPage = el("div", "as-page as-term hidden");
@@ -735,7 +737,7 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
         s < 3 ? t("as.status.busy") : t("as.status.busyTimer", { s });
     };
     paint();
-    pillTimer = setInterval(paint, 1000);
+    pillTimer = lifecycle.interval(paint, 1000);
   }
 
   function clearTranscript(): void {
@@ -746,7 +748,13 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     tl.textContent = "";
   }
 
-  return { render, renderTask, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm };
+  function destroy(): void {
+    lifecycle.destroy();
+    if (pillTimer) clearInterval(pillTimer);
+    pillTimer = null;
+  }
+
+  return { render, renderTask, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm, destroy };
 }
 
 export type PanelView = ReturnType<typeof createPanelView>;

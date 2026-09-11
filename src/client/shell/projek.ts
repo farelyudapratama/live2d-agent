@@ -9,6 +9,7 @@
  * `agent:session-changed` — panel agent yang menangkap (hydrate transcript).
  */
 
+import { createLifecycle } from "../lifecycle";
 import {
   WORKSPACE_CEIL,
   WORKSPACE_FLOOR,
@@ -19,6 +20,7 @@ import {
 
 const API = location.origin;
 const LS_KEY = "live2d.projekRail.open";
+let activeDestroy: (() => void) | null = null;
 
 type SessionItem = { id: string; name: string; workDir: string; ts: number; count: number };
 type SessionsResp = { active: string; sessions: SessionItem[] };
@@ -31,7 +33,7 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
 }
 
 function getT() {
-  const i = (window as any).__i18n;
+  const i = window.__i18n;
   return (k: string, v?: Record<string, string | number>) => (i ? i.t(k, v) : k);
 }
 
@@ -43,14 +45,23 @@ async function fetchJSON(url: string, init?: RequestInit): Promise<any> {
 }
 
 export function startProjekRail(): () => void {
+  activeDestroy?.();
+  const lifecycle = createLifecycle();
+  const requestSignal = lifecycle.controller().signal;
+  const requestJSON = (url: string, init?: RequestInit) =>
+    fetchJSON(url, { ...init, signal: requestSignal });
   const t = getT();
   const railEl = document.getElementById("projek-rail");
   const btnEl = document.getElementById("btn-projek-rail");
-  if (!railEl || !btnEl) return () => {};
+  if (!railEl || !btnEl) {
+    lifecycle.destroy();
+    return () => {};
+  }
   const rail: HTMLElement = railEl;
   const btn = btnEl as HTMLButtonElement;
 
   let destroyed = false;
+  let drawGeneration = 0;
   let open = false;
   try {
     const saved = localStorage.getItem(LS_KEY);
@@ -63,6 +74,7 @@ export function startProjekRail(): () => void {
 
   function setOpen(v: boolean): void {
     open = v;
+    if (!open) drawGeneration++;
     rail.classList.toggle("hidden", !open);
     btn.classList.toggle("active", open);
     btn.setAttribute("aria-pressed", open ? "true" : "false");
@@ -76,15 +88,18 @@ export function startProjekRail(): () => void {
   /** Gambar seluruh isi rail: kartu project + daftar sesi. */
   async function draw(): Promise<void> {
     if (destroyed || !open) return;
+    const generation = ++drawGeneration;
+    const stale = () => destroyed || !open || generation !== drawGeneration;
     rail.textContent = "";
     rail.appendChild(el("div", "prj-title", t("shell.projek.title")));
 
     // ── Kartu project (workdir aktif dari /status) ──
     let workDir = "";
     try {
-      const st = await fetchJSON(API + "/api/assistant/status");
+      const st = await requestJSON(API + "/api/assistant/status");
       workDir = String(st.workDir || "");
     } catch {}
+    if (stale()) return;
     const card = el("button", "prj-card") as HTMLButtonElement;
     card.type = "button";
     if (workDir) {
@@ -119,11 +134,13 @@ export function startProjekRail(): () => void {
     rail.appendChild(listBox);
     let data: SessionsResp;
     try {
-      data = await fetchJSON(API + "/api/assistant/sessions");
+      data = await requestJSON(API + "/api/assistant/sessions");
     } catch (e: any) {
+      if (stale()) return;
       listBox.appendChild(el("div", "prj-empty", "✗ " + (e?.message || e)));
       return;
     }
+    if (stale()) return;
     if (!data.sessions?.length) {
       listBox.appendChild(el("div", "prj-empty", t("as.sess.empty")));
       return;
@@ -156,7 +173,7 @@ export function startProjekRail(): () => void {
 
   async function newSession(): Promise<void> {
     try {
-      await fetchJSON(API + "/api/assistant/sessions/new", {
+      await requestJSON(API + "/api/assistant/sessions/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
@@ -170,7 +187,7 @@ export function startProjekRail(): () => void {
 
   async function switchSession(id: string): Promise<void> {
     try {
-      await fetchJSON(API + "/api/assistant/sessions/switch", {
+      await requestJSON(API + "/api/assistant/sessions/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
@@ -184,7 +201,7 @@ export function startProjekRail(): () => void {
 
   async function removeSession(id: string): Promise<void> {
     try {
-      await fetchJSON(API + "/api/assistant/sessions/delete", {
+      await requestJSON(API + "/api/assistant/sessions/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
@@ -197,17 +214,16 @@ export function startProjekRail(): () => void {
   }
 
   const onBtn = () => setOpen(!open);
-  btn.addEventListener("click", onBtn);
+  lifecycle.listen(btn, "click", onBtn);
 
   // Sesi bisa berubah dari luar (CLI menulis store) → segarkan saat rail
   // terbuka tiap 8 dtk (murah: satu GET ringan).
-  const iv = setInterval(() => { if (open) void draw(); }, 8000);
+  lifecycle.interval(() => { if (open) void draw(); }, 8000);
 
   // ── Indikator status agent GLOBAL (di activity bar) ─────────────
   // Dot kecil pada tombol Assistant: user melihat agent hidup/nunggu izin
   // tanpa membuka panel mana pun. Poll ringan 4 dtk, selalu jalan.
   const asBtn = document.querySelector('#mode-switch button[data-mode="assistant"]') as HTMLElement | null;
-  let statusIv: ReturnType<typeof setInterval> | null = null;
   async function refreshAgentBadge(): Promise<void> {
     if (!asBtn) return;
     let st: {
@@ -217,7 +233,7 @@ export function startProjekRail(): () => void {
       lastEvent?: { type?: string; label?: string } | null;
     };
     try {
-      st = await fetchJSON(API + "/api/assistant/status");
+      st = await requestJSON(API + "/api/assistant/status");
     } catch { return; } // server lewat — biarkan badge terakhir
     const pending = Array.isArray(st.pendingApprovals) ? st.pendingApprovals.length : 0;
     const state = !st.running ? "off" : pending > 0 ? "approval" : st.busy ? "busy" : "idle";
@@ -246,7 +262,7 @@ export function startProjekRail(): () => void {
   }
   if (asBtn) {
     void refreshAgentBadge();
-    statusIv = setInterval(() => { void refreshAgentBadge(); }, 4000);
+    lifecycle.interval(() => { void refreshAgentBadge(); }, 4000);
   }
 
   // ── Resize workspace agent gabungan (drag gutter; dobel-klik = reset) ──
@@ -328,41 +344,50 @@ export function startProjekRail(): () => void {
       }
       initWorkspaceW();
     };
-    gutter.addEventListener("mousedown", (e) => {
+    const onMouseDown = (e: Event) => {
+      const mouse = e as MouseEvent;
       if (window.innerWidth < MIN_DESKTOP_W) return;
       dragging = true;
       document.body.classList.add("sb-resizing");
-      e.preventDefault();
-    });
-    window.addEventListener("mousemove", (e) => {
+      mouse.preventDefault();
+    };
+    const onMouseMove = (e: Event) => {
+      const mouse = e as MouseEvent;
       if (!dragging) return;
-      // Gutter di kiri workspace → lebar = jarak tepi kanan window → kursor.
-      applyWorkspaceW(window.innerWidth - e.clientX - 10 /* padding .app */);
-    });
-    window.addEventListener("mouseup", () => {
+      applyWorkspaceW(window.innerWidth - mouse.clientX - 10 /* padding .app */);
+    };
+    const onMouseUp = () => {
       if (!dragging) return;
       dragging = false;
       document.body.classList.remove("sb-resizing");
-      // Simpan nilai TERLIHAT (hasil clamp), bukan keinginan mentah drag.
       const w = parseInt(workspace.style.flexBasis, 10);
       if (w >= WORKSPACE_FLOOR && w <= WORKSPACE_CEIL) {
         try { localStorage.setItem(LS_W, String(w)); } catch {}
       }
-    });    gutter.addEventListener("dblclick", () => {
+    };
+    const onDoubleClick = () => {
       applyWorkspaceW(null);
       try { localStorage.removeItem(LS_W); } catch {}
-    });
-    window.addEventListener("resize", onResize);
+    };
+    lifecycle.listen(gutter, "mousedown", onMouseDown);
+    lifecycle.listen(window, "mousemove", onMouseMove);
+    lifecycle.listen(window, "mouseup", onMouseUp);
+    lifecycle.listen(gutter, "dblclick", onDoubleClick);
+    lifecycle.listen(window, "resize", onResize);
     initWorkspaceW();
   }
 
   setOpen(open);
 
-  return function destroyProjekRail() {
+  const destroyProjekRail = () => {
+    if (destroyed) return;
     destroyed = true;
-    clearInterval(iv);
-    if (statusIv) clearInterval(statusIv);
-    btn.removeEventListener("click", onBtn);
+    drawGeneration++;
+    lifecycle.destroy();
+    document.body.classList.remove("sb-resizing");
     rail.textContent = "";
+    if (activeDestroy === destroyProjekRail) activeDestroy = null;
   };
+  activeDestroy = destroyProjekRail;
+  return destroyProjekRail;
 }

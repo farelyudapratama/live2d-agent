@@ -103,11 +103,12 @@ export async function readSseStream(
 }
 
 /** Kirim JSON POST; balikan di-parse, error dilempar sebagai Error. */
-export async function postJson(url: string, body: unknown): Promise<any> {
+export async function postJson(url: string, body: unknown, signal?: AbortSignal): Promise<any> {
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body || {}),
+    signal,
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d?.error) throw new Error(d?.error || "HTTP " + r.status);

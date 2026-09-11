@@ -1763,40 +1763,11 @@
       console.warn("[cap] paramRange read failed", e.message);
     }
 
-    let exprs = [];
-    try {
-      if (Array.isArray(m.expressions)) exprs = m.expressions.slice();
-      else if (m.expressions && typeof m.expressions === "object")
-        exprs = Object.keys(m.expressions);
-    } catch (e) {}
-
-    try {
-      // pixi-live2d 0.4.0: ExpressionManager punya `definitions` (array
-      // {Name, File} dari manifest) — BUKAN `deferred` (itu versi lebih
-      // baru; di 0.4.0 blok itu tidak pernah mengisi apa pun).
-      const em =
-        m.internalModel &&
-        m.internalModel.motionManager &&
-        m.internalModel.motionManager.expressionManager;
-      if (em && Array.isArray(em.definitions))
-        exprs = exprs.concat(
-          em.definitions.map((x) => x && x.Name).filter(Boolean),
-        );
-    } catch (e) {}
-
-    try {
-      const st = m.internalModel && m.internalModel.settings;
-      if (st && st.expressions && st.expressions.length > 0) {
-        // CONCAT, bukan assign: dulu ini menimpa exprs lalu DITIMPA BALIK
-        // oleh `state.modelExpressions = new Set(exprs)` di bawah — ekspresi
-        // native selalu hilang untuk SEMUA model (ren punya 5 .exp3 yang
-        // tidak pernah muncul di vocabulary).
-        exprs = exprs.concat(
-          st.expressions.map((e) => e && e.Name).filter(Boolean),
-        );
-      }
-    } catch (e) {}
-    state.modelExpressions = Array.from(new Set(exprs.filter(Boolean)));
+    // Adapter legacy tipis; bundle TS wajib tersedia sebelum engine legacy.
+    if (!window.__nativeExpressions) {
+      throw new Error("TS core __nativeExpressions belum terpasang — jalankan bun run build");
+    }
+    state.modelExpressions = window.__nativeExpressions.collect(m);
 
     state.emotionMode = state.modelExpressions.length ? "native" : "synthetic";
 

@@ -35,6 +35,13 @@
   // Multiply(6)/Color(17)/AddGlow(4)/HardLight(14), alpha Over+Atop+Out.
   // Lumine (v5, 35 mask) & 神宫白子 (v4, 43 mask) = pembanding pipeline lama.
   const GOLDEN = "model/tesmodel/runtime/ren.model3.json";
+  // Mode gambar drawable milik part offscreen (Cubism 5.3):
+  //   "draw" (default) = langsung ke main framebuffer — frame v1, delta terlihat;
+  //   "hide"           = disembunyikan — mendekati renderer resmi (mereka
+  //                      dirender ke offscreen target lalu DIKOMPOSIT ke main;
+  //                      composite pass itu sendiri belum kita bangun).
+  const OFFSCREEN_MODE =
+    new URLSearchParams(location.search).get("offscreen") === "hide" ? "hide" : "draw";
 
   const el = document.getElementById("report");
   const lines = [];
@@ -117,9 +124,11 @@
     // ── 6. Faktor opacity offscreen per-part (pelajaran PATCH 5: opacity grup
     // hidup di offscreens.opacities, TIDAK dibake ke drawable oleh core v6) ──
     const factorByPart = new Map();
+    const offscreenOwnerParts = new Set();
     if (offs) {
       for (let k = 0; k < offs.count; k++) {
         const owner = offs.ownerIndices[k];
+        if (owner >= 0) offscreenOwnerParts.add(owner);
         if (owner >= 0 && offs.opacities[k] < 1) {
           factorByPart.set(owner, offs.opacities[k]);
           log("offscreen[" + k + "] part " + owner + " opacity " + offs.opacities[k]);
@@ -207,6 +216,11 @@
       }
       const groupFactor = factorByPart.get(d.parentPartIndices[i]) ?? 1;
       mesh.alpha = d.opacities[i] * groupFactor;
+      // Mode "hide": drawable milik part offscreen TIDAK digambar langsung —
+      // di renderer resmi mereka masuk offscreen target, bukan main framebuffer.
+      if (OFFSCREEN_MODE === "hide" && offscreenOwnerParts.has(d.parentPartIndices[i])) {
+        mesh.visible = false;
+      }
       meshes[i] = mesh;
       root.addChild(mesh);
     }
@@ -216,12 +230,17 @@
     for (const m of ordered) root.addChild(m);
 
     // ── 11. Mask v1: per-drawable via Pixi mask (golden model hanya 4 drawable
-    // ter-mask — mahal tapi sah untuk harness; renderer resmi pakai clip FBO) ──
+    // ter-mask — mahal tapi sah untuk harness; renderer resmi pakai clip FBO).
+    // PENTING (poin audit #1): container mask TIDAK ada di scene graph, jadi
+    // transform-nya = world langsung — WAJIB menyalin transform root, kalau
+    // tidak mask dihitung di unit-space (≈ piksel origin) dan clipping meleset. ──
     let maskBuilt = 0;
     for (let i = 0; i < n; i++) {
       const count = d.maskCounts[i];
       if (!count) continue;
       const maskContainer = new PIXI.Container();
+      maskContainer.position.set(root.x, root.y);
+      maskContainer.scale.set(root.scale.x, root.scale.y);
       for (let k = 0; k < count; k++) {
         const src = d.masks[i * d.maskCountMax + k] ?? d.masks[i][k];
         if (src === undefined || src < 0) continue;
@@ -247,6 +266,96 @@
       log("mask drawable " + i + " ← " + count + " sumber");
     }
 
+    // ── 11.5 AUDIT golden — bukti numerik, bukan "kelihatannya benar": ──
+    // (1) transform: satu jalur via root (mesh lokal WAJIB identitas — dua
+    //     transform = posisi kacau), prediksi bounds layar vs aktual Pixi;
+    // (2) mapping: drawable #i → vertex/uv #i (ukuran tepat);
+    // (3) index: count benar & SEMUA indeks < vertexCount drawable sendiri
+    //     (indeks milik tetangga = mesh pecah);
+    // (4) uv: dalam [0,1] & textureIndex valid (binding salah = tekstur tetangga).
+    const audit = {
+      meshLocalIdentity: true,
+      mappingFail: 0, mappingSamples: [],
+      indexFail: 0, indexSamples: [],
+      uvFail: 0, uvSamples: [],
+      texFail: 0,
+      coord: null,
+    };
+    for (let i = 0; i < n; i++) {
+      const vp = d.vertexPositions[i], uv = d.vertexUvs[i], ix = d.indices[i];
+      let bad = "";
+      if (!vp || vp.length !== vc[i] * 2) bad += "vp" + (vp ? vp.length : "null") + "≠" + vc[i] * 2 + " ";
+      if (!uv || uv.length !== vc[i] * 2) bad += "uv ";
+      if (!ix || ix.length !== ic[i]) bad += "ix" + (ix ? ix.length : "null") + "≠" + ic[i] + " ";
+      if (bad) {
+        audit.mappingFail++;
+        if (audit.mappingSamples.length < 4) audit.mappingSamples.push("#" + i + " " + bad);
+      }
+      if (ix && vp) {
+        let maxIdx = -1;
+        for (let k = 0; k < ix.length; k++) if (ix[k] > maxIdx) maxIdx = ix[k];
+        if (maxIdx >= vc[i]) {
+          audit.indexFail++;
+          if (audit.indexSamples.length < 4) audit.indexSamples.push("#" + i + " idxMax " + maxIdx + " ≥ vCount " + vc[i]);
+        }
+      }
+      if (uv) {
+        for (let k = 0; k < uv.length; k++) {
+          if (uv[k] < -0.002 || uv[k] > 1.002) {
+            audit.uvFail++;
+            if (audit.uvSamples.length < 4) audit.uvSamples.push("#" + i);
+            break;
+          }
+        }
+      }
+      if (d.textureIndices[i] >= textures.length) audit.texFail++;
+    }
+    for (const m of meshes) {
+      if (!m) continue;
+      if (m.x !== 0 || m.y !== 0 || m.scale.x !== 1 || m.scale.y !== 1 || m.rotation !== 0) {
+        audit.meshLocalIdentity = false;
+      }
+    }
+    {
+      // Prediksi vs aktual — dihitung HANYA dari mesh TANPA mask: quad mentah
+      // mesh ber-mask membengkak (bounds efektifnya = irisan mask, tak bisa
+      // dari geometri saja), dan getBounds Pixi mengabaikan mask.
+      let pMinX = 1e9, pMaxX = -1e9, pMinY = 1e9, pMaxY = -1e9;
+      for (let i = 0; i < n; i++) {
+        if (meshes[i] && meshes[i].mask) continue;
+        const pos = d.vertexPositions.subarray ? d.vertexPositions : d.vertexPositions[i];
+        const base = d.vertexPositions.subarray ? vOffsets[i] : 0;
+        for (let v = 0; v < vc[i]; v++) {
+          const x = pos[(base + v) * 2], y = pos[(base + v) * 2 + 1];
+          if (x < pMinX) pMinX = x; if (x > pMaxX) pMaxX = x;
+          if (y < pMinY) pMinY = y; if (y > pMaxY) pMaxY = y;
+        }
+      }
+      const predicted = {
+        x0: root.x + s * pMinX, x1: root.x + s * pMaxX,
+        y0: root.y - s * pMaxY, y1: root.y - s * pMinY,
+      };
+      const actual = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
+      for (const m of meshes) {
+        if (!m || m.mask) continue;
+        const b = m.getBounds();
+        if (b.minX < actual.x0) actual.x0 = b.minX;
+        if (b.maxX > actual.x1) actual.x1 = b.maxX;
+        if (b.minY < actual.y0) actual.y0 = b.minY;
+        if (b.maxY > actual.y1) actual.y1 = b.maxY;
+      }
+      const dxy = {
+        dx0: Math.abs(predicted.x0 - actual.x0), dx1: Math.abs(predicted.x1 - actual.x1),
+        dy0: Math.abs(predicted.y0 - actual.y0), dy1: Math.abs(predicted.y1 - actual.y1),
+      };
+      audit.coord = {
+        predicted, actual,
+        maxDelta: Math.max(dxy.dx0, dxy.dx1, dxy.dy0, dxy.dy1),
+        ok: Math.max(dxy.dx0, dxy.dx1, dxy.dy0, dxy.dy1) < 2 &&
+            audit.meshLocalIdentity,
+      };
+    }
+
     // ── 12. Render + watchdog rAF (pelajaran tab ter-occlude) ──
     let lastTick = performance.now();
     app.ticker.add(() => { lastTick = performance.now(); });
@@ -267,12 +376,18 @@
       "drawable " + n + " | part " + parts.count + " | param " + model.parameters.count,
       "mask: " + maskBuilt + " drawable | blend color: " + colorUsed,
       "alpha: " + alphaUsed,
+      "AUDIT mapping: " + (audit.mappingFail ? "GAGAL " + audit.mappingFail + " " + audit.mappingSamples.join("; ") : "OK (198× vertex/uv/index sesuai)"),
+      "AUDIT index: " + (audit.indexFail ? "GAGAL " + audit.indexFail + " " + audit.indexSamples.join("; ") : "OK (semua indeks < vertexCount sendiri)"),
+      "AUDIT uv/tekstur: " + (audit.uvFail || audit.texFail ? "GAGAL uv=" + audit.uvFail + " tex=" + audit.texFail : "OK (uv 0..1, binding valid)"),
+      "AUDIT transform: " + (audit.coord && audit.coord.ok
+        ? "OK (mesh lokal identitas, prediksi≈aktual Δ" + audit.coord.maxDelta.toFixed(3) + "px)"
+        : "GAGAL " + JSON.stringify(audit.coord)),
       warnings.length ? "fallback/warning: " + warnings.length : "tanpa fallback",
-      "render: PixiJS " + PIXI.VERSION + " → canvas ✓",
+      "render: PixiJS " + PIXI.VERSION + " → canvas ✓ (offscreen=" + OFFSCREEN_MODE + ")",
     ].join("\n"), warnings.length ? "warn" : "ok");
 
     window.__golden = {
-      app, model, meshes, root, ok: true, warnings,
+      app, model, meshes, root, ok: true, warnings, audit,
       report: { mocVersion: headerV, drawables: n, parts: parts.count,
         params: model.parameters.count, offscreens: offs ? offs.count : 0,
         maskBuilt, colorUsed, alphaUsed, warnings: warnings.length },

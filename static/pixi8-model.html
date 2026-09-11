@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Golden Test — ren (moc v6) · model3.json → Cubism Core → PixiJS 8 → canvas</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #16120c; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  #report {
+    position: fixed; top: 12px; left: 12px; z-index: 2;
+    padding: 10px 14px; border-radius: 8px; max-width: 560px;
+    background: rgba(0,0,0,.82); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 12.5px/1.55 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  #report.ok   { border-color: #2e8b57; }
+  #report.warn { border-color: #b08a3a; }
+  #report.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<!-- Core Cubism di head (sebelum dipakai) — pola sama dengan index.html. -->
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/pixi.8.20.1.min.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="report">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  // ── Golden test model: ren (moc v6 / Cubism 5.3) ──
+  // Dipilih DATA-DRIVEN dari probe core: satu-satunya model dengan fitur 5.3
+  // lengkap — 24 offscreen (opacity grup 0.6/0.3/0.5/0), blend color
+  // Multiply(6)/Color(17)/AddGlow(4)/HardLight(14), alpha Over+Atop+Out.
+  // Lumine (v5, 35 mask) & 神宫白子 (v4, 43 mask) = pembanding pipeline lama.
+  const GOLDEN = "model/tesmodel/runtime/ren.model3.json";
+
+  const el = document.getElementById("report");
+  const lines = [];
+  let reportClass = "";
+  function log(msg, cls) {
+    lines.push(msg);
+    el.textContent = lines.join("\n");
+    if (cls) reportClass = cls;
+    el.className = reportClass;
+    console.log("[golden]", msg);
+  }
+  const warnings = [];
+  const warn = (m) => { warnings.push(m); log("⚠ " + m); };
+
+  try {
+    // ── 0. Core siap? (emscripten init async — poll, JANGAN set globalThis.window
+    // di Node-style env; di browser ini aman karena window memang ada) ──
+    const C = window.Live2DCubismCore;
+    if (!C) throw new Error("live2dcubismcore.min.js tidak termuat");
+    for (let i = 0; i < 200; i++) {
+      try { if (C.Version.csmGetVersion()) break; } catch (e) {}
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const coreVersion = C.Version.csmGetVersion();
+    const latestMoc = C.Version.csmGetLatestMocVersion();
+    // Packing versi core: (major<<24)|(minor<<16)|patch — 6.0.1 = 0x06000001.
+    const coreStr = (coreVersion >>> 24) + "." + ((coreVersion >>> 16) & 0xff) + "." + (coreVersion & 0xff);
+    log("Cubism Core " + coreStr + " — moc tertinggi: " + latestMoc);
+
+    // ── 1. PixiJS 8 boot ──
+    const app = new PIXI.Application();
+    await app.init({
+      width: window.innerWidth, height: window.innerHeight,
+      background: "#16120c", antialias: true, autoDensity: true,
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
+    });
+    document.getElementById("stage").appendChild(app.canvas);
+
+    // ── 2. model3.json → path relatif ──
+    const manifestUrl = location.origin + "/" + GOLDEN;
+    const manifest = await (await fetch(manifestUrl)).json();
+    const mdir = manifestUrl.replace(/[^/]*$/, "");
+    const rel = (p) => mdir + p.split("\\").join("/");
+    log("manifest: " + GOLDEN);
+
+    // ── 3. .moc3 → Cubism Core (fail-loud; TANPA stamp versi) ──
+    const mocBytes = await (await fetch(rel(manifest.FileReferences.Moc))).arrayBuffer();
+    const headerV = new DataView(mocBytes).getInt32(4, true);
+    const moc = C.Moc.fromArrayBuffer(mocBytes);
+    if (!moc) {
+      throw new Error("core menolak moc v" + headerV +
+        " (core dukung s/d v" + latestMoc + ") — update core, JANGAN stamp");
+    }
+    const model = C.Model.fromMoc(moc);
+    const d = model.drawables, parts = model.parts, offs = model.offscreens || null;
+    log("moc v" + headerV + " → model OK: " + d.count + " drawable, " +
+        parts.count + " part, " + model.parameters.count + " param");
+
+    // ── 4. Tekstur — PREMULTIPLY saat upload (pelajaran PATCH 6: texel kelopak
+    // v6 = RGB berwarna + alpha 0; tanpa premultiply → garis merah bocor) ──
+    PIXI.TextureSource.defaultOptions.alphaMode = "premultiply-alpha-on-upload";
+    const textures = [];
+    for (const texPath of manifest.FileReferences.Textures) {
+      const blob = await (await fetch(rel(texPath))).blob();
+      const bitmap = await createImageBitmap(blob);
+      textures.push(PIXI.Texture.from(bitmap));
+      log("tekstur: " + texPath + " (" + bitmap.width + "×" + bitmap.height + ")");
+    }
+
+    // ── 5. Render order GABUNGAN era 5.3 → permutasi padat (pelajaran PATCH 3:
+    // order sparse mengosongkan slot draw; urutan relatif dipertahankan) ──
+    const combined = model.getRenderOrders();
+    const n = d.count;
+    const idx = new Array(n);
+    for (let i = 0; i < n; i++) idx[i] = i;
+    idx.sort((a, b) => combined[a] - combined[b] || a - b);
+    const drawOrder = new Array(n);
+    for (let r = 0; r < n; r++) drawOrder[idx[r]] = r;
+
+    // ── 6. Faktor opacity offscreen per-part (pelajaran PATCH 5: opacity grup
+    // hidup di offscreens.opacities, TIDAK dibake ke drawable oleh core v6) ──
+    const factorByPart = new Map();
+    if (offs) {
+      for (let k = 0; k < offs.count; k++) {
+        const owner = offs.ownerIndices[k];
+        if (owner >= 0 && offs.opacities[k] < 1) {
+          factorByPart.set(owner, offs.opacities[k]);
+          log("offscreen[" + k + "] part " + owner + " opacity " + offs.opacities[k]);
+        }
+      }
+    }
+
+    // ── 7. Nama blend mode (enum resmi core) + fallback Pixi untuk frame v1 ──
+    const COLOR_NAMES = {
+      0: "Normal", 1: "AddCompatible", 2: "MultiplyCompatible", 3: "Add",
+      4: "AddGlow", 5: "Darken", 6: "Multiply", 7: "ColorBurn",
+      8: "LinearBurn", 9: "Lighten", 10: "Screen", 11: "ColorDodge",
+      12: "Overlay", 13: "SoftLight", 14: "HardLight", 15: "LinearLight",
+      16: "Hue", 17: "Color",
+    };
+    const ALPHA_NAMES = { 0: "Over", 1: "Atop", 2: "Out", 3: "ConjointOver", 4: "DisjointOver" };
+    // Frame v1: hanya 4 mode klasik yang dipetakan ke Pixi; sisanya fallback
+    // normal + warning — itulah gunanya golden model: melihat delta.
+    const COLOR_TO_PIXI = {
+      0: "normal", 1: "add", 2: "multiply", 3: "add", 4: "add",
+      6: "multiply", 10: "screen",
+    };
+    const seenColor = new Map(), seenAlpha = new Map();
+
+    // ── 8. Baca geometri drawable (layout flat core, offset per-drawable) ──
+    const vc = d.vertexCounts, ic = d.indexCounts;
+    let vOff = 0, iOff = 0;
+    const vOffsets = new Array(n), iOffsets = new Array(n);
+    for (let i = 0; i < n; i++) {
+      vOffsets[i] = vOff; iOffsets[i] = iOff;
+      vOff += vc[i]; iOff += ic[i];
+    }
+
+    // ── 9. Skala/posisi dari BOUNDS vertex model (framing harness; adapter
+    // nanti memakai canvasinfo origin — field OriginX/Y tidak terekspose
+    // konsisten di core 6.0.1, bounds diukur dari data asli).
+    // PENTING: drawables.vertexPositions = Array-of-Float32Array PER-DRAWABLE
+    // (bukan satu array flat) — pola akses yang sama dipakai mesh di atas. ──
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (let i = 0; i < n; i++) {
+      const pos = d.vertexPositions.subarray
+        ? d.vertexPositions
+        : d.vertexPositions[i];
+      const base = d.vertexPositions.subarray ? vOffsets[i] : 0;
+      for (let v = 0; v < vc[i]; v++) {
+        const x = pos[(base + v) * 2], y = pos[(base + v) * 2 + 1];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const s = Math.min(app.screen.width / (maxX - minX), app.screen.height / (maxY - minY)) * 0.92;
+    const root = new PIXI.Container();
+    // screen = root + (s·x, −s·y) → pusat model di tengah layar:
+    root.position.set(app.screen.width / 2 - s * cx, app.screen.height / 2 + s * cy);
+    root.scale.set(s, -s); // Y cubism = atas → layar = bawah
+    app.stage.addChild(root);
+
+    // ── 10. Drawable → mesh Pixi 8, urut render order padat ──
+    const meshes = new Array(n);
+    for (const i of idx) {
+      const vcI = vc[i];
+      const geometry = new PIXI.MeshGeometry({
+        positions: d.vertexPositions.subarray
+          ? d.vertexPositions.subarray(vOffsets[i] * 2, (vOffsets[i] + vcI) * 2)
+          : d.vertexPositions[i],
+        uvs: d.vertexUvs.subarray
+          ? d.vertexUvs.subarray(vOffsets[i] * 2, (vOffsets[i] + vcI) * 2)
+          : d.vertexUvs[i],
+        indices: d.indices.subarray
+          ? d.indices.subarray(iOffsets[i], iOffsets[i] + ic[i])
+          : d.indices[i],
+      });
+      const mesh = new PIXI.Mesh({ geometry, texture: textures[d.textureIndices[i]] });
+      const colorId = d.blendModes ? d.blendModes[i] & 255 : 0;
+      const alphaId = d.blendModes ? (d.blendModes[i] >>> 8) & 255 : 0;
+      seenColor.set(colorId, (seenColor.get(colorId) || 0) + 1);
+      seenAlpha.set(alphaId, (seenAlpha.get(alphaId) || 0) + 1);
+      mesh.blendMode = COLOR_TO_PIXI[colorId] || "normal";
+      if (!COLOR_TO_PIXI[colorId]) {
+        warn("drawable " + i + " (" + COLOR_NAMES[colorId] + "): fallback normal");
+      }
+      if (alphaId !== 0) {
+        warn("drawable " + i + " alpha " + ALPHA_NAMES[alphaId] + ": fallback Over (belum ada atop/out)");
+      }
+      const groupFactor = factorByPart.get(d.parentPartIndices[i]) ?? 1;
+      mesh.alpha = d.opacities[i] * groupFactor;
+      meshes[i] = mesh;
+      root.addChild(mesh);
+    }
+    // Urutkan anak sesuai drawOrder (setelah addChild, z = urutan anak)
+    const ordered = idx.map((i) => meshes[i]);
+    root.removeChildren();
+    for (const m of ordered) root.addChild(m);
+
+    // ── 11. Mask v1: per-drawable via Pixi mask (golden model hanya 4 drawable
+    // ter-mask — mahal tapi sah untuk harness; renderer resmi pakai clip FBO) ──
+    let maskBuilt = 0;
+    for (let i = 0; i < n; i++) {
+      const count = d.maskCounts[i];
+      if (!count) continue;
+      const maskContainer = new PIXI.Container();
+      for (let k = 0; k < count; k++) {
+        const src = d.masks[i * d.maskCountMax + k] ?? d.masks[i][k];
+        if (src === undefined || src < 0) continue;
+        const vcS = vc[src];
+        const g = new PIXI.Mesh({
+          geometry: new PIXI.MeshGeometry({
+            positions: d.vertexPositions.subarray
+              ? d.vertexPositions.subarray(vOffsets[src] * 2, (vOffsets[src] + vcS) * 2)
+              : d.vertexPositions[src],
+            uvs: d.vertexUvs.subarray
+              ? d.vertexUvs.subarray(vOffsets[src] * 2, (vOffsets[src] + vcS) * 2)
+              : d.vertexUvs[src],
+            indices: d.indices.subarray
+              ? d.indices.subarray(iOffsets[src], iOffsets[src] + ic[src])
+              : d.indices[src],
+          }),
+          texture: textures[d.textureIndices[src]],
+        });
+        maskContainer.addChild(g);
+      }
+      meshes[i].mask = maskContainer;
+      maskBuilt++;
+      log("mask drawable " + i + " ← " + count + " sumber");
+    }
+
+    // ── 12. Render + watchdog rAF (pelajaran tab ter-occlude) ──
+    let lastTick = performance.now();
+    app.ticker.add(() => { lastTick = performance.now(); });
+    setInterval(() => {
+      if (performance.now() - lastTick > 250) app.ticker.update();
+    }, 250);
+
+    // ── 13. Kartu laporan golden ──
+    const colorUsed = [...seenColor.entries()]
+      .map(([id, c]) => COLOR_NAMES[id] + "×" + c).join(", ");
+    const alphaUsed = [...seenAlpha.entries()]
+      .map(([id, c]) => ALPHA_NAMES[id] + "×" + c).join(", ");
+    log([
+      "",
+      "=== GOLDEN REPORT — ren (moc v" + headerV + ") ===",
+      "core: " + coreStr +
+        " | pipeline: Cubism 5.3 (offscreen " + (offs ? offs.count : 0) + ")",
+      "drawable " + n + " | part " + parts.count + " | param " + model.parameters.count,
+      "mask: " + maskBuilt + " drawable | blend color: " + colorUsed,
+      "alpha: " + alphaUsed,
+      warnings.length ? "fallback/warning: " + warnings.length : "tanpa fallback",
+      "render: PixiJS " + PIXI.VERSION + " → canvas ✓",
+    ].join("\n"), warnings.length ? "warn" : "ok");
+
+    window.__golden = {
+      app, model, meshes, root, ok: true, warnings,
+      report: { mocVersion: headerV, drawables: n, parts: parts.count,
+        params: model.parameters.count, offscreens: offs ? offs.count : 0,
+        maskBuilt, colorUsed, alphaUsed, warnings: warnings.length },
+    };
+  } catch (e) {
+    console.error(e);
+    window.__golden = { ok: false, error: String((e && e.message) || e) };
+    log("GAGAL: " + ((e && e.message) || e), "fail");
+  }
+})();
+</script>
+</body>
+</html>

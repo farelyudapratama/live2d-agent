@@ -1,14 +1,17 @@
 /**
  * live2d-adapter.test.ts — guard lapisan adapter Live2D (src/live2d/).
  *
- * Tiga hal yang dijaga:
- *  1. Kontrak TIDAK berubah diam-diam — daftar method handle/API dikunci.
- *     app.js akan dimigrasi ke kontrak ini; perubahan harus sadar (update
- *     daftar di sini berarti mengubah permukaan migrasi).
+ * Hal yang dijaga:
+ *  1. Kontrak TIDAK berubah diam-diam — daftar method tiap permukaan
+ *     (handle, API puncak, backend, pool, scheduler) dikunci. app.js akan
+ *     dimigrasi ke kontrak ini dan implementasi renderer ditulis di bawahnya;
+ *     mengubah permukaan = mengubah daftar di sini SECARA SADAR.
  *  2. Stub selalu fail-loud — tidak ada method yang no-op senyap.
- *  3. Lapisan kontrak bebas renderer — file src/live2d/*.ts tidak boleh
- *    menyebut/memakai pustaka scene-graph atau core; renderer adalah detail
- *    implementasi DI BAWAH kontrak (aturan bebas-renderer di types.ts).
+ *  3. Lapisan kontrak bebas pustaka renderer — file src/live2d/*.ts tidak
+ *     boleh merujuk pustaka scene-graph (renderer = detail implementasi di
+ *     bawah kontrak). Catatan: lapisan ini MEMBUNGKUS Cubism, jadi menyebut
+ *     konsep/API core (moc, csm*) dalam dokumentasi kontrak itu sah — yang
+ *     dilarang hanya pustaka renderer.
  */
 import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
@@ -16,20 +19,31 @@ import { join } from "path";
 import {
   createStubAdapter,
   createStubModelHandle,
+  createStubRenderBackend,
+  createStubRenderTargetPool,
+  createStubRenderScheduler,
   STUB_VERSION,
 } from "../src/live2d/stub";
 import { installLive2DApi, type Live2DApiTarget } from "../src/live2d/index";
+import {
+  ALPHA_BLEND_MODE_COUNT,
+  BLEND_NORMAL,
+  COLOR_BLEND_MODE_COUNT,
+} from "../src/live2d/cubism-core";
 
 const root = join(import.meta.dir, "..");
 const MSG = "[live2d] adapter kosong";
 
-/** Kontrak Live2DModelHandle yang dijamin ada — diurutkan untuk perbandingan. */
+/** Kontrak Live2DModelHandle — diurutkan untuk perbandingan. */
 const HANDLE_CONTRACT = [
   "destroy",
   "getEyeBlinkParameters",
   "getLipSyncParameters",
+  "getMocVersion",
   "getName",
   "getNaturalSize",
+  "getPartIds",
+  "getPartOpacity",
   "getPosition",
   "getScale",
   "motionGroups",
@@ -40,19 +54,69 @@ const HANDLE_CONTRACT = [
   "resetFocus",
   "setAnchor",
   "setFocus",
+  "setPartOpacity",
   "setPosition",
   "setRotation",
   "setScale",
+  "snapshotCore",
   "toGlobal",
   "toLocal",
+  "uses53Pipeline",
   "writeParam",
 ].sort();
+
+/** Kontrak Live2DApi (method + properti). */
+const API_CONTRACT = [
+  "capabilities",
+  "coreInfo",
+  "createHost",
+  "isStub",
+  "loadModel",
+  "version",
+].sort();
+
+/** Kontrak RenderBackend (abstraksi GPU — dokumen teknis §15). */
+const BACKEND_CONTRACT = [
+  "beginRenderTarget",
+  "createFramebuffer",
+  "createRenderTarget",
+  "createShader",
+  "createTexture",
+  "destroy",
+  "destroyFramebuffer",
+  "destroyRenderTarget",
+  "destroyShader",
+  "destroyTexture",
+  "drawMesh",
+  "endRenderTarget",
+  "kind",
+  "setBlendState",
+  "setScissor",
+  "setViewport",
+].sort();
+
+/** Kontrak RenderTargetPool (§18 — create per frame dilarang). */
+const POOL_CONTRACT = ["acquire", "destroy", "release", "stats"].sort();
+
+/** Kontrak RenderScheduler (pipeline §16, node model §9). */
+const SCHEDULER_CONTRACT = ["buildPlan", "lastStats", "mocVersion"].sort();
+
+function keysOf(value: object): string[] {
+  return Object.keys(value).sort();
+}
 
 describe("adapter Live2D kosong (src/live2d)", () => {
   it("menandai dirinya stub dengan versi eksplisit", () => {
     const api = createStubAdapter();
     expect(api.isStub).toBe(true);
     expect(api.version()).toBe(STUB_VERSION);
+  });
+
+  it("kontrak API puncak terkunci (termasuk coreInfo + capabilities)", () => {
+    const api = createStubAdapter();
+    expect(keysOf(api)).toEqual(API_CONTRACT);
+    expect(() => api.coreInfo()).toThrow(MSG);
+    expect(() => api.capabilities()).toThrow(MSG);
   });
 
   it("API puncak fail-loud: createHost & loadModel melempar", async () => {
@@ -68,7 +132,7 @@ describe("adapter Live2D kosong (src/live2d)", () => {
 
   it("kontrak handle terkunci — perubahan permukaan migrasi harus sadar", () => {
     const handle = createStubModelHandle();
-    expect(Object.keys(handle).sort()).toEqual(HANDLE_CONTRACT);
+    expect(keysOf(handle)).toEqual(HANDLE_CONTRACT);
   });
 
   it("semua method handle stub fail-loud (tanpa no-op senyap)", () => {
@@ -81,6 +145,19 @@ describe("adapter Live2D kosong (src/live2d)", () => {
     }
   });
 
+  it("kontrak renderer internal terkunci (backend/pool/scheduler)", () => {
+    expect(keysOf(createStubRenderBackend("webgl2"))).toEqual(BACKEND_CONTRACT);
+    expect(createStubRenderBackend("webgl2").kind).toBe("webgl2");
+    expect(keysOf(createStubRenderTargetPool())).toEqual(POOL_CONTRACT);
+    const scheduler = createStubRenderScheduler(6);
+    expect(keysOf(scheduler)).toEqual(SCHEDULER_CONTRACT);
+    expect(scheduler.mocVersion).toBe(6);
+    // lastStats belum pernah build → statistik nol, BUKAN melempar.
+    expect(scheduler.lastStats()).toEqual({
+      ms: 0, drawCalls: 0, passes: 0, poolHits: 0, poolMisses: 0,
+    });
+  });
+
   it("install idempoten ke target objek polos (tanpa DOM)", () => {
     const target: Live2DApiTarget = {};
     const first = installLive2DApi(target);
@@ -90,15 +167,23 @@ describe("adapter Live2D kosong (src/live2d)", () => {
     expect(second).toBe(first);
   });
 
-  it("lapisan kontrak bebas renderer/pustaka scene-graph", () => {
+  it("spesifikasi blend mode 5.3 terkunci: 15 color + 5 alpha", () => {
+    // Jumlah & mapping mode mengikuti spesifikasi resmi — JANGAN dibatasi
+    // Normal/Add/Multiply/Screen era lama.
+    expect(COLOR_BLEND_MODE_COUNT).toBe(15);
+    expect(ALPHA_BLEND_MODE_COUNT).toBe(5);
+    expect(BLEND_NORMAL).toBe(0);
+  });
+
+  it("lapisan kontrak bebas pustaka scene-graph/renderer", () => {
     const dir = join(root, "src", "live2d");
     const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
-    expect(files.length).toBeGreaterThanOrEqual(3);
+    expect(files.length).toBeGreaterThanOrEqual(5);
     for (const f of files) {
       const src = readFileSync(join(dir, f), "utf8");
       expect(
-        src.match(/pixi|live2dcubismcore|csmGet/i),
-        `src/live2d/${f} tidak boleh merujuk pustaka renderer/core langsung`,
+        src.match(/pixi/i),
+        `src/live2d/${f} tidak boleh merujuk pustaka renderer langsung`,
       ).toBeNull();
     }
   });

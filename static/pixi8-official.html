@@ -229,7 +229,25 @@
     function setupView() {
       const ratio = cubCanvas.width / cubCanvas.height;
       viewMatrix.setScreenRect(-ratio, ratio, -1.0, 1.0);
-      viewMatrix.scale(1.0, 1.0);
+      // Zoom ala "Display All" viewer resmi: model memenuhi tinggi layar
+      // (bukan menampilkan kanvas penuh yang membuat model tampak kecil).
+      // Bounds dihitung dari drawable ber-opacity > 0 (yang alpha 0 adalah
+      // quad bantu besar yang menggelembungkan bbox).
+      let vx0 = 1e9, vx1 = -1e9, vy0 = 1e9, vy1 = -1e9;
+      const dc = user._model._model.drawables;
+      const opac = dc.opacities;
+      for (let i = 0; i < dc.count; i++) {
+        if (opac[i] <= 0) continue;
+        const vp = dc.vertexPositions[i];
+        for (let v = 0; v < dc.vertexCounts[i]; v++) {
+          const x = vp[v * 2], y = vp[v * 2 + 1];
+          if (x < vx0) vx0 = x; if (x > vx1) vx1 = x;
+          if (y < vy0) vy0 = y; if (y > vy1) vy1 = y;
+        }
+      }
+      const visH = Math.max(0.5, vy1 - vy0);
+      const zoom = Math.min((0.9 * 2.0) / visH, 4.0);
+      viewMatrix.scale(zoom, zoom);
       viewMatrix.setMaxScreenRect(-40.0, 40.0, -40.0, 40.0);
     }
     function setupProjection() {

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixiJS 8 — Milestone 1: sprite polos</title>
+<style>
+  /* Halaman uji mandiri — TIDAK menyentuh pipeline Live2D lama (index/vtuber/pet
+     tetap memakai pixi 6.5.10 + pixi-live2d 0.4.0 + Cubism Core). */
+  html, body { margin: 0; height: 100%; background: #16120c; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  #status {
+    position: fixed; top: 12px; left: 12px; z-index: 2;
+    padding: 8px 12px; border-radius: 8px;
+    background: rgba(0,0,0,.75); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 13px/1.5 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; max-width: 90vw;
+  }
+  #status.ok   { border-color: #2e8b57; }
+  #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<!-- PixiJS 8 vendor terpisah — jangan diarahkan ke pixi.6.5.10.min.js yang
+     masih dipakai pixi-live2d 0.4.0 (hanya kompatibel Pixi v6). -->
+<script src="js/pixi.8.20.1.min.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  var status = document.getElementById("status");
+  function log(msg, cls) {
+    status.textContent = msg;
+    if (cls) status.className = cls;
+    console.log("[pixi8]", msg);
+  }
+  try {
+    if (!window.PIXI) throw new Error("window.PIXI tidak ada — vendor pixi.8.20.1.min.js gagal dimuat");
+    // Build global v8 mengekspos VERSION (kapital) — .version tidak ada.
+    var VER = PIXI.VERSION || "8.20.1";
+    log("PixiJS " + VER + " terdeteksi — init Application (API v8: init async)…");
+
+    // v8: Application dibuat tanpa opsi, lalu await app.init().
+    var app = new PIXI.Application();
+    await app.init({
+      width: window.innerWidth,
+      height: window.innerHeight,
+      background: "#16120c",
+      antialias: true,
+      autoDensity: true,
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
+    });
+    // v8: bukan app.view — canvas diambil dari app.canvas.
+    document.getElementById("stage").appendChild(app.canvas);
+    log("PixiJS " + VER + " — canvas terpasang (" +
+        app.screen.width + "×" + app.screen.height + ") — buat sprite…");
+
+    // ── Target milestone: sprite BIASA berhasil dirender. ──
+    // Sengaja tanpa Live2D: bukti renderer + ticker + tekstur bekerja.
+    // Tekstur dibuat dari canvas offscreen (gradient + wajah sederhana) supaya
+    // uji ini tidak bergantung file aset atau jaringan.
+    var src = document.createElement("canvas");
+    src.width = 96; src.height = 96;
+    var c2 = src.getContext("2d");
+    var grad = c2.createLinearGradient(0, 0, 96, 96);
+    grad.addColorStop(0, "#ff6b9d");
+    grad.addColorStop(1, "#7c5cff");
+    c2.fillStyle = grad;
+    c2.beginPath(); c2.arc(48, 48, 46, 0, Math.PI * 2); c2.fill();
+    c2.fillStyle = "#ffffff";
+    c2.beginPath(); c2.arc(48, 40, 13, 0, Math.PI * 2); c2.fill();
+    c2.beginPath(); c2.ellipse(48, 66, 20, 12, 0, 0, Math.PI); c2.fill();
+
+    var sprite = new PIXI.Sprite(PIXI.Texture.from(src));
+    sprite.anchor.set(0.5);
+    sprite.x = app.screen.width / 2;
+    sprite.y = app.screen.height / 2 - 20;
+    app.stage.addChild(sprite);
+
+    // Graphics v8: API builder — rect().fill(), bukan beginFill().
+    var bar = new PIXI.Graphics();
+    bar.rect(0, 0, 120, 8).fill(0xff6b9d);
+    bar.x = app.screen.width / 2 - 60;
+    bar.y = app.screen.height / 2 + 60;
+    app.stage.addChild(bar);
+
+    var label = new PIXI.Text({
+      text: "PixiJS " + VER + " — sprite OK",
+      style: { fontFamily: "monospace", fontSize: 14, fill: 0xe8e0d5 },
+    });
+    label.x = 12; label.y = 44;
+    app.stage.addChild(label);
+
+    // Ticker v8: callback menerima instance Ticker (deltaMS), bukan angka dt.
+    app.ticker.add(function (tk) {
+      sprite.rotation += (tk.deltaMS / 1000) * 0.6;
+      bar.rotation = sprite.rotation * 0.4;
+      lastTick = performance.now();
+    });
+
+    // Watchdog ala MotionRuntime stack lama: tab yang ter-occlude/background
+    // menjeda rAF sehingga ticker v8 berhenti dan canvas membeku. Interval 250ms
+    // hanya men-tick manual kalau rAF terbukti bengong — tab terlihat = no-op.
+    var lastTick = performance.now();
+    setInterval(function () {
+      if (performance.now() - lastTick > 250) app.ticker.update();
+    }, 250);
+
+    // Handle untuk pemeriksaan otomatis (console / CDP).
+    window.__pixi8 = { app: app, sprite: sprite, ok: true, version: PIXI.VERSION || "8.20.1" };
+    log("PixiJS " + VER + " ✓ — canvas + sprite polos BERHASIL DIRENDER" +
+        "\n(window.__pixi8 tersedia; sprite berputar = ticker hidup)", "ok");
+  } catch (e) {
+    console.error(e);
+    window.__pixi8 = { ok: false, error: String((e && e.message) || e) };
+    log("GAGAL: " + ((e && e.message) || e) +
+        "\n(Cek console untuk stack — kemungkinan WebGL2 tidak tersedia di context ini.)", "fail");
+  }
+})();
+</script>
+</body>
+</html>

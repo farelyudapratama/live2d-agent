@@ -187,86 +187,112 @@
       14: "l2d-hard-light", 17: "l2d-color",
     };
     const seenColor = new Map(), seenAlpha = new Map();
+    // Resolusi blend GABUNGAN (warna × alpha) — dua dimensi Cubism 5.3.
+    function blendFor(colorId, alphaId) {
+      if (alphaId === 2) return colorId === 0 ? "l2d-out" : null;
+      if (alphaId === 1) {
+        return { 0: "l2d-atop", 6: "l2d-multiply-atop", 14: "l2d-hardlight-atop", 4: "l2d-addglow-atop", 17: "l2d-color-atop" }[colorId] || null;
+      }
+      return COLOR_TO_PIXI[colorId] || null; // operator Over: mode dasar Pixi
+    }
 
-    // ── 7.5 PHASE 6C: blend 5.3 — Atop/Out/HardLight/Color sebagai
-    // BlendModeFilter kustom (akses backbuffer premultiplied; matematika
-    // Porter-Duff & non-separable W3C). Jalur WebGL Pixi hanya mengenal mode
-    // dasar — mode advanced HARUS diregistrasi, nama lain → fallback normal.
-    // BENTUK REGISTRASI (jebakan nyata): extensions.add harus menerima KELAS
-    // dengan statis .extension — bentuk {extension, ref} dinormalisasi Pixi
-    // jadi objek pembungkus → Ki[name] bukan konstruktor → render 500. ──
-    function defineL2DBlend(name, gl, gpu) {
+    // ── 7.5 PHASE 6C: blend 5.3 — GENERATOR gabungan (warna × operator alpha).
+    // Cubism memakai DUA dimensi sekaligus (mis. Multiply+Atop untuk bayangan
+    // jaket — k11/k13). Menjatuhkan satu dimensi = salinan gelap menutupi
+    // jaket putih (bug yang terlihat vs viewer resmi). Rumus umum (premultiplied,
+    // W3C simple compositing): co = (1−αb)·front.rgb + (1−αs)·back.rgb·w +
+    // αs·αb·B(Cb,Cs); αo tergantung operator (over/atop/out). ──
+    function l2dBlendClass(name, colorGL, colorWGSL, alphaOp, functionsGL, functionsWG) {
+      const preGL = `
+      float as = max(front.a, 1e-4); float ab = max(back.a, 1e-4);
+      vec3 Cs = front.rgb / max(front.a, 1e-4);
+      vec3 Cb = back.rgb / max(back.a, 1e-4);`;
+      let mainGL;
+      if (alphaOp === "out") {
+        mainGL = preGL + `
+      finalColor = vec4(front.rgb * (1.0 - back.a), front.a * (1.0 - back.a));`;
+      } else if (alphaOp === "atop") {
+        mainGL = preGL + `
+      vec3 B = ${colorGL};
+      vec3 co = (1.0 - back.a) * front.rgb + (1.0 - front.a) * back.rgb + front.a * back.a * B;
+      finalColor = vec4(co, back.a);`;
+      } else {
+        mainGL = preGL + `
+      vec3 B = ${colorGL};
+      vec3 co = (1.0 - back.a) * front.rgb + (1.0 - front.a) * back.rgb + front.a * back.a * B;
+      finalColor = vec4(co, front.a + back.a * (1.0 - front.a));`;
+      }
+      const preWG = `
+      let as = max(front.a, 0.0001); let ab = max(back.a, 0.0001);
+      let Cs = front.rgb / max(front.a, 0.0001);
+      let Cb = back.rgb / max(back.a, 0.0001);`;
+      let mainWG;
+      if (alphaOp === "out") {
+        mainWG = preWG + `
+      out = vec4<f32>(front.rgb * (1.0 - back.a), front.a * (1.0 - back.a));`;
+      } else if (alphaOp === "atop") {
+        mainWG = preWG + `
+      let B = ${colorWGSL};
+      let co = (1.0 - back.a) * front.rgb + (1.0 - front.a) * back.rgb + front.a * back.a * B;
+      out = vec4<f32>(co, back.a);`;
+      } else {
+        mainWG = preWG + `
+      let B = ${colorWGSL};
+      let co = (1.0 - back.a) * front.rgb + (1.0 - front.a) * back.rgb + front.a * back.a * B;
+      out = vec4<f32>(co, front.a + back.a * (1.0 - front.a));`;
+      }
       const Cls = class extends PIXI.BlendModeFilter {
-        constructor() { super({ gl, gpu }); }
+        constructor() { super({ gl: { functions: functionsGL, main: mainGL }, gpu: { functions: functionsWG, main: mainWG } }); }
       };
       Cls.extension = { type: "blend-mode", name };
       return Cls;
     }
-    const L2D_BLENDS = {
-      // Porter-Duff ATOP — GL (DST_ALPHA, ONE_MINUS_SRC_ALPHA)
-      "l2d-atop": {
-        gl: { functions: "", main:
-          "finalColor = vec4(front.rgb * back.a + back.rgb * (1.0 - front.a), front.a * back.a + back.a * (1.0 - front.a));" },
-        gpu: { functions: "", main:
-          "out = vec4<f32>(front.rgb * back.a + back.rgb * (1.0 - front.a), front.a * back.a + back.a * (1.0 - front.a));" },
-      },
-      // OUT — GL (ONE_MINUS_DST_ALPHA, ONE): bentuk aman canvas alpha (PATCH 4c)
-      "l2d-out": {
-        gl: { functions: "", main:
-          "finalColor = vec4(front.rgb * (1.0 - back.a) + back.rgb, front.a * (1.0 - back.a) + back.a);" },
-        gpu: { functions: "", main:
-          "out = vec4<f32>(front.rgb * (1.0 - back.a) + back.rgb, front.a * (1.0 - back.a) + back.a);" },
-      },
-      // HardLight (W3C): s<0.5 → multiply(2s,b); else screen
-      "l2d-hard-light": {
-        gl: { functions: "", main: `
-      float as = max(front.a, 1e-4); float ab = max(back.a, 1e-4);
-      vec3 Cs = front.rgb / max(front.a, 1e-4);
-      vec3 Cb = back.rgb / max(back.a, 1e-4);
-      vec3 B = mix(1.0 - 2.0*(1.0-Cs)*(1.0-Cb), 2.0*Cs*Cb, vec3(lessThan(Cs, vec3(0.5))));
-      vec3 co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
-      finalColor = vec4(co, as + ab*(1.0-as));` },
-        gpu: { functions: "", main: `
-      let as = max(front.a, 0.0001); let ab = max(back.a, 0.0001);
-      let Cs = front.rgb / max(front.a, 0.0001);
-      let Cb = back.rgb / max(back.a, 0.0001);
-      let B = select(1.0 - 2.0*(1.0-Cs)*(1.0-Cb), 2.0*Cs*Cb, Cs < vec3<f32>(0.5));
-      let co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
-      out = vec4<f32>(co, as + ab*(1.0-as));` },
-      },
-      // Color (non-separable HSL): luminositas backdrop + warna src
-      "l2d-color": {
-        gl: { functions: `
+    const COLOR_EXPR_GL = {
+      normal: "Cs",
+      multiply: "Cs * Cb",
+      hardlight: "mix(1.0 - 2.0*(1.0-Cs)*(1.0-Cb), 2.0*Cs*Cb, vec3(lessThan(Cs, vec3(0.5))))",
+      addglow: "clamp(Cs + Cb, vec3(0.0), vec3(1.0))",
+      color: "l2dSetLum(Cb, l2dLum(Cs))",
+    };
+    const COLOR_EXPR_WG = {
+      normal: "Cs",
+      multiply: "Cs * Cb",
+      hardlight: "select(1.0 - 2.0*(1.0-Cs)*(1.0-Cb), 2.0*Cs*Cb, Cs < vec3<f32>(0.5))",
+      addglow: "clamp(Cs + Cb, vec3<f32>(0.0), vec3<f32>(1.0))",
+      color: "l2dSetLum(Cb, l2dLum(Cs))",
+    };
+    const COLOR_HELPERS_GL = `
       float l2dLum(vec3 c) { return 0.3*c.r + 0.59*c.g + 0.11*c.b; }
       vec3 l2dSetLum(vec3 c, float l) {
         c = c + (l - l2dLum(c));
         return clamp(c, vec3(0.0), vec3(1.0));
-      }`, main: `
-      float as = max(front.a, 1e-4); float ab = max(back.a, 1e-4);
-      vec3 Cs = front.rgb / max(front.a, 1e-4);
-      vec3 Cb = back.rgb / max(back.a, 1e-4);
-      vec3 B = l2dSetLum(Cb, l2dLum(Cs));
-      vec3 co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
-      finalColor = vec4(co, as + ab*(1.0-as));` },
-        gpu: { functions: `
+      }`;
+    const COLOR_HELPERS_WG = `
       fn l2dLum(c: vec3<f32>) -> f32 { return 0.3*c.r + 0.59*c.g + 0.11*c.b; }
       fn l2dSetLum(c0: vec3<f32>, l: f32) -> vec3<f32> {
         var c = c0 + (l - l2dLum(c0));
         return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
-      }`, main: `
-      let as = max(front.a, 0.0001); let ab = max(back.a, 0.0001);
-      let Cs = front.rgb / max(front.a, 0.0001);
-      let Cb = back.rgb / max(back.a, 0.0001);
-      let B = l2dSetLum(Cb, l2dLum(Cs));
-      let co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
-      out = vec4<f32>(co, as + ab*(1.0-as));` },
-      },
-    };
+      }`;
+    // kombinasi yang dipakai ren (dari statistik drawable + offscreen):
+    const L2D_COMBO = [
+      // [nama, warna, alphaOp, butuhHelper]
+      ["l2d-atop", "normal", "atop"],
+      ["l2d-multiply-atop", "multiply", "atop"],
+      ["l2d-hardlight-atop", "hardlight", "atop"],
+      ["l2d-addglow-atop", "addglow", "atop"],
+      ["l2d-color-atop", "color", "atop"],
+      ["l2d-out", "normal", "out"],
+    ];
     try {
-      for (const [name, def] of Object.entries(L2D_BLENDS)) {
-        PIXI.extensions.add(defineL2DBlend(name, def.gl, def.gpu));
+      for (const [name, colorKey, alphaOp] of L2D_COMBO) {
+        const needsHelper = colorKey === "color";
+        PIXI.extensions.add(l2dBlendClass(
+          name,
+          COLOR_EXPR_GL[colorKey], COLOR_EXPR_WG[colorKey], alphaOp,
+          needsHelper ? COLOR_HELPERS_GL : "", needsHelper ? COLOR_HELPERS_WG : "",
+        ));
       }
-      log("blend 5.3 kustom terdaftar: " + Object.keys(L2D_BLENDS).join(", "));
+      log("blend 5.3 kustom terdaftar: " + L2D_COMBO.map(c => c[0]).join(", "));
     } catch (e) { warn("registrasi blend kustom gagal: " + e.message); }
 
     // ── 8. Normalisasi geometri SEKALI (PHASE 6A): layout core dideteksi satu
@@ -346,18 +372,11 @@
       const alphaId = d.blendModes ? (d.blendModes[i] >>> 8) & 255 : 0;
       seenColor.set(colorId, (seenColor.get(colorId) || 0) + 1);
       seenAlpha.set(alphaId, (seenAlpha.get(alphaId) || 0) + 1);
-      // Resolusi blend: alpha non-Over MENANG (satu slot blendMode) — drawable
-      // dengan color blend sekaligus alpha≠Over kehilangan color-nya (warning).
-      let mode;
-      if (alphaId === 1) mode = "l2d-atop";
-      else if (alphaId === 2) mode = "l2d-out";
-      else mode = COLOR_TO_PIXI[colorId] || "normal";
-      if (alphaId === 0 && !COLOR_TO_PIXI[colorId]) {
-        warn("drawable " + i + " (" + COLOR_NAMES[colorId] + "): fallback normal");
-      }
-      if (alphaId !== 0 && colorId !== 0) {
-        warn("drawable " + i + ": " + COLOR_NAMES[colorId] + "+" + ALPHA_NAMES[alphaId] +
-          " — color diabaikan (satu slot blend, alpha menang)");
+      // Resolusi blend GABUNGAN — color dan alpha TIDAK saling menjatuhkan.
+      let mode = blendFor(colorId, alphaId);
+      if (!mode) {
+        mode = "normal";
+        warn("drawable " + i + ": " + COLOR_NAMES[colorId] + "+" + ALPHA_NAMES[alphaId] + " fallback normal (kombinasi belum ada)");
       }
       mesh.blendMode = mode;
       // multiplyColor Cubism 4.2+ = tint (perkalian warna tekstur per-drawable);
@@ -473,15 +492,10 @@
         // blend / warna / mask tingkat OFFSCREEN saat komposit
         if (offs.blendModes) {
           const cId = offs.blendModes[k] & 255, aId = (offs.blendModes[k] >>> 8) & 255;
-          let m2 = aId === 1 ? "l2d-atop" : aId === 2 ? "l2d-out" : (COLOR_TO_PIXI[cId] || "normal");
-          if (aId !== 0 && cId !== 0) {
-            warn("offscreen[" + k + "]: " + COLOR_NAMES[cId] + "+" + ALPHA_NAMES[aId] + " — color diabaikan (alpha menang)");
-          } else if (aId === 0 && cId !== 0 && !COLOR_TO_PIXI[cId]) {
-            warn("offscreen[" + k + "]: " + COLOR_NAMES[cId] + " fallback normal");
-          }
-          if (aId >= 3) {
-            warn("offscreen[" + k + "]: " + ALPHA_NAMES[aId] + " fallback Over (belum diimplementasikan)");
-            m2 = aId === 0 ? m2 : "normal";
+          let m2 = blendFor(cId, aId);
+          if (!m2) {
+            m2 = "normal";
+            warn("offscreen[" + k + "]: " + COLOR_NAMES[cId] + "+" + ALPHA_NAMES[aId] + " fallback normal (kombinasi belum ada)");
           }
           sprite.blendMode = m2;
         }

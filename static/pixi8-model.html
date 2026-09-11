@@ -35,13 +35,16 @@
   // Multiply(6)/Color(17)/AddGlow(4)/HardLight(14), alpha Over+Atop+Out.
   // Lumine (v5, 35 mask) & 神宫白子 (v4, 43 mask) = pembanding pipeline lama.
   const GOLDEN = "model/tesmodel/runtime/ren.model3.json";
-  // Mode gambar drawable milik part offscreen (Cubism 5.3):
-  //   "draw" (default) = langsung ke main framebuffer — frame v1, delta terlihat;
-  //   "hide"           = disembunyikan — mendekati renderer resmi (mereka
-  //                      dirender ke offscreen target lalu DIKOMPOSIT ke main;
-  //                      composite pass itu sendiri belum kita bangun).
-  const OFFSCREEN_MODE =
-    new URLSearchParams(location.search).get("offscreen") === "hide" ? "hide" : "draw";
+  // Mode offscreen (Cubism 5.3):
+  //   composite (default) — drawable part offscreen dirender ke RenderTexture
+  //     masing-masing lalu DIKOMPOSIT ke main sesuai opacity grup & posisi di
+  //     render order gabungan (semantik renderer resmi);
+  //   draw  — langsung ke main framebuffer (salah semantik, untuk perbandingan);
+  //   hide  — disembunyikan (bagian hilang).
+  const OFFSCREEN_MODE = (function () {
+    const v = new URLSearchParams(location.search).get("offscreen");
+    return v === "draw" || v === "hide" ? v : "composite";
+  })();
 
   const el = document.getElementById("report");
   const lines = [];
@@ -152,11 +155,15 @@
     // hidup di offscreens.opacities, TIDAK dibake ke drawable oleh core v6) ──
     const factorByPart = new Map();
     const offscreenOwnerParts = new Set();
+    const zeroOpacityOffParts = new Set();
     if (offs) {
       for (let k = 0; k < offs.count; k++) {
         const owner = offs.ownerIndices[k];
-        if (owner >= 0) offscreenOwnerParts.add(owner);
-        if (owner >= 0 && offs.opacities[k] < 1) {
+        if (owner >= 0) {
+          offscreenOwnerParts.add(owner);
+          if (offs.opacities[k] <= 0) zeroOpacityOffParts.add(owner);
+        }
+        if (owner >= 0 && offs.opacities[k] < 1 && offs.opacities[k] > 0) {
           factorByPart.set(owner, offs.opacities[k]);
           log("offscreen[" + k + "] part " + owner + " opacity " + offs.opacities[k]);
         }
@@ -177,8 +184,90 @@
     const COLOR_TO_PIXI = {
       0: "normal", 1: "add", 2: "multiply", 3: "add", 4: "add",
       6: "multiply", 10: "screen",
+      14: "l2d-hard-light", 17: "l2d-color",
     };
     const seenColor = new Map(), seenAlpha = new Map();
+
+    // ── 7.5 PHASE 6C: blend 5.3 — Atop/Out/HardLight/Color sebagai
+    // BlendModeFilter kustom (akses backbuffer premultiplied; matematika
+    // Porter-Duff & non-separable W3C). Jalur WebGL Pixi hanya mengenal mode
+    // dasar — mode advanced HARUS diregistrasi, nama lain → fallback normal.
+    // BENTUK REGISTRASI (jebakan nyata): extensions.add harus menerima KELAS
+    // dengan statis .extension — bentuk {extension, ref} dinormalisasi Pixi
+    // jadi objek pembungkus → Ki[name] bukan konstruktor → render 500. ──
+    function defineL2DBlend(name, gl, gpu) {
+      const Cls = class extends PIXI.BlendModeFilter {
+        constructor() { super({ gl, gpu }); }
+      };
+      Cls.extension = { type: "blend-mode", name };
+      return Cls;
+    }
+    const L2D_BLENDS = {
+      // Porter-Duff ATOP — GL (DST_ALPHA, ONE_MINUS_SRC_ALPHA)
+      "l2d-atop": {
+        gl: { functions: "", main:
+          "finalColor = vec4(front.rgb * back.a + back.rgb * (1.0 - front.a), front.a * back.a + back.a * (1.0 - front.a));" },
+        gpu: { functions: "", main:
+          "out = vec4<f32>(front.rgb * back.a + back.rgb * (1.0 - front.a), front.a * back.a + back.a * (1.0 - front.a));" },
+      },
+      // OUT — GL (ONE_MINUS_DST_ALPHA, ONE): bentuk aman canvas alpha (PATCH 4c)
+      "l2d-out": {
+        gl: { functions: "", main:
+          "finalColor = vec4(front.rgb * (1.0 - back.a) + back.rgb, front.a * (1.0 - back.a) + back.a);" },
+        gpu: { functions: "", main:
+          "out = vec4<f32>(front.rgb * (1.0 - back.a) + back.rgb, front.a * (1.0 - back.a) + back.a);" },
+      },
+      // HardLight (W3C): s<0.5 → multiply(2s,b); else screen
+      "l2d-hard-light": {
+        gl: { functions: "", main: `
+      float as = max(front.a, 1e-4); float ab = max(back.a, 1e-4);
+      vec3 Cs = front.rgb / max(front.a, 1e-4);
+      vec3 Cb = back.rgb / max(back.a, 1e-4);
+      vec3 B = mix(1.0 - 2.0*(1.0-Cs)*(1.0-Cb), 2.0*Cs*Cb, vec3(lessThan(Cs, vec3(0.5))));
+      vec3 co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
+      finalColor = vec4(co, as + ab*(1.0-as));` },
+        gpu: { functions: "", main: `
+      let as = max(front.a, 0.0001); let ab = max(back.a, 0.0001);
+      let Cs = front.rgb / max(front.a, 0.0001);
+      let Cb = back.rgb / max(back.a, 0.0001);
+      let B = select(1.0 - 2.0*(1.0-Cs)*(1.0-Cb), 2.0*Cs*Cb, Cs < vec3<f32>(0.5));
+      let co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
+      out = vec4<f32>(co, as + ab*(1.0-as));` },
+      },
+      // Color (non-separable HSL): luminositas backdrop + warna src
+      "l2d-color": {
+        gl: { functions: `
+      float l2dLum(vec3 c) { return 0.3*c.r + 0.59*c.g + 0.11*c.b; }
+      vec3 l2dSetLum(vec3 c, float l) {
+        c = c + (l - l2dLum(c));
+        return clamp(c, vec3(0.0), vec3(1.0));
+      }`, main: `
+      float as = max(front.a, 1e-4); float ab = max(back.a, 1e-4);
+      vec3 Cs = front.rgb / max(front.a, 1e-4);
+      vec3 Cb = back.rgb / max(back.a, 1e-4);
+      vec3 B = l2dSetLum(Cb, l2dLum(Cs));
+      vec3 co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
+      finalColor = vec4(co, as + ab*(1.0-as));` },
+        gpu: { functions: `
+      fn l2dLum(c: vec3<f32>) -> f32 { return 0.3*c.r + 0.59*c.g + 0.11*c.b; }
+      fn l2dSetLum(c0: vec3<f32>, l: f32) -> vec3<f32> {
+        var c = c0 + (l - l2dLum(c0));
+        return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+      }`, main: `
+      let as = max(front.a, 0.0001); let ab = max(back.a, 0.0001);
+      let Cs = front.rgb / max(front.a, 0.0001);
+      let Cb = back.rgb / max(back.a, 0.0001);
+      let B = l2dSetLum(Cb, l2dLum(Cs));
+      let co = as*(1.0-ab)*Cs + as*ab*B + ab*(1.0-as)*Cb;
+      out = vec4<f32>(co, as + ab*(1.0-as));` },
+      },
+    };
+    try {
+      for (const [name, def] of Object.entries(L2D_BLENDS)) {
+        PIXI.extensions.add(defineL2DBlend(name, def.gl, def.gpu));
+      }
+      log("blend 5.3 kustom terdaftar: " + Object.keys(L2D_BLENDS).join(", "));
+    } catch (e) { warn("registrasi blend kustom gagal: " + e.message); }
 
     // ── 8. Normalisasi geometri SEKALI (PHASE 6A): layout core dideteksi satu
     // kali di sini — jalur render/mask/audit di bawah TIDAK bercabang lagi. ──
@@ -240,40 +329,116 @@
       const alphaId = d.blendModes ? (d.blendModes[i] >>> 8) & 255 : 0;
       seenColor.set(colorId, (seenColor.get(colorId) || 0) + 1);
       seenAlpha.set(alphaId, (seenAlpha.get(alphaId) || 0) + 1);
-      mesh.blendMode = COLOR_TO_PIXI[colorId] || "normal";
-      if (!COLOR_TO_PIXI[colorId]) {
+      // Resolusi blend: alpha non-Over MENANG (satu slot blendMode) — drawable
+      // dengan color blend sekaligus alpha≠Over kehilangan color-nya (warning).
+      let mode;
+      if (alphaId === 1) mode = "l2d-atop";
+      else if (alphaId === 2) mode = "l2d-out";
+      else mode = COLOR_TO_PIXI[colorId] || "normal";
+      if (alphaId === 0 && !COLOR_TO_PIXI[colorId]) {
         warn("drawable " + i + " (" + COLOR_NAMES[colorId] + "): fallback normal");
       }
-      if (alphaId !== 0) {
-        warn("drawable " + i + " alpha " + ALPHA_NAMES[alphaId] + ": fallback Over (belum ada atop/out)");
+      if (alphaId !== 0 && colorId !== 0) {
+        warn("drawable " + i + ": " + COLOR_NAMES[colorId] + "+" + ALPHA_NAMES[alphaId] +
+          " — color diabaikan (satu slot blend, alpha menang)");
       }
-      const groupFactor = factorByPart.get(d.parentPartIndices[i]) ?? 1;
+      mesh.blendMode = mode;
+      // multiplyColor Cubism 4.2+ = tint (perkalian warna tekstur per-drawable);
+      // screenColor model ini nol semua → jalur screen belum diperlukan.
+      if (d.multiplyColors) {
+        mesh.tint = (Math.round(d.multiplyColors[i * 4] * 255) << 16) |
+                    (Math.round(d.multiplyColors[i * 4 + 1] * 255) << 8) |
+                    Math.round(d.multiplyColors[i * 4 + 2] * 255);
+      }
+      const part = d.parentPartIndices[i];
+      // Faktor grup offscreen: mode composite menerapkannya di sprite komposit
+      // (SEKALI, bukan per drawable); mode draw/hide tetap per-drawable.
+      const groupFactor = OFFSCREEN_MODE === "composite"
+        ? 1
+        : (zeroOpacityOffParts.has(part) ? 0 : (factorByPart.get(part) ?? 1));
       mesh.alpha = d.opacities[i] * groupFactor;
-      // Mode "hide": drawable milik part offscreen TIDAK digambar langsung —
-      // di renderer resmi mereka masuk offscreen target, bukan main framebuffer.
-      if (OFFSCREEN_MODE === "hide" && offscreenOwnerParts.has(d.parentPartIndices[i])) {
+      // Mode "hide": drawable milik part offscreen TIDAK digambar langsung.
+      if (OFFSCREEN_MODE === "hide" && offscreenOwnerParts.has(part)) {
+        mesh.visible = false;
+      }
+      // Mode composite: drawable milik part offscreen ber-opacity 0 dibuang.
+      if (OFFSCREEN_MODE === "composite" && zeroOpacityOffParts.has(part)) {
         mesh.visible = false;
       }
       meshes[i] = mesh;
-      root.addChild(mesh);
     }
-    // Urutkan anak sesuai drawOrder (setelah addChild, z = urutan anak)
-    const ordered = idx.map((i) => meshes[i]);
-    root.removeChildren();
-    for (const m of ordered) root.addChild(m);
 
-    // ── 11. Mask v1: per-drawable via Pixi mask (golden model hanya 4 drawable
-    // ter-mask — mahal tapi sah untuk harness; renderer resmi pakai clip FBO).
-    // PENTING (poin audit #1): container mask TIDAK ada di scene graph, jadi
-    // transform-nya = world langsung — WAJIB menyalin transform root, kalau
-    // tidak mask dihitung di unit-space (≈ piksel origin) dan clipping meleset. ──
+    // ── 10.5 Offscreen composite pass (Cubism 5.3): drawable milik part
+    // offscreen dirender ke RenderTexture grupnya, lalu hasilnya DIKOMPOSIT
+    // ke main sebagai sprite ber-opacity grup — di posisi render order
+    // GABUNGAN (offscreen k menempati combined[n+k]). ──
+    const composites = [];
+    if (OFFSCREEN_MODE === "composite" && offs) {
+      for (let k = 0; k < offs.count; k++) {
+        const op = offs.opacities[k];
+        if (op <= 0) continue; // grup tak terlihat — tidak perlu RT
+        const owner = offs.ownerIndices[k];
+        const members = [];
+        for (const i of idx) if (d.parentPartIndices[i] === owner) members.push(i);
+        if (!members.length) continue;
+        // Bounds layar grup dari vertex + margin (cukup untuk harness; adapter
+        // kelak pakai bounds dinamis per frame / RT ukuran canvas).
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (const i of members) {
+          const pos = geom[i].positions;
+          for (let v = 0; v < vc[i]; v++) {
+            const sx = root.x + s * pos[v * 2], sy = root.y - s * pos[v * 2 + 1];
+            if (sx < x0) x0 = sx; if (sx > x1) x1 = sx;
+            if (sy < y0) y0 = sy; if (sy > y1) y1 = sy;
+          }
+        }
+        const margin = 24;
+        const rx = Math.max(0, Math.floor(x0 - margin));
+        const ry = Math.max(0, Math.floor(y0 - margin));
+        const rw = Math.max(4, Math.min(app.screen.width - rx, Math.ceil(x1 + margin) - rx));
+        const rh = Math.max(4, Math.min(app.screen.height - ry, Math.ceil(y1 + margin) - ry));
+        const container = new PIXI.Container();
+        container.position.set(root.x - rx, root.y - ry);
+        container.scale.copyFrom(root.scale);
+        for (const i of members) container.addChild(meshes[i]);
+        const rt = PIXI.RenderTexture.create({ width: rw, height: rh });
+        const sprite = new PIXI.Sprite(rt);
+        // PENTING: sprite ini anak root (ruang model, skala s/-s) — kompensasi
+        // transform supaya rect RT mendarat persis di (rx,ry,rw,rh) layar.
+        // Salah compensate = tx melompat ratusan ribu px → komposit tak tampak.
+        sprite.position.set((rx - root.x) / s, (root.y - ry) / s);
+        sprite.scale.set(rw / (rt.width * s), -rh / (rt.height * s));
+        sprite.alpha = op;
+        composites.push({ k, container, rt, sprite, order: combined[n + k] });
+      }
+    }
+    // Urutan anak root: drawable LANGSUNG + sprite komposit, semua menurut
+    // render order gabungan. Drawable yang pindah ke container offscreen dan
+    // yang dibuang (grup opacity 0, mode composite) tidak masuk root.
+    const children = [];
+    for (const i of idx) {
+      const m = meshes[i];
+      if (!m.parent && !(OFFSCREEN_MODE === "composite" && !m.visible)) {
+        children.push({ order: combined[i], node: m });
+      }
+    }
+    for (const c of composites) children.push({ order: c.order, node: c.sprite });
+    children.sort((a, b) => a.order - b.order);
+    for (const c of children) root.addChild(c.node);
+
+    // ── 11. Mask v1: per-drawable via Pixi mask (renderer resmi pakai clip
+    // FBO — arsitektur 6C berikutnya). PENTING (poin audit #1): container mask
+    // TIDAK ada di scene graph — transform-nya = world langsung, WAJIB
+    // menyalin transform host mesh-nya (root ATAU container offscreen),
+    // kalau tidak mask dihitung di unit-space dan clipping meleset. ──
     let maskBuilt = 0;
     for (let i = 0; i < n; i++) {
       const count = d.maskCounts[i];
       if (!count) continue;
+      const host = meshes[i].parent || root;
       const maskContainer = new PIXI.Container();
-      maskContainer.position.set(root.x, root.y);
-      maskContainer.scale.set(root.scale.x, root.scale.y);
+      maskContainer.position.copyFrom(host.position);
+      maskContainer.scale.copyFrom(host.scale);
       for (let k = 0; k < count; k++) {
         const src = d.masks[i * d.maskCountMax + k] ?? d.masks[i][k];
         if (src === undefined || src < 0) continue;
@@ -349,7 +514,11 @@
       // dari geometri saja), dan getBounds Pixi mengabaikan mask.
       let pMinX = 1e9, pMaxX = -1e9, pMinY = 1e9, pMaxY = -1e9;
       for (let i = 0; i < n; i++) {
-        if (meshes[i] && meshes[i].mask) continue;
+        const m = meshes[i];
+        // hanya drawable LANGSUNG di root yang terlihat — mesh ber-mask
+        // (bounds efektif = irisan mask), milik container offscreen, dan yang
+        // dibuang tidak masuk perbandingan
+        if (!m || m.mask || !m.visible || m.parent !== root) continue;
         const pos = geom[i].positions;
         for (let v = 0; v < vc[i]; v++) {
           const x = pos[v * 2], y = pos[v * 2 + 1];
@@ -363,7 +532,7 @@
       };
       const actual = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
       for (const m of meshes) {
-        if (!m || m.mask) continue;
+        if (!m || m.mask || !m.visible || m.parent !== root) continue;
         const b = m.getBounds();
         if (b.minX < actual.x0) actual.x0 = b.minX;
         if (b.maxX > actual.x1) actual.x1 = b.maxX;
@@ -391,6 +560,11 @@
     const angleXIdx = (() => { for (let i = 0; i < params.count; i++) if (params.ids[i] === "ParamAngleX") return i; return -1; })();
     const angleYIdx = (() => { for (let i = 0; i < params.count; i++) if (params.ids[i] === "ParamAngleY") return i; return -1; })();
     let lastTick = performance.now();
+    // PENTING (jebakan nyata): callback ini WAJIB jalan SETELAH render utama
+    // (TickerPlugin memakai priority LOW=-25). Kalau render RT dilakukan
+    // SEBELUM render utama, state render target/proyeksi ikut kacau → model
+    // tergambar dobel di canvas. Priority LOW-1 = update + RT render terjadi
+    // setelah present; komposit tertinggal satu frame (wajar untuk harness).
     app.ticker.add(() => {
       const t = app.ticker.lastTime / 1000;
       if (!STATIC && angleXIdx >= 0) {
@@ -399,8 +573,12 @@
         model.update(); // core hitung ulang vertex dari parameter
         for (const geo of allGeoms) geo.getBuffer("aPosition").update(); // upload ke GPU
       }
+      // Composite pass offscreen: render tiap grup ke RenderTexture-nya.
+      for (const comp of composites) {
+        app.renderer.render({ container: comp.container, target: comp.rt, clear: true });
+      }
       lastTick = performance.now();
-    });
+    }, null, PIXI.UPDATE_PRIORITY.LOW - 1);
     setInterval(() => {
       if (performance.now() - lastTick > 250) app.ticker.update();
     }, 250);
@@ -425,6 +603,8 @@
         ? "OK (mesh lokal identitas, prediksi≈aktual Δ" + audit.coord.maxDelta.toFixed(3) + "px)"
         : "GAGAL " + JSON.stringify(audit.coord)),
       warnings.length ? "fallback/warning: " + warnings.length : "tanpa fallback",
+      "offscreen: " + OFFSCREEN_MODE +
+        (OFFSCREEN_MODE === "composite" ? " (" + composites.length + " grup RT dikomposit)" : ""),
       "update(): awal + per frame | sync self-test: " +
         (syncTest.angleX >= 0 ? (syncTest.ok ? "OK (vertex berubah)" : "GAGAL") : "n/a") +
         " | anim: " + (STATIC ? "static (?static)" : "ParamAngleX/Y ✓"),
@@ -432,7 +612,7 @@
     ].join("\n"), warnings.length ? "warn" : "ok");
 
     window.__golden = {
-      app, model, meshes, root, ok: true, warnings, audit,
+      app, model, meshes, root, ok: true, warnings, audit, composites,
       report: { mocVersion: headerV, drawables: n, parts: parts.count,
         params: model.parameters.count, offscreens: offs ? offs.count : 0,
         maskBuilt, colorUsed, alphaUsed, warnings: warnings.length },

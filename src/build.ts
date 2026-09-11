@@ -50,4 +50,27 @@ if (!i18n.success) {
   process.exit(1);
 }
 
-console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js (TS is now the live client source-of-truth)");
+// Entry ketiga: RENDERER RESMI Cubism (CubismWebFramework dari Live2D) untuk
+// halaman golden pixi8-official.html. Sumber semantik Cubism 5.3 yang sah —
+// offscreen drawing, blend 15+5, HD masking, physics. Folder vendor
+// sengaja di-exclude dari tsc (butuh d.ts Core dari SDK).
+const framework = await Bun.build({
+  entrypoints: ["./src/live2d/cubismframework-entry.ts"],
+  outdir: "./static/js",
+  naming: "cubism-framework.[ext]",
+  target: "browser",
+  format: "iife",
+  splitting: false,
+  minify: false,
+  sourcemap: "inline",
+});
+
+if (!framework.success) {
+  console.error("cubism-framework build failed:");
+  for (const msg of framework.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/cubism-framework.js (TS is now the live client source-of-truth)");

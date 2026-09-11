@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Official Renderer — ren · model3.json → Cubism SDK (resmi) → PixiJS 8 → canvas</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #16120c; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #pixi-canvas { display: block; }
+  #status {
+    position: fixed; top: 12px; left: 12px; z-index: 2;
+    padding: 10px 14px; border-radius: 8px; max-width: 620px;
+    background: rgba(0,0,0,.82); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 12.5px/1.55 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  #status.ok   { border-color: #2e8b57; }
+  #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<!-- Core resmi (harus paling awal — framework membaca global Live2DCubismCore) -->
+<script src="js/live2dcubismcore.min.js"></script>
+<!-- Renderer resmi Cubism (CubismWebFramework, dibundel dari TS resmi Live2D) -->
+<script src="js/cubism-framework.js"></script>
+<script src="js/pixi.8.20.1.min.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  const GOLDEN_DIR = "model/tesmodel/runtime/";
+  const el = document.getElementById("status");
+  const lines = [];
+  function log(msg, cls) {
+    lines.push(msg);
+    el.textContent = lines.slice(-40).join("\n");
+    if (cls) el.className = cls;
+    console.log("[official]", msg);
+  }
+  const warnings = [];
+  const warn = (m) => { warnings.push(m); log("⚠ " + m); };
+
+  try {
+    // ── 0. Core siap ──
+    log("page script jalan — cek core…");
+    const C = window.Live2DCubismCore;
+    if (!C) throw new Error("live2dcubismcore.min.js tidak termuat");
+    for (let i = 0; i < 200; i++) {
+      try { if (C.Version.csmGetVersion()) break; } catch (e) {}
+      if (i % 20 === 19) log("menunggu core init… (" + i + ")");
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const F = window.CubismFrameworkBundle;
+    if (!F) throw new Error("cubism-framework.js tidak termuat");
+    log("Cubism Core " + C.Version.csmGetVersion() + " — framework resmi terpasang");
+
+    // ── 1. PixiJS 8 (canvas tampilan; model masuk sebagai tekstur) ──
+    const app = new PIXI.Application();
+    await app.init({
+      width: window.innerWidth, height: window.innerHeight,
+      background: "#16120c", antialias: true, autoDensity: true,
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
+    });
+    document.getElementById("stage").appendChild(app.canvas);
+
+    // ── 2. startUp framework resmi ──
+    const option = new F.Option();
+    option.logFunction = (m) => console.log(m);
+    option.loggingLevel = (C.csmLogLevel && C.csmLogLevel.Log_Verbose != null)
+      ? C.csmLogLevel.Log_Verbose : 0;
+    F.CubismFramework.startUp(option);
+    F.CubismFramework.initialize();
+    log("CubismFramework startUp + initialize ✓");
+
+    // ── 3. manifest → CubismModelSettingJson (parser resmi) ──
+    const manifestUrl = location.origin + "/" + GOLDEN_DIR + "ren.model3.json";
+    const mdir = manifestUrl.replace(/[^/]*$/, "");
+    const rel = (p) => mdir + p.split("\\").join("/");
+    const manifestBuf = await (await fetch(manifestUrl)).arrayBuffer();
+    const setting = new F.CubismModelSettingJson(manifestBuf, manifestBuf.byteLength);
+    log("model3.json → CubismModelSettingJson ✓");
+
+    // ── 4. MOC → CubismModel (lewat CubismUserModel resmi, cek konsistensi) ──
+    const user = new F.CubismUserModel();
+    const mocBuf = await (await fetch(rel(setting.getModelFileName()))).arrayBuffer();
+    // catatan: core 6.0.1 web tidak mengekspos API hasMocConsistency → cek
+    // konsistensi dibiarkan default (false). Moc tetap fail-loud bila ditolak.
+    user.loadModel(mocBuf);
+    if (!user._model) throw new Error("loadModel gagal — moc ditolak core");
+    log("moc → CubismModel ✓ (" + user._model.getDrawableCount() + " drawable)");
+
+    // ── 5. kanvas render resmi (konteks GL terisolasi dari Pixi) ──
+    const cubCanvas = document.createElement("canvas");
+    cubCanvas.width = window.innerWidth;
+    cubCanvas.height = window.innerHeight;
+    let gl = cubCanvas.getContext("webgl2", {
+      alpha: true, premultipliedAlpha: true, antialias: true,
+      preserveDrawingBuffer: true,
+    });
+    if (!gl) gl = cubCanvas.getContext("webgl", {
+      alpha: true, premultipliedAlpha: true, antialias: true,
+      preserveDrawingBuffer: true,
+    });
+    if (!gl) throw new Error("WebGL tidak tersedia");
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // ── 6. renderer resmi: createRenderer → startUp → loadShaders ──
+    user.createRenderer(cubCanvas.width, cubCanvas.height);
+    const renderer = user.getRenderer();
+    renderer.startUp(gl);
+    renderer.loadShaders("js/shaders/WebGL/"); // shader advanced 5.3 dari file resmi
+    log("CubismRenderer_WebGL ✓ (shader dari file resmi)");
+
+    // ── 7. tekstur premultiplied (pelajaran PATCH 6: wajib premultiply) ──
+    const texCount = setting.getTextureCount();
+    for (let i = 0; i < texCount; i++) {
+      const texPath = rel(setting.getTextureFileName(i));
+      const bitmap = await createImageBitmap(await (await fetch(texPath)).blob());
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+      renderer.bindTexture(i, tex);
+      log("tekstur[" + i + "] premultiplied ✓ (" + bitmap.width + "×" + bitmap.height + ")");
+    }
+
+    // ── 8. physics resmi ──
+    if (setting.isExistPhysicsFile()) {
+      const pBuf = await (await fetch(rel(setting.getPhysicsFileName()))).arrayBuffer();
+      user.loadPhysics(pBuf, pBuf.byteLength);
+      log("physics ✓");
+    }
+
+    // ── 9. efek resmi: updater + scheduler (arsitektur 5.3) ──
+    const scheduler = new F.CubismUpdateScheduler();
+    if (user._physics) {
+      scheduler.addUpdatableList(new F.CubismPhysicsUpdater(user._physics));
+    }
+    if (setting.getEyeBlinkParameterCount() > 0) {
+      const eyeBlink = F.CubismEyeBlink.create(setting);
+      scheduler.addUpdatableList(new F.CubismEyeBlinkUpdater(() => gMotionUpdated, eyeBlink));
+      log("eyeblink ✓");
+    }
+    const breath = F.CubismBreath.create();
+    const idOf = (name) => F.CubismFramework.getIdManager().getId(
+      F.CubismDefaultParameterId[name] || name
+    );
+    breath.setParameters([
+      new F.BreathParameterData(idOf("ParamAngleX"), 0.0, 15.0, 6.5345, 0.5),
+      new F.BreathParameterData(idOf("ParamAngleY"), 0.0, 8.0, 3.5345, 0.5),
+      new F.BreathParameterData(idOf("ParamAngleZ"), 0.0, 10.0, 5.5345, 0.5),
+      new F.BreathParameterData(idOf("ParamBodyAngleX"), 0.0, 4.0, 15.5345, 0.5),
+      new F.BreathParameterData(idOf("ParamBreath"), 0.5, 0.5, 3.2345, 1.0),
+    ]);
+    scheduler.addUpdatableList(new F.CubismBreathUpdater(breath));
+    scheduler.sortUpdatableList();
+    log("update scheduler ✓ (physics + eyeblink + breath)");
+
+    // ── 10. motion Idle resmi (pose bergerak seperti viewer) ──
+    let motionPlaying = false;
+    {
+      let stepName = "fetch motion";
+      try {
+        if (setting.getMotionCount("Idle") > 0) {
+          const mPath = rel(setting.getMotionFileName("Idle", 0));
+          stepName = "fetch " + mPath;
+          const mBuf = await (await fetch(mPath)).arrayBuffer();
+          stepName = "loadMotion";
+          const motion = user.loadMotion(mBuf, mBuf.byteLength);
+          if (!motion) throw new Error("motion null");
+          stepName = "setEffectIds";
+          const ebIds = [], lsIds = [];
+          for (let i = 0; i < setting.getEyeBlinkParameterCount(); i++) {
+            ebIds.push(setting.getEyeBlinkParameterId(i)); // CubismIdHandle langsung
+          }
+          for (let i = 0; i < setting.getLipSyncParameterCount(); i++) {
+            lsIds.push(setting.getLipSyncParameterId(i));
+          }
+          motion.setEffectIds(ebIds, lsIds);
+          stepName = "startMotionPriority";
+          user._motionManager.startMotionPriority(motion, false, 1);
+          motionPlaying = true;
+          log("motion Idle ✓ (mulai diputar)");
+        } else {
+          log("tanpa motion Idle");
+        }
+      } catch (e) {
+        warn("motion dilewati (" + stepName + ": " + e.message + ")");
+      }
+    }
+
+    // ── 11. matriks resmi (persis lappview resmi) ──
+    let viewMatrix, projection, deviceToScreen, cubTexture, modelSprite;
+    {
+      let stepName = "viewMatrix";
+      try {
+        viewMatrix = new F.CubismViewMatrix();
+        stepName = "setupView";
+        setupView();
+        stepName = "projection";
+        projection = new F.CubismMatrix44();
+        deviceToScreen = new F.CubismMatrix44();
+        stepName = "setupProjection";
+        setupProjection();
+        stepName = "cubTexture";
+        cubTexture = PIXI.Texture.from(cubCanvas);
+        stepName = "modelSprite";
+        modelSprite = new PIXI.Sprite(cubTexture);
+        modelSprite.width = app.screen.width;
+        modelSprite.height = app.screen.height;
+        stepName = "stage";
+        app.stage.addChild(modelSprite);
+      } catch (e) {
+        throw new Error("step " + stepName + ": " + e.message);
+      }
+    }
+
+    // ── 13. loop resmi: param → update() → render → upload → Pixi render ──
+    let last = performance.now();
+    let userTime = 0;
+    let gMotionUpdated = false;
+    function setupView() {
+      const ratio = cubCanvas.width / cubCanvas.height;
+      viewMatrix.setScreenRect(-ratio, ratio, -1.0, 1.0);
+      viewMatrix.scale(1.0, 1.0);
+      viewMatrix.setMaxScreenRect(-40.0, 40.0, -40.0, 40.0);
+    }
+    function setupProjection() {
+      const ratio = cubCanvas.width / cubCanvas.height;
+      viewMatrix.setScreenRect(-ratio, ratio, -1.0, 1.0);
+      projection.loadIdentity();
+      projection.multiplyByMatrix(viewMatrix);
+      deviceToScreen.loadIdentity();
+      deviceToScreen.scaleRelative(
+        (ratio * 2.0) / cubCanvas.width,
+        (-2.0) / cubCanvas.height
+      );
+      deviceToScreen.translateRelative(-cubCanvas.width * 0.5, -cubCanvas.height * 0.5);
+    }
+    setupProjection();
+    window.addEventListener("resize", () => {
+      app.renderer.resize(window.innerWidth, window.innerHeight);
+      cubCanvas.width = window.innerWidth;
+      cubCanvas.height = window.innerHeight;
+      setupProjection();
+      modelSprite.width = app.screen.width;
+      modelSprite.height = app.screen.height;
+      gl.viewport(0, 0, cubCanvas.width, cubCanvas.height);
+    });
+
+    app.ticker.add(() => {
+      const now = performance.now();
+      const dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
+      userTime += dt;
+
+      if (motionPlaying) {
+        // resmi: loadParameters → motion → saveParameters → efek → model.update
+        user._model.loadParameters();
+        gMotionUpdated = user._motionManager.updateMotion(user._model, dt);
+        user._model.saveParameters();
+        scheduler.onLateUpdate(user._model, dt);
+        user._model.update();
+      } else {
+        scheduler.onLateUpdate(user._model, dt);
+        user._model.update();
+      }
+      // draw resmi: viewMatrix → renderer
+      gl.viewport(0, 0, cubCanvas.width, cubCanvas.height);
+      projection.loadIdentity();
+      projection.multiplyByMatrix(viewMatrix);
+      renderer.setMvpMatrix(projection);
+      gl.clearColor(0.0, 0.0, 0.0, 0.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      renderer.drawModel();
+      // chain ke PixiJS 8: canvas resmi → tekstur → sprite
+      cubTexture.source.update();
+    });
+
+    log([
+      "",
+      "=== OFFICIAL RENDERER — ren (moc dari " + GOLDEN_DIR + ") ===",
+      "pipeline: model3.json → Cubism SDK resmi (renderer 5.3) → PixiJS " +
+        PIXI.VERSION + " → canvas",
+      "semua semantik 5.3 (offscreen/blend/mask/multiply) ditangani renderer resmi",
+      motionPlaying ? "motion Idle resmi diputar" : "tanpa motion",
+    ].join("\n"), "ok");
+    el.className = "ok";
+
+    window.__official = { app, user, renderer, ok: true };
+  } catch (e) {
+    console.error(e);
+    window.__official = { ok: false, error: String((e && e.message) || e) };
+    log("GAGAL: " + ((e && e.message) || e), "fail");
+  }
+})();
+</script>
+</body>
+</html>

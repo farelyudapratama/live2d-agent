@@ -17,5 +17,12 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "src/live2d/cubismframework",
+    "src/live2d/cubismframework-entry.ts",
+    "src/live2d/cubismframework-exports.ts"
+  ]
 }

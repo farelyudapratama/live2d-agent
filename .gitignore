@@ -25,3 +25,4 @@ agent-shell/gen/
 *.tmp
 *.log
 .DS_Store
+static/js/cubism-framework.js

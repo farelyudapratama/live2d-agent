@@ -7,6 +7,7 @@ import type * as MotionTaxonomy from "./engine/motion-taxonomy";
 import type * as LipSync from "./speech/lip-sync";
 import type { collectNativeExpressions } from "./engine/native-expressions";
 import type * as I18n from "./i18n/index";
+import type { Live2DApi } from "../live2d/types";
 
 export type Destroy = () => void;
 
@@ -30,6 +31,7 @@ declare global {
     __nativeExpressions?: { collect: typeof collectNativeExpressions };
     __i18n?: typeof I18n;
     __live2dAgent?: Live2DLegacyBridge;
+    __live2dApi?: Live2DApi;
     __addChat?: (role: string, text: string) => void;
   }
 }

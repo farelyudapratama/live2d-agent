@@ -31,6 +31,7 @@ import { startAssistantPanel } from "./agent/panel/panel";
 import { startProjekRail } from "./shell/projek";
 import { startBrowserPanel } from "./browser/panel";
 import { startStageHintFade } from "./shell/stage-hint";
+import { installLive2DApi } from "../live2d/index";
 
 if (typeof window !== "undefined") {
   window.MotionDSL = MotionDSL;
@@ -55,6 +56,10 @@ if (typeof window !== "undefined") {
   // Rail projek shell (activity bar kiri) — start sekali di boot app.
   window.__shellProjek = { start: startProjekRail };
   window.__browserPanel = { start: startBrowserPanel };
+  // Adapter Live2D (kosong, fail-loud) — seam arsitektur: app.js → API ini →
+  // Cubism. Implementasi renderer menyusul di bawah kontrak src/live2d/types.ts;
+  // sampai itu app.js masih memanggil pustaka lama langsung.
+  window.__live2dApi = installLive2DApi(window);
   try { startProjekRail(); } catch {}
   // Hint panggung memudar setelah interaksi pertama (drag/zoom).
   try { startStageHintFade(); } catch {}

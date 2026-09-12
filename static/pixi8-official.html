@@ -17,20 +17,34 @@
   }
   #status.ok   { border-color: #2e8b57; }
   #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+  #paramDebug {
+    position: fixed; bottom: 12px; left: 12px; z-index: 2;
+    padding: 8px 10px; border-radius: 8px; max-width: 360px; max-height: 42vh;
+    overflow: auto; background: rgba(0,0,0,.72); border: 1px solid #3a332a;
+    color: #bfe3c8; font: 11px/1.45 ui-monospace, Consolas, monospace;
+    white-space: pre; display: none;
+  }
 </style>
 <!-- Core resmi (harus paling awal — framework membaca global Live2DCubismCore) -->
 <script src="js/live2dcubismcore.min.js"></script>
 <!-- Renderer resmi Cubism (CubismWebFramework, dibundel dari TS resmi Live2D) -->
 <script src="js/cubism-framework.js"></script>
+<!-- Parameter API (Phase 8) — ekspos window.Live2DParameterApi -->
+<script src="js/live2d-param-api.js"></script>
 <script src="js/pixi.8.20.1.min.js"></script>
 </head>
 <body>
 <div id="stage"></div>
 <div id="status">booting…</div>
+<div id="paramDebug"></div>
 <script>
 (async function () {
   "use strict";
-  const GOLDEN_DIR = "model/tesmodel/runtime/";
+  // Path model bisa di-override via ?dir=model/lumine/lumine&file=lumine.model3.json
+  // (default: tesmodel/runtime/ren.model3.json). Tanpa override = tesmodel.
+  const q = new URLSearchParams(location.search);
+  const GOLDEN_DIR = (q.get("dir") || "model/tesmodel/runtime") + "/";
+  const MODEL_FILE = q.get("file") || "ren.model3.json";
   const el = document.getElementById("status");
   const lines = [];
   function log(msg, cls) {
@@ -64,6 +78,7 @@
       resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
     document.getElementById("stage").appendChild(app.canvas);
+    log("PixiJS " + PIXI.VERSION + " ✓");
 
     // ── 2. startUp framework resmi ──
     const option = new F.Option();
@@ -75,26 +90,86 @@
     log("CubismFramework startUp + initialize ✓");
 
     // ── 3. manifest → CubismModelSettingJson (parser resmi) ──
-    const manifestUrl = location.origin + "/" + GOLDEN_DIR + "ren.model3.json";
+    const manifestUrl = location.origin + "/" + GOLDEN_DIR + MODEL_FILE;
     const mdir = manifestUrl.replace(/[^/]*$/, "");
     const rel = (p) => mdir + p.split("\\").join("/");
     const manifestBuf = await (await fetch(manifestUrl)).arrayBuffer();
     const setting = new F.CubismModelSettingJson(manifestBuf, manifestBuf.byteLength);
     log("model3.json → CubismModelSettingJson ✓");
 
-    // ── 4. MOC → CubismModel (lewat CubismUserModel resmi, cek konsistensi) ──
+    // ── 4. Native MOC: bytes asli → Core 6.0.1 → Model.fromMoc() ──
     const user = new F.CubismUserModel();
     const mocBuf = await (await fetch(rel(setting.getModelFileName()))).arrayBuffer();
-    // catatan: core 6.0.1 web tidak mengekspos API hasMocConsistency → cek
-    // konsistensi dibiarkan default (false). Moc tetap fail-loud bila ditolak.
+    const mocHeadBefore = Array.from(new Uint8Array(mocBuf, 0, 8));
+    const mocVersion = C.Version.csmGetMocVersion(mocBuf);
+    const latestMocVersion = C.Version.csmGetLatestMocVersion();
+    // CubismUserModel.loadModel → CubismMoc.create → Moc.fromArrayBuffer →
+    // CubismMoc.createModel → Core Model.fromMoc. Sandbox ini TIDAK memuat
+    // app.js/pixi-live2d, jadi tak ada wrapper/hack yang bisa menyentuh byte.
     user.loadModel(mocBuf);
-    if (!user._model) throw new Error("loadModel gagal — moc ditolak core");
-    log("moc → CubismModel ✓ (" + user._model.getDrawableCount() + " drawable)");
+    if (!user._model) throw new Error("loadModel native gagal — moc ditolak core");
+    const mocHeadAfter = Array.from(new Uint8Array(mocBuf, 0, 8));
+    if (mocHeadBefore.some((v, i) => v !== mocHeadAfter[i])) {
+      throw new Error("byte header MOC berubah selama load native");
+    }
+    const nativeCoreModel = user._model._model;
+    if (!nativeCoreModel || typeof nativeCoreModel.getRenderOrders !== "function") {
+      throw new Error("Core Model.fromMoc tidak menghasilkan model native");
+    }
+    log("MOC bytes asli ✓ (v" + mocVersion + ", header " + mocHeadAfter.join(" ") + ")");
+    log("Moc.fromArrayBuffer → Model.fromMoc ✓ (core max v" + latestMocVersion +
+      ", " + user._model.getDrawableCount() + " drawable)");
+
+    // Audit data renderer sebelum draw: bukti struktur native tersedia.
+    const drawableCount = user._model.getDrawableCount();
+    let vertexCount = 0, maskedCount = 0, invertedMaskCount = 0;
+    let blendNormal = 0, blendAdd = 0, blendMultiply = 0, textureMax = -1;
+    for (let i = 0; i < drawableCount; i++) {
+      vertexCount += user._model.getDrawableVertexCount(i);
+      const mc = user._model.getDrawableMaskCounts()[i];
+      if (mc > 0) maskedCount++;
+      if (user._model.getDrawableInvertedMaskBit(i)) invertedMaskCount++;
+      textureMax = Math.max(textureMax, user._model.getDrawableTextureIndex(i));
+      const bm = user._model.getDrawableBlendMode(i);
+      if (bm === 1) blendAdd++;
+      else if (bm === 2) blendMultiply++;
+      else blendNormal++;
+    }
+    const orders = user._model.getRenderOrders();
+    const orderedDrawableCount = orders.length >= drawableCount ? drawableCount : orders.length;
+    const offscreenCount = user._model.getOffscreenCount ? user._model.getOffscreenCount() : 0;
+    const expectedOrderCount = drawableCount + offscreenCount;
+    if (!vertexCount || orderedDrawableCount < drawableCount) {
+      throw new Error("mesh/draw-order native kosong");
+    }
+    if (orders.length !== expectedOrderCount) {
+      throw new Error("draw order native " + orders.length +
+        " item; diharapkan drawable+offscreen=" + expectedOrderCount);
+    }
+    let offscreenMasked = 0, offscreenInverted = 0;
+    const offscreenBlend = [];
+    for (let i = 0; i < offscreenCount; i++) {
+      if (user._model.getOffscreenMaskCounts()[i] > 0) offscreenMasked++;
+      if (user._model.getOffscreenInvertedMask(i)) offscreenInverted++;
+      offscreenBlend.push(user._model.getOffscreenColorBlend(i) + "/" +
+        user._model.getOffscreenAlphaBlend(i));
+    }
+    log("mesh ✓ (" + vertexCount + " vertex); draw order ✓ (" + orders.length +
+      " = " + drawableCount + " drawable + " + offscreenCount + " offscreen)");
+    log("mask/clip ✓ (" + maskedCount + " drawable, " + offscreenMasked +
+      " offscreen; inverted " + invertedMaskCount + "/" + offscreenInverted + ")");
+    log("blend ✓ (normal " + blendNormal + ", add " + blendAdd +
+      ", multiply " + blendMultiply + "); texture refs 0.." + textureMax);
+    log("offscreen composite ✓ (" + offscreenCount + " group" +
+      (offscreenBlend.length ? ", blend " + offscreenBlend.join(",") : "") + ")");
 
     // ── 5. kanvas render resmi (konteks GL terisolasi dari Pixi) ──
+    // resolusi device-pixel (DPR) supaya identik ketajaman viewer resmi;
+    // aspek selalu = aspek window (sprite Pixi memenuhi layar 1:1).
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const cubCanvas = document.createElement("canvas");
-    cubCanvas.width = window.innerWidth;
-    cubCanvas.height = window.innerHeight;
+    cubCanvas.width = Math.round(window.innerWidth * dpr);
+    cubCanvas.height = Math.round(window.innerHeight * dpr);
     let gl = cubCanvas.getContext("webgl2", {
       alpha: true, premultipliedAlpha: true, antialias: true,
       preserveDrawingBuffer: true,
@@ -116,6 +191,10 @@
 
     // ── 7. tekstur premultiplied (pelajaran PATCH 6: wajib premultiply) ──
     const texCount = setting.getTextureCount();
+    if (textureMax >= texCount) {
+      throw new Error("drawable mereferensikan texture " + textureMax +
+        " tetapi manifest hanya punya " + texCount);
+    }
     for (let i = 0; i < texCount; i++) {
       const texPath = rel(setting.getTextureFileName(i));
       const bitmap = await createImageBitmap(await (await fetch(texPath)).blob());
@@ -135,7 +214,18 @@
     if (setting.isExistPhysicsFile()) {
       const pBuf = await (await fetch(rel(setting.getPhysicsFileName()))).arrayBuffer();
       user.loadPhysics(pBuf, pBuf.byteLength);
+      if (!user._physics) throw new Error("physics file ada tetapi gagal dimuat");
       log("physics ✓");
+    } else {
+      log("physics: tidak ada di manifest");
+    }
+    if (setting.isExistPoseFile && setting.isExistPoseFile()) {
+      const poseBuf = await (await fetch(rel(setting.getPoseFileName()))).arrayBuffer();
+      user.loadPose(poseBuf, poseBuf.byteLength);
+      if (!user._pose) throw new Error("pose file ada tetapi gagal dimuat");
+      log("pose ✓");
+    } else {
+      log("pose: tidak ada di manifest");
     }
 
     // ── 9. efek resmi: updater + scheduler (arsitektur 5.3) ──
@@ -165,11 +255,18 @@
 
     // ── 10. motion Idle resmi (pose bergerak seperti viewer) ──
     let motionPlaying = false;
+    let motionGroup = null;
     {
       let stepName = "fetch motion";
       try {
-        if (setting.getMotionCount("Idle") > 0) {
-          const mPath = rel(setting.getMotionFileName("Idle", 0));
+        const groups = [];
+        for (let i = 0; i < setting.getMotionGroupCount(); i++) {
+          groups.push(setting.getMotionGroupName(i));
+        }
+        motionGroup = groups.includes("Idle") ? "Idle" :
+          (groups.find((g) => setting.getMotionCount(g) > 0) || null);
+        if (motionGroup && setting.getMotionCount(motionGroup) > 0) {
+          const mPath = rel(setting.getMotionFileName(motionGroup, 0));
           stepName = "fetch " + mPath;
           const mBuf = await (await fetch(mPath)).arrayBuffer();
           stepName = "loadMotion";
@@ -187,26 +284,35 @@
           stepName = "startMotionPriority";
           user._motionManager.startMotionPriority(motion, false, 1);
           motionPlaying = true;
-          log("motion Idle ✓ (mulai diputar)");
+          log("motion " + motionGroup + " ✓ (mulai diputar)");
         } else {
-          log("tanpa motion Idle");
+          log("motion: tidak ada di manifest");
         }
       } catch (e) {
         warn("motion dilewati (" + stepName + ": " + e.message + ")");
       }
     }
 
-    // ── 11. matriks resmi (persis lappview resmi) ──
-    let viewMatrix, projection, deviceToScreen, cubTexture, modelSprite;
+    // ── 11. proyeksi: unit model → clip space, skala SERAGAM (anti-gepeng) ──
+    // PPU = piksel layar per unit model — KONSTAN, dihitung sekali dari
+    // kanvas moc (model-agnostic), TIDAK tergantung ukuran window/container:
+    // resize hanya memotong/memenjangkan latar; ukuran karakter dalam piksel
+    // tetap, dan skala kedua sumbu selalu sama → mustahil stretch. Tinggi
+    // kanvas karakter default 900 px; ?zoom=1.25 menggandakan ukuran tampil.
+    const zoom = parseFloat(new URLSearchParams(location.search).get("zoom")) || 1;
+    const CANVAS_PX = 900 * zoom;
+    const PPU = CANVAS_PX / user._model.getCanvasHeight();
+
+    // Catatan penting: CubismViewMatrix di framework ini TIDAK membentuk
+    // proyeksi — getMatrix()-nya hanya matriks pan/zoom (identity default),
+    // screenRect-nya hanya dipakai clamp translate/scale. Memakai viewMatrix
+    // mentah sebagai MVP = matriks identitas → 1 unit model = w/2 px
+    // horizontal tapi h/2 px vertikal → anisotropik; inilah sumber "gepeng".
+    let projection, cubTexture, modelSprite;
     {
-      let stepName = "viewMatrix";
+      let stepName = "projection";
       try {
-        viewMatrix = new F.CubismViewMatrix();
-        stepName = "setupView";
-        setupView();
-        stepName = "projection";
         projection = new F.CubismMatrix44();
-        deviceToScreen = new F.CubismMatrix44();
         stepName = "setupProjection";
         setupProjection();
         stepName = "cubTexture";
@@ -222,62 +328,76 @@
       }
     }
 
+    // ── 12b. PARAMETER API (Phase 8) ──
+    // Modul murni (window.Live2DParameterApi) membungkus user._model (CubismModel
+    // resmi) lewat backing adapter. setParameter mem-pin nilai agar bertahan
+    // melawan motion/breath tiap frame (di-re-apply sebelum update() di ticker).
+    const { ParameterApi, createCubismModelBacking, formatParameterTable } =
+      window.Live2DParameterApi;
+    const paramApi = new ParameterApi(createCubismModelBacking(user._model));
+    window.__paramApi = paramApi;
+    // Supaya bukti spek berlaku persis: model.setParameter(...)/getParameter(...)
+    user.getParameters = (...a) => paramApi.getParameters(...a);
+    user.getParameter = (...a) => paramApi.getParameter(...a);
+    user.getParameterInfo = (...a) => paramApi.getParameterInfo(...a);
+    user.setParameter = (...a) => paramApi.setParameter(...a);
+    log("Parameter API Phase 8 ✓ (" + paramApi.getParameters().length +
+      " parameter terdiscovery dari model)");
+
+    // ?set=ParamAngleX:15,ParamEyeLOpen:0 → demo langsung (bukti visual)
+    const setQ = q.get("set");
+    if (setQ) {
+      for (const part of setQ.split(",")) {
+        const m = part.match(/^\s*([^:]+):\s*(-?\d+(?:\.\d+)?)\s*$/);
+        if (!m) { warn("?set format salah: " + part); continue; }
+        const ok = paramApi.setParameter(m[1], parseFloat(m[2]));
+        log((ok ? "set " : "set GAGAL ") + m[1] + " = " + m[2], ok ? null : "fail");
+      }
+    }
+
     // ── 13. loop resmi: param → update() → render → upload → Pixi render ──
     let last = performance.now();
     let userTime = 0;
+    let paramDebugFrame = 0;
     let gMotionUpdated = false;
-    function setupView() {
-      const ratio = cubCanvas.width / cubCanvas.height;
-      viewMatrix.setScreenRect(-ratio, ratio, -1.0, 1.0);
-      // Zoom ala "Display All" viewer resmi: model memenuhi tinggi layar
-      // (bukan menampilkan kanvas penuh yang membuat model tampak kecil).
-      // Bounds dihitung dari drawable ber-opacity > 0 (yang alpha 0 adalah
-      // quad bantu besar yang menggelembungkan bbox).
-      let vx0 = 1e9, vx1 = -1e9, vy0 = 1e9, vy1 = -1e9;
-      const dc = user._model._model.drawables;
-      const opac = dc.opacities;
-      for (let i = 0; i < dc.count; i++) {
-        if (opac[i] <= 0) continue;
-        const vp = dc.vertexPositions[i];
-        for (let v = 0; v < dc.vertexCounts[i]; v++) {
-          const x = vp[v * 2], y = vp[v * 2 + 1];
-          if (x < vx0) vx0 = x; if (x > vx1) vx1 = x;
-          if (y < vy0) vy0 = y; if (y > vy1) vy1 = y;
-        }
-      }
-      const visH = Math.max(0.5, vy1 - vy0);
-      const zoom = Math.min((0.9 * 2.0) / visH, 4.0);
-      viewMatrix.scale(zoom, zoom);
-      viewMatrix.setMaxScreenRect(-40.0, 40.0, -40.0, 40.0);
-    }
+    // MVP statik: unit model → clip space. clip x meliputi lebar canvas,
+    // clip y tingginya → 1 unit model = PPU px di KEDUA sumbu (seragam).
+    // PPU konstan → ukuran karakter dalam piksel tak terpengaruh resize.
     function setupProjection() {
-      const ratio = cubCanvas.width / cubCanvas.height;
-      viewMatrix.setScreenRect(-ratio, ratio, -1.0, 1.0);
       projection.loadIdentity();
-      projection.multiplyByMatrix(viewMatrix);
-      deviceToScreen.loadIdentity();
-      deviceToScreen.scaleRelative(
-        (ratio * 2.0) / cubCanvas.width,
-        (-2.0) / cubCanvas.height
+      projection.scaleRelative(
+        (2 * PPU) / cubCanvas.width,
+        (2 * PPU) / cubCanvas.height
       );
-      deviceToScreen.translateRelative(-cubCanvas.width * 0.5, -cubCanvas.height * 0.5);
     }
-    setupProjection();
     window.addEventListener("resize", () => {
       app.renderer.resize(window.innerWidth, window.innerHeight);
-      cubCanvas.width = window.innerWidth;
-      cubCanvas.height = window.innerHeight;
+      cubCanvas.width = Math.round(window.innerWidth * dpr);
+      cubCanvas.height = Math.round(window.innerHeight * dpr);
+      user.setRenderTargetSize(cubCanvas.width, cubCanvas.height);
       setupProjection();
       modelSprite.width = app.screen.width;
       modelSprite.height = app.screen.height;
-      gl.viewport(0, 0, cubCanvas.width, cubCanvas.height);
+      // gl.viewport di-set tiap frame di ticker; tekstur GL di-upload ulang
+      // tiap frame via cubTexture.source.update()
     });
 
     app.ticker.add(() => {
+      try {
       const now = performance.now();
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
       userTime += dt;
+
+      // Parameter API debug panel (§8.16) — refresh tiap 15 frame
+      if ((paramDebugFrame++ % 15) === 0) {
+        const pd = document.getElementById("paramDebug");
+        if (pd) {
+          pd.style.display = "block";
+          pd.textContent = "PARAMETER API (Phase 8)\n" +
+            formatParameterTable(paramApi.getParameters());
+        }
+      }
 
       if (motionPlaying) {
         // resmi: loadParameters → motion → saveParameters → efek → model.update
@@ -285,15 +405,15 @@
         gMotionUpdated = user._motionManager.updateMotion(user._model, dt);
         user._model.saveParameters();
         scheduler.onLateUpdate(user._model, dt);
+        paramApi.applyOverrides();
         user._model.update();
       } else {
         scheduler.onLateUpdate(user._model, dt);
+        paramApi.applyOverrides();
         user._model.update();
       }
-      // draw resmi: viewMatrix → renderer
+      // draw: MVP proyeksi seragam (PPU konstan, statik) → renderer
       gl.viewport(0, 0, cubCanvas.width, cubCanvas.height);
-      projection.loadIdentity();
-      projection.multiplyByMatrix(viewMatrix);
       renderer.setMvpMatrix(projection);
       gl.clearColor(0.0, 0.0, 0.0, 0.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -302,19 +422,58 @@
       renderer.drawModel();
       // chain ke PixiJS 8: canvas resmi → tekstur → sprite
       cubTexture.source.update();
+      } catch (e) {
+        if (!window.__tickErr) { window.__tickErr = String((e && e.stack) || e); warn("ticker ERROR: " + e.message); }
+      }
     });
 
     log([
       "",
-      "=== OFFICIAL RENDERER — ren (moc dari " + GOLDEN_DIR + ") ===",
+      "=== OFFICIAL RENDERER — " + MODEL_FILE.replace(/\.model3\.json$/i, "") +
+        " (moc dari " + GOLDEN_DIR + ") ===",
       "pipeline: model3.json → Cubism SDK resmi (renderer 5.3) → PixiJS " +
         PIXI.VERSION + " → canvas",
       "semua semantik 5.3 (offscreen/blend/mask/multiply) ditangani renderer resmi",
-      motionPlaying ? "motion Idle resmi diputar" : "tanpa motion",
+      "PPU " + PPU.toFixed(1) + " px/unit (kanvas moc " +
+        user._model.getCanvasHeight().toFixed(2) + " unit → " + CANVAS_PX +
+        " px, zoom " + zoom + "×) — konstan, tak terikat ukuran window",
+      motionPlaying ? ("motion " + motionGroup + " resmi diputar") : "tanpa motion",
     ].join("\n"), "ok");
     el.className = "ok";
 
-    window.__official = { app, user, renderer, ok: true };
+    // ── 14. (opsional) ?measure=1 — ukur bbox piksel non-transparan GL ──
+    if (new URLSearchParams(location.search).has("measure")) {
+      let frames = 0;
+      app.ticker.add(() => {
+        if (++frames !== 40) return;
+        try {
+          const w = cubCanvas.width, h = cubCanvas.height;
+          const px = new Uint8Array(w * h * 4);
+          gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          let minX = w, maxX = -1, minY = h, maxY = -1, lit = 0;
+          for (let y = 0; y < h; y += 2) {
+            for (let x = 0; x < w; x += 2) {
+              if (px[(y * w + x) * 4 + 3] > 8) {
+                lit++;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+          warn("measure canvas=" + w + "x" + h +
+            " lit=" + lit +
+            " bbox=[" + minX + ".." + maxX + "]×[" + minY + ".." + maxY + "]" +
+            " w×h=" + (maxX - minX) + "×" + (maxY - minY) +
+            " rasio=" + (maxX > minX ? ((maxX - minX) / (maxY - minY)).toFixed(4) : "-"));
+        } catch (e) {
+          warn("measure gagal: " + e.message);
+        }
+      });
+    }
+
+    window.__official = { app, user, renderer, cubCanvas, ok: true };
   } catch (e) {
     console.error(e);
     window.__official = { ok: false, error: String((e && e.message) || e) };

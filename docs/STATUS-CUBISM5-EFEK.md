@@ -4,6 +4,162 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-12 (29) — PHASE 8 PARAMETER API: DISCOVERY/READ/WRITE TERVALIDASI DI ATAS CUBISMMODEL
+
+Tujuan phase: lapisan Parameter API yang stabil dan model-agnostic di atas
+Cubism Runtime — `getParameters()` / `getParameter(id)` / `getParameterInfo(id)`
+/ `setParameter(id, value)` — membuktikan tulisan parameter benar-benar
+menggerakkan model di renderer. TANPA role mapping (Phase 10), TANPA
+MotionRuntime (Phase 11), TANPA LLM/Arbiter.
+
+**Arsitektur (3 file TS + 1 bundle entry):**
+- `src/live2d/parameter-api.ts` — `ParameterApi` MURNI (nol import; bebas
+  Cubism & renderer): logika discovery/read/write/clamp/validasi diuji lewat
+  interface polos `CubismParameterBacking`. ID/min/max/default SELALU dari
+  backing model — tidak ada id bernomor, tidak ada skala referensi di sini
+  (role-space tetap lapisan di atas, Phase 10). Clamp = model range constraint
+  (bukan semantic clamp). NaN/±Infinity ditolak (nilai lama lestari); id tak
+  dikenal → `false`/`undefined` tanpa throw, tanpa membuat param baru; state
+  override milik instance (isolasi dua model); `dispose()` memutus reference
+  backing (lifecycle aman). `formatParameterTable()` = debug §8.16.
+- `src/live2d/cubism-parameter-backing.ts` — adapter `CubismModel` resmi →
+  backing: mapping id→indeks dibangun sekali (O(1), tanpa side-effect
+  getIdManager berulang); `CubismModelLike` didefinisikan lokal (import type
+  framework tidak masuk tsc — framework tidak lolos strict null-check).
+- `src/live2d/param-api-entry.ts` + entri ke-4 `src/build.ts` →
+  `static/js/live2d-param-api.js` (IIFE, artefak — kini di-gitignore) menaruh
+  `window.Live2DParameterApi`.
+- `src/live2d/types.ts` — 4 method Parameter API masuk kontrak
+  `Live2DModelHandle`; `stub.ts` tetap fail-loud `belum()`; guard kontrak
+  `test/live2d-adapter.test.ts` ikut.
+
+**Mekanisme pin (`SetParameterOptions.pin`, default true):** `setParameter`
+mencatat override dan `applyOverrides()` me-re-apply semua pin TEPAT SEBELUM
+`model.update()` tiap frame — nilai bertahan melawan motion/physics/breath
+yang menulis param tiap frame. Ini tambahan praktis di luar spesifikasi Phase 8
+(untuk uji manual "set lalu lihat hasil"); posisinya terhadap MotionRuntime
+(Phase 11) & Parameter Arbiter (Phase 13) harus diputuskan agar tidak jadi dua
+sistem override yang bersaing.
+
+**Sandbox (`pixi8-official.html` §12b):** `window.__paramApi`, shim
+`user.setParameter/getParameter/getParameterInfo/getParameters`, hook
+`?set=Id:nilai`, panel debug tabel parameter (refresh tiap 15 frame).
+
+**Verifikasi (dua lapis):**
+- Unit: `test/parameter-api.test.ts` 18 test = Testing Matrix T1–T10 + lifecycle
+  + sinkronisasi + pin + adapter (mock backing, tanpa WASM).
+- Runtime golden (ren, moc v6, 73 param terdiscovery): `setParameter(
+  "ParamAngleX", 30)` → kepala terputar di renderer + read-back 30; clamp
+  999→30; NaN ditolak; id tak dikenal aman; T8 multi-write 15/−10/0; operasi
+  read tidak memutasi; `clearOverride` → nilai kembali dikuasai motion.
+  lumine (moc v5, 223 param) terdiscovery & bisa ditulis terpisah — isolasi
+  instance terbukti antar-tab. Grep: nol string id parameter di logika.
+
+**Gate:** build bersih, `tsc --noEmit` bersih, 441 unit + 463 guard hijau.
+
+**Catatan lanjut:** (1) `dispose()` belum tersambung ke jalur destroy model
+(sandbox tidak punya jalur destroy) — wajib saat engine utama memakai API ini.
+(2) Engine (app.js) BELUM mengonsumsi API ini — `Live2DModelHandle.setParameter`
+masih stub; konsumsi engine menyusul setelah role-space (Phase 10). (3) Phase 9
+(Model Inspector) bisa langsung memakai `getParameters()`.
+
+## UPDATE 2026-09-12 (28) — PHASE NATIVE MOC6: AUDIT HACK + JALUR NATIVE LOLOS GOLDEN (BELUM COMMIT)
+
+Tujuan phase: pastikan MOC binary **asli** (tanpa stamp/hack byte) dimuat
+Core 6.0.1 melalui `Moc.fromArrayBuffer → Model.fromMoc()`, terbukti di
+golden models.
+
+**Audit hack MOC di repo (TIDAK dihapus, hanya dipetakan):**
+- `static/js/app.js:7-45` `patchCubismCore()` — satu-satunya yang
+  **menulis ulang byte MOC**: membungkus `core.Moc.fromArrayBuffer`; bila
+  load gagal & header v5 → `u8[4..7]=4` (stamp v5→v4) lalu retry; `v>5`
+  sudah fail-loud tanpa stamp (entri 25). Tidak aktif di jalur native
+  (sandbox tidak memuat app.js).
+- `static/js/app.js:3283` `assertCubism4()` — hanya console.warn label
+  "version-stamp shim" untuk Cubism 3; tidak menyentuh byte.
+- `static/js/pixi-live2d-0.4.0.js:6-80` `patchCore6Compat()` — BUKAN hack
+  byte; shim read-model di atas `core.Model.fromMoc` (delegasi
+  `renderOrders` + peta opacity offscreen moc v6) untuk framework vendored
+  era-core-4 di adapter lama. Jalur native tidak memakainya.
+- `src/live2d/` (TS, source-of-truth bundle) — bersih: `CubismMoc.create`
+  memanggil `Moc.fromArrayBuffer` + `csmGetMocVersion` apa adanya.
+
+**Jalur native diverifikasi di sandbox (`pixi8-official.html`, tanpa
+app.js/pixi-live2d):** model3.json → fetch MOC bytes asli → audit header
+sebelum/sesudah load (harus identik, else fail-loud) →
+`CubismUserModel.loadModel` (= `CubismMoc.create` → `Moc.fromArrayBuffer` →
+`Model.fromMoc`) → audit struktur renderer → draw.
+
+**Golden run (semua ✓, bytes MOC terverifikasi tak berubah):**
+- `ren` — MOC **v6** (header `MOC3 06`, sha a9ccf7d6…): 198 drawable,
+  7.843 vertex, draw order 222 = 198 drawable + **24 offscreen**, mask
+  4 drawable + 4 offscreen (3 inverted), blend normal 198, texture 4096²,
+  physics + eyeblink + breath + motion Idle berputar, render proporsional.
+- `lumine` — MOC **v5** (header `MOC3 05`, sha eeb81363…): 223 drawable,
+  23.468 vertex, draw order 223 (0 offscreen), mask 30 drawable (5
+  inverted), blend normal 221 + multiply 2, texture 8192², physics +
+  eyeblink + breath jalan. Tidak punya grup motion di manifest (file
+  `idle.motion3.json` di disk tak direferensikan model3.json) → dirender
+  statis; bukan kegagalan loader.
+- Core 6.0.1 memuat MOC v5 & v6 native tanpa stamp; `csmGetLatestMocVersion=6`.
+
+**Perubahan sandbox** (masih `pixi8-official.html`, belum di-commit): audit
+native MOC (header before/after, `Model.fromMoc` probe), audit struktur
+(mesh/draw-order/mask/blend/offscreen dengan fail-loud), load `pose` bila
+ada di manifest, pemilihan grup motion fallback ke grup pertama bila tanpa
+`Idle`, `?dir=&file=` untuk memilih model, dan label status pakai nama file.
+
+**PHASE Native MOC6: DONE.** Gate: build bersih, `tsc --noEmit` bersih,
+463 guard + unit hijau, golden ren & lumine lolos semua subsistem
+(mesh/texture/mask/blend/draw order/offscreen/physics/motion).
+
+**Berikutnya — PHASE Parameter API:** hubungkan penulisan parameter ke
+model native ini lewat role-space (`pokeRoleRef`/`pokeRoleNorm`/
+`roleDefault` — lihat MODEL-AGNOSTIC-RULES.md); angka hanya dari engine,
+tanpa id bernomor.
+
+## UPDATE 2026-09-12 (27) — PIXI8 OFFICIAL: ANTI-GEPENG, PPU KONSTAN TAK TERIKAT WINDOW (BELUM COMMIT)
+
+Perbaikan akar masalah "karakter gepeng" di `static/pixi8-official.html`
+(pipeline: model3.json → Cubism SDK 5.3 resmi → PixiJS 8 → canvas):
+
+- **Akar masalah**: `CubismViewMatrix` di bundle `cubism-framework.js` TIDAK
+  membentuk proyeksi — `getMatrix()`-nya hanya matriks pan/zoom (identity
+  default); `setScreenRect` hanya mengisi batas clamp `adjustTranslate/
+  adjustScale`. Halaman memakai `projection = viewMatrix` sebagai MVP →
+  MVP efektifnya **matriks identitas** → 1 unit model = `w/2` px horizontal
+  tapi `h/2` px vertikal → anisotropik di window non-persegi (gepeng).
+  PPU=400 yang lama tidak pernah dieksekusi (di-overwrite `setupProjection`
+  dan viewMatrix memang tidak pernah membentuk proyeksi).
+- **Perbaikan**: MVP dibangun langsung — `projection.scaleRelative(
+  2·PPU/w, 2·PPU/h)` — memetakan unit model → clip space dengan SATU skala
+  untuk kedua sumbu (mustahil anisotropik). `CubismViewMatrix`/
+  `deviceToScreen` dihapus dari halaman (tidak diperlukan tanpa pan/zoom).
+- **PPU konstan, model-agnostic**: `PPU = CANVAS_PX / model.getCanvasHeight()`
+  dihitung SEKALI saat boot dari kanvas moc (bukan konstanta per-model);
+  tinggi kanvas default 900 px layar, override via `?zoom=1.25`. Resize
+  window HANYA memotong/memenjangkan latar — ukuran karakter dalam piksel
+  tetap. Terverifikasi terukur: bbox piksel GL identik (90×284) di viewport
+  1500×500, 800×800, dan setelah resize live 1250×550.
+- **DPR-aware**: kanvas GL resmi kini berukuran device-pixel (`innerWidth ×
+  dpr`, dpr ≤ 2) — ketajaman setara viewer resmi; `user.setRenderTargetSize`
+  dipanggil saat resize agar buffer mask 5.3 ikut ukuran baru.
+- **Debug**: mode `?measure=1` mengukur bbox piksel non-transparan GL di
+  frame ke-40 dan menuliskannya ke panel status; callback ticker dibungkus
+  try/catch fail-loud (error frame pertama dilaporkan ke status).
+- Catatan verifikasi: `getDrawableVertexPositions` core mengembalikan array
+  FLAT `[x0,y0,…]` (bukan `{x,y}`), canvas info di `model._model.canvasinfo`
+  (CanvasOrigin = titik tengah kanvas → origin model = pusat kanvas).
+
+Gate: guard 463 + unit hijau, `tsc --noEmit` bersih; verifikasi visual via
+browser (screenshot proporsi normal, tidak gepeng, di 3 aspek viewport).
+Terverifikasi juga pada model lain (`lumine`, tekstur 8192², 223 drawable):
+PPU otomatis 562.5 px/unit dari kanvas moc-nya sendiri (bukan konstanta ren)
+→ fix benar-benar model-agnostic; proporsi benar di viewport 1280×720 &
+1000×560. Path model kini bisa di-override via `?dir=&file=` (default
+tesmodel/runtime/ren). Catatan: lumine tidak punya grup motion `Idle` →
+dirender statis (physics/breath/eyeblink tetap jalan).
+
 ## UPDATE 2026-09-11 (26) — REFACTOR CLIENT: ROLE-SPACE, LIFECYCLE, KONTRAK BRIDGE, EKSPRESI TS (BELUM COMMIT)
 
 Audit maintainability client dilanjutkan dengan tranche kecil, tanpa rewrite
@@ -1300,3 +1456,61 @@ RenderTexture): **140 hidup, 83 mati (0 px), 11 halus (<60 px)**. Pola mati
   `EX01/04/06/07/12` mati; `EX02/03/05/10` hidup tapi halus (14–52 px).
 - Implikasi: slider/preset pada param mati memang tidak akan pernah
   berbuat apa-apa — bukan sesuatu yang bisa diperbaiki app.
+
+## UPDATE 2026-09-12 — PHASE 8: PARAMETER API (model-agnostic, stabil)
+
+Parameter API Phase 8 SELESAI diimplementasikan dan lulus semua gate
+("Selesai": build bersih + `bunx tsc --noEmit` bersih + `bun run test` hijau).
+
+- Kontrak publik: `getParameters(): ParameterSnapshot[]`,
+  `getParameter(id): number | undefined`,
+  `getParameterInfo(id): ParameterInfo | undefined`,
+  `setParameter(id, value): boolean`. TIDAK ada semantic role dalam objek
+  (role-mapping = Phase 10, di luar scope).
+- `ParameterInfo = { id, min, max, defaultValue }`;
+  `ParameterSnapshot extends ParameterInfo { value }`. ID/min/max/default
+  SELALU diambil DARI model lewat backing (dynamic discovery), tidak pernah
+  hard-code.
+- Aturan terikat: clamp out-of-range ke [min,max] (model range constraint —
+  bukan semantic/role clamp); NaN/Infinity/-Infinity ditolak (nilai lama
+  lestari, tidak sampai ke Cubism); id tak dikenal → `false` aman tanpa
+  throw / tanpa param baru / tanpa mutasi param lain; dua instance model
+  terisolasi (state override milik instans, bukan global); lifecycle aman
+  (dispose / model mati → semua panggilan aman); API TIDAK tahu alasan
+  perubahan (user/motion/AI/dst).
+- `setParameter` mem-pin secara default; `applyOverrides()` di-re-apply tiap
+  frame TEPAT sebelum `model.update()` agar nilai pin bertahan melawan
+  motion/physics/breath (bukti visual: `?set=ParamAngleX:15` mengubah model
+  dan tetap di panel debug).
+
+### Berkas kunci (Phase 8)
+- `src/live2d/parameter-api.ts` — `ParameterApi` + `formatParameterTable`
+  (§8.16). Murni, hanya bergantung `CubismParameterBacking` (interface
+  polos) → bisa dites tanpa WASM.
+- `src/live2d/cubism-parameter-backing.ts` — adapter `CubismModel` →
+  `CubismParameterBacking`. Pakai interface struktural lokal (`CubismModelLike`)
+  agar framework resmi TIDAK masuk ke graf type-check tsc (framework gagal
+  strict null-check; di-build via Bun.build, bukan tsc).
+- `src/live2d/param-api-entry.ts` — pasang `window.Live2DParameterApi`
+  (`ParameterApi` + `createCubismModelBacking` + `formatParameterTable`).
+- `src/live2d/types.ts` — 4 method ditambah ke `Live2DModelHandle`;
+  `ParameterInfo`/`ParameterSnapshot` di-re-export.
+- `src/live2d/stub.ts` — 4 stub fail-loud (belum diimplementasi → melempar).
+- `test/parameter-api.test.ts` — 18 test (matrix 10 + lifecycle + sinkron +
+  pin/clear + backing adapter), hijau.
+- `src/build.ts` — entry ke-4 → `static/js/live2d-param-api.js` (gitignored).
+- `static/pixi8-official.html` — harness golden: script tag param-api, install
+  `paramApi` ke `user`, frame hook `applyOverrides()`, panel debug (#paramDebug,
+  refresh tiap 15 frame via `formatParameterTable`), dan `?set=ID:value,...`.
+
+### Di LUAR scope (tidak diubah)
+Renderer pipeline/shader/masking/blend/offscreen, MOC compat hacks,
+role-mapping semantic, MotionRuntime, Brain/LLM, Parameter Arbiter.
+
+### Verifikasi cepat
+1. `bun run build` → muncul `static/js/live2d-param-api.js`.
+2. `bunx tsc --noEmit` → bersih (EXIT 0).
+3. `bun run test` → hijau (terakhir: 463 guard + semua unit, 0 gagal).
+4. Buka `static/pixi8-official.html?set=ParamAngleX:15,ParamEyeLOpen:0` →
+   model miring & mata kiri tertutup, panel debug kiri-bawah menampilkan
+   tabel ID/Value/Range.

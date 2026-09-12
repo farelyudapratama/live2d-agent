@@ -73,4 +73,27 @@ if (!framework.success) {
   process.exit(1);
 }
 
-console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/cubism-framework.js (TS is now the live client source-of-truth)");
+// Entry keempat: PARAMETER API (Phase 8) untuk halaman golden pixi8-official.html.
+// Murni (tanpa pustaka renderer/core) — hanya ekspos ParameterApi +
+// createCubismModelBacking ke global window.Live2DParameterApi. Dipakai harness
+// untuk bukti visual setParameter → model bergerak.
+const paramApi = await Bun.build({
+  entrypoints: ["./src/live2d/param-api-entry.ts"],
+  outdir: "./static/js",
+  naming: "live2d-param-api.[ext]",
+  target: "browser",
+  format: "iife",
+  splitting: false,
+  minify: false,
+  sourcemap: "inline",
+});
+
+if (!paramApi.success) {
+  console.error("parameter-api build failed:");
+  for (const msg of paramApi.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/cubism-framework.js + static/js/live2d-param-api.js (TS is now the live client source-of-truth)");

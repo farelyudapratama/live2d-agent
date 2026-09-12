@@ -26,3 +26,4 @@ agent-shell/gen/
 *.log
 .DS_Store
 static/js/cubism-framework.js
+static/js/live2d-param-api.js

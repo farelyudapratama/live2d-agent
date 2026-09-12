@@ -36,6 +36,7 @@ import type {
   CubismCapabilities,
   MocVersion,
 } from "./cubism-core";
+import type { ParameterInfo, ParameterSnapshot } from "./parameter-api";
 import type { BackendKind } from "./render-backend";
 
 // Re-export konsep lapisan bawah yang dibutuhkan konsumen API publik.
@@ -47,6 +48,8 @@ export type {
 } from "./cubism-core";
 export { SUPPORTED_MOC_VERSIONS } from "./cubism-core";
 export type { BackendKind } from "./render-backend";
+// Parameter API (Phase 8) — kontrak data model-agnostic (tanpa semantic role).
+export type { ParameterInfo, ParameterSnapshot } from "./parameter-api";
 
 /** Titik polos ruang layar/model — pengganti bebas-renderer untuk Point. */
 export interface Live2DPoint {
@@ -169,6 +172,15 @@ export interface Live2DModelHandle {
   // ── Parameter Cubism (by-ID passthrough; makna = urusan pemanggil) ──
   readParam(id: string): number;
   writeParam(id: string, value: number, weight?: number): void;
+
+  // ── Parameter API (Phase 8) ──
+  // Layer aman di atas readParam/writeParam: discovery, metadata, write
+  // tervalidasi (clamp ke range model, tolak NaN/Infinity, id tak dikenal aman),
+  // dan isolasi instance. TIDAK tahu alasan perubahan (user/motion/AI/dst).
+  getParameters(): ParameterSnapshot[];
+  getParameter(id: string): number | undefined;
+  getParameterInfo(id: string): ParameterInfo | undefined;
+  setParameter(id: string, value: number): boolean;
 
   // ── Part (opacity part = data runtime inti, bukan efek renderer) ──
   getPartIds(): string[];

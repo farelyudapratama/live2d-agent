@@ -67,6 +67,10 @@ export function createStubModelHandle(): Live2DModelHandle {
     readParam: (_id: string) => belum("readParam"),
     writeParam: (_id: string, _value: number, _weight?: number) =>
       belum("writeParam"),
+    getParameters: () => belum("getParameters"),
+    getParameter: (_id: string) => belum("getParameter"),
+    getParameterInfo: (_id: string) => belum("getParameterInfo"),
+    setParameter: (_id: string, _value: number) => belum("setParameter"),
     getPartIds: () => belum("getPartIds"),
     getPartOpacity: (_id: string) => belum("getPartOpacity"),
     setPartOpacity: (_id: string, _opacity: number) => belum("setPartOpacity"),

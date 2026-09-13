@@ -11,6 +11,17 @@
   <link rel="stylesheet" href="css/app.css?v=matte1" />
   <!-- Cubism Core HARUS dimuat duluan sebelum pixi-live2d -->
   <script src="js/live2dcubismcore.min.js"></script>
+  <!-- R7-2: shim slot log Core (coexistence dua binding, first-writer-wins) -->
+  <script>
+    // sink konsol kecil (R7-2 diagnostik): warn/error awal boot terrekam
+    window.__consoleSink = [];
+    (function () {
+      var w = console.warn.bind(console), e = console.error.bind(console);
+      console.warn = function () { try { window.__consoleSink.push(["w", Array.prototype.map.call(arguments, function (x) { return String(x && x.stack || x); }).join(" ")]); } catch (e2) {} w.apply(null, arguments); };
+      console.error = function () { try { window.__consoleSink.push(["e", Array.prototype.map.call(arguments, function (x) { return String(x && x.stack || x); }).join(" ").slice(0, 800)]); } catch (e2) {} e.apply(null, arguments); };
+    })();
+  </script>
+  <script src="js/core-log-shim.js"></script>
 </head>
 <body>
 
@@ -964,6 +975,13 @@
        window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent / __i18n.
        Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js —
        init() i18n menyweep atribut data-i18n* sebelum app.js jalan. -->
+  <!-- R7-2: production renderer (Cubism 5.3 + compositor v8) — dipakai
+       rendererMode "production"; Pixi6/pixi-live2d di bawah tetap tersedia
+       sebagai fallback ?renderer=legacy -->
+  <script src="js/cubism-framework.js"></script>
+  <script src="js/live2d-adapter.js"></script>
+  <script src="js/scene-layers.js"></script>
+  <script src="js/pixi8-namespace.js"></script>
   <script src="js/bundle.js"></script>
   <script src="js/app.js"></script>
   <script src="js/mode-runtime.js"></script>

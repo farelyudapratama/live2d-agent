@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage R7-1 — GAP-1 scene layers (DOM) + GAP-2 measureLitBounds + interaction seam</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101010; overflow: hidden; }
+  #stageHost { position: fixed; inset: 0; }
+  #stageHost canvas { position: absolute; inset: 0; }
+  #legacy { position: fixed; inset: 0; z-index: 50; display: none; }
+  #status {
+    position: fixed; top: 10px; left: 10px; z-index: 60;
+    padding: 10px 14px; border-radius: 8px; max-width: 760px; max-height: 94vh; overflow: auto;
+    background: rgba(0,0,0,.85); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 11.5px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap;
+  }
+  #status.ok { border-color: #2e8b57; } #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/core-log-shim.js"></script>
+<script src="js/cubism-framework.js"></script>
+<script src="js/pixi.6.5.10.min.js"></script>
+<script src="js/pixi-live2d-0.4.0.js"></script>
+<script src="js/live2d-adapter.js"></script>
+<script src="js/scene-layers.js"></script>
+<script src="js/pixi8-namespace.js"></script>
+</head>
+<body>
+<div id="stageHost"><canvas id="prod"></canvas></div>
+<canvas id="legacy"></canvas>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  const el = document.getElementById("status");
+  const lines = [];
+  const log = (m, cls) => { lines.push(m); el.textContent = lines.slice(-80).join("\n"); if (cls) el.className = cls; console.log("[r7]", m); };
+  const results = [];
+  const check = (name, ok, detail) => { results.push({ name, ok }); log((ok ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : ""), ok ? null : "fail"); };
+  const REN = "model/tesmodel/runtime/ren.model3.json";
+
+  try {
+    await window.__compositor8Ready;
+    const api = window.__live2dApi;
+    let CW = window.innerWidth, CH = window.innerHeight;
+
+    // ══ produksi + model (netral) ══
+    const canvas = document.getElementById("prod");
+    const host = api.createHost({
+      canvas, width: CW, height: CH, backgroundAlpha: 0,
+      resolution: Math.min(window.devicePixelRatio || 1, 2), composite: "canvas-texture",
+    });
+    const model = await api.loadModel(host, { kind: "path", path: REN });
+    host.add(model);
+    model.stopAllMotions();
+    for (const e of ["breath", "physics", "eyeBlink"]) model.setEffectEnabled(e, false);
+    model.resetFocus();
+    model.setScale(1); model.setAnchor(0.5, 0.5); model.setPosition(0, 0);
+    model.update(1 / 60); host.render();
+
+    // ══ GAP-2: measureLitBounds — non-empty, stabil, vs legacy ══
+    const b1 = host.measureLitBounds();
+    check("R7 GAP-2 bbox non-empty", !!b1 && b1.width > 100 && b1.height > 100, JSON.stringify(b1));
+    model.update(1 / 60); host.render();
+    const b2 = host.measureLitBounds();
+    check("R7 GAP-2 bbox stabil (pose netral)", b1 && b2 && b1.minX === b2.minX &&
+      b1.maxX === b2.maxX && b1.minY === b2.minY && b1.maxY === b2.maxY);
+    // vs legacy: kanvas legacy terpisah, model sama, pose netral sama
+    const legacyCanvas = document.getElementById("legacy");
+    const legacyApp = new PIXI.Application({
+      view: legacyCanvas, width: 1280, height: 720, backgroundAlpha: 0,
+      resolution: 1, autoDensity: false, preserveDrawingBuffer: true,
+    });
+    const legacy = await PIXI.live2d.Live2DModel.from(REN, { autoInteract: false, autoUpdate: false });
+    legacyApp.stage.addChild(legacy);
+    legacy.autoUpdate = false;
+    legacy.scale.set(1);
+    legacy.position.set(640 - legacy.width / 2, 360 - legacy.height / 2);
+    legacy.update(1 / 60); legacyApp.render();
+    const lgl = legacyCanvas.getContext("webgl2") || legacyCanvas.getContext("webgl");
+    const lb = (() => {
+      const w = legacyCanvas.width, h = legacyCanvas.height;
+      const px = new Uint8Array(w * h * 4);
+      lgl.readPixels(0, 0, w, h, lgl.RGBA, lgl.UNSIGNED_BYTE, px);
+      let minX = w, maxX = -1, minY = h, maxY = -1;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++)
+        if (px[(y * w + x) * 4 + 3] > 8) { if (x<minX)minX=x; if (x>maxX)maxX=x; if (y<minY)minY=y; if (y>maxY)maxY=y; }
+      return maxX < 0 ? null : { minX, maxX, top: h - 1 - maxY, bottom: h - 1 - minY, width: maxX - minX, height: maxY - minY };
+    })();
+    // bandingkan UKURAN bbox (posisi legacy dipusatkan manual; center dipakai untuk cek)
+    check("R7 GAP-2 ukuran bbox == legacy (model sama)",
+      lb && b1 && Math.abs(lb.width - b1.width) <= 2 && Math.abs(lb.height - b1.height) <= 2,
+      "legacy=" + (lb && lb.width + "x" + lb.height) + " prod=" + (b1 && b1.width + "x" + b1.height));
+
+    // ══ GAP-1: scene layers DOM — bg/dim di bawah, emoji overlay di atas ══
+    const layers = window.L2DSceneLayers.createStageLayers(canvas);
+    layers.setBackground("model/tesmodel/runtime/stagebg.png"); // bg nyata bila ada; onerror → kosong
+    layers.setDim(0.35);
+    layers.syncSize();
+    const ov = layers.overlay();
+    check("R7 GAP-1 overlay di atas kanvas (pointer-events none)",
+      ov.style.pointerEvents === "none" && parseInt(ov.style.zIndex) > 2);
+    const bgImg = document.querySelector(".l2d-layer-bg");
+    const dimDiv = document.querySelector(".l2d-layer-dim");
+    check("R7 GAP-1 bg & dim di bawah kanvas (z-order DOM)",
+      bgImg && dimDiv && parseInt(bgImg.style.zIndex) < 2 && parseInt(dimDiv.style.zIndex) < 2);
+    // anchor kepala dari measureLitBounds → partikel emoji di region kepala
+    const res = host.compositeInfo();
+    const cssScale = res.canvasCss.width / res.cubPixels.width;
+    const headY = (b1.minY * cssScale) + (b1.height * cssScale) * 0.16; // konvensi legacy headY
+    const span = document.createElement("span");
+    span.textContent = "💙";
+    span.style.cssText = "position:absolute;left:" + (CW / 2 - 12) + "px;top:" + (headY - 24) + "px;font-size:24px;";
+    ov.appendChild(span);
+    const r = span.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    check("R7 GAP-1 emoji ter-anchor di region kepala (bbox → CSS)",
+      r.left >= cr.left && r.right <= cr.right && r.top >= cr.top &&
+      r.top < cr.top + cr.height * 0.5,
+      "emoji.top=" + (r.top - cr.top).toFixed(0) + " css, headY=" + headY.toFixed(0));
+
+    // ══ interaction seam: drag + zoom-around-cursor vs legacy (numerik) ══
+    // drag: geser +80/-40 → AABB kedua stack bergeser sama
+    function prod2Abs() { const c = model.toGlobal({ x: 0, y: 0 }); return { x: CW / 2 + c.x, y: CH / 2 + c.y }; }
+    model.setPosition(80, -40);
+    legacy.position.x += 80; legacy.position.y -= 40;
+    model.update(1 / 60); host.render();
+    const pc1 = prod2Abs();
+    const lc1 = { x: legacy.getBounds().centerX ?? 0, y: 0 };
+    const lb2 = legacy.getBounds();
+    check("R7 interaction drag: pusat produksi = legacy + (80,-40)",
+      Math.abs(pc1.x - (lb2.left + lb2.width / 2)) < 1 && Math.abs(pc1.y - (lb2.top + lb2.height / 2)) < 1,
+      "prod=(" + pc1.x.toFixed(1) + "," + pc1.y.toFixed(1) + ") legacy=(" +
+      (lb2.left + lb2.width / 2).toFixed(1) + "," + (lb2.top + lb2.height / 2).toFixed(1) + ")");
+    // zoom-around-cursor: kedua stack di-zoom 1→2 di sekitar kursor (300,200)
+    const cursor = { x: 300, y: 200 };
+    const anchorBefore = { rel: model.toLocal({ x: cursor.x - CW / 2, y: cursor.y - CH / 2 }) };
+    const legacyLocal = legacy.toLocal(new PIXI.Point(cursor.x, cursor.y));
+    const ppu = model.getNaturalSize().height / model.data.user.getModel().getCanvasHeight();
+    // setPosition produksi = center-relative → kursor dikonversi dulu (R6-D)
+    const cursorRel = { x: cursor.x - CW / 2, y: cursor.y - CH / 2 };
+    model.setScale(2);
+    model.setPosition(cursorRel.x - anchorBefore.rel.x * ppu * 2,
+      cursorRel.y + anchorBefore.rel.y * ppu * 2);
+    legacy.scale.set(2);
+    legacy.position.set(cursor.x - legacyLocal.x * 2, cursor.y - legacyLocal.y * 2);
+    model.update(1 / 60); host.render();
+    const anchorAfter = model.toLocal({ x: cursor.x - CW / 2, y: cursor.y - CH / 2 });
+    check("R7 interaction zoom-around-cursor: titik model di bawah kursor tetap",
+      Math.abs(anchorAfter.x - anchorBefore.rel.x) < 0.001 &&
+      Math.abs(anchorAfter.y - anchorBefore.rel.y) < 0.001);
+    // paritas transform penuh: sudut model (top-left & bottom-right) di layar
+    // — produksi via unit model (konversi R6), legacy via lokal px top-left
+    const natW = model.getNaturalSize().width, natH = model.getNaturalSize().height;
+    const wUnits = natW / ppu, hUnits = natH / ppu;
+    const pTL = model.toGlobal({ x: -wUnits / 2, y: hUnits / 2 });
+    const pBR = model.toGlobal({ x: wUnits / 2, y: -hUnits / 2 });
+    const pTLabs = { x: CW / 2 + pTL.x, y: CH / 2 + pTL.y };
+    const pBRabs = { x: CW / 2 + pBR.x, y: CH / 2 + pBR.y };
+    const lTL = legacy.toGlobal(new PIXI.Point(0, 0));
+    const lBR = legacy.toGlobal(new PIXI.Point(natW, natH));
+    check("R7 interaction zoom: sudut model produksi == legacy (transform penuh)",
+      Math.abs(pTLabs.x - lTL.x) < 1 && Math.abs(pTLabs.y - lTL.y) < 1 &&
+      Math.abs(pBRabs.x - lBR.x) < 1 && Math.abs(pBRabs.y - lBR.y) < 1,
+      "TL d=(" + (pTLabs.x - lTL.x).toFixed(2) + "," + (pTLabs.y - lTL.y).toFixed(2) +
+      ") BR d=(" + (pBRabs.x - lBR.x).toFixed(2) + "," + (pBRabs.y - lBR.y).toFixed(2) + ")");
+
+    // ══ resize + GAP-2 setelah resize ══
+    CW = 900; CH = 620;
+    host.resize(CW, CH); layers.syncSize();
+    legacyApp.renderer.resize(CW, CH);
+    model.update(1 / 60); host.render();
+    const b3 = host.measureLitBounds();
+    check("R7 GAP-2 bbox setelah resize non-empty & ikut kanvas", !!b3 && b3.maxX <= 900 && b3.minY >= 0);
+    const or1 = ov.getBoundingClientRect();
+    check("R7 GAP-1 overlay mengikuti resize", or1.width === 900 && or1.height === 620,
+      or1.width + "x" + or1.height);
+
+    // ══ GAP-2: destroy → fail-safe ══
+    model.destroy(); host.destroy();
+    check("R7 GAP-2 destroy → measureLitBounds null", host.measureLitBounds() === null);
+    layers.destroy();
+
+    // ══ DPR2: bbox piksel 2× CSS logis ══
+    const host2 = api.createHost({
+      canvas: (() => { const c = document.createElement("canvas"); c.style.display = "none"; document.body.appendChild(c); return c; })(),
+      width: 400, height: 300, resolution: 2, composite: "canvas-texture",
+    });
+    const m2 = await api.loadModel(host2, { kind: "path", path: REN });
+    host2.add(m2);
+    for (const e of ["breath", "physics", "eyeBlink"]) m2.setEffectEnabled(e, false);
+    m2.update(1 / 60); host2.render();
+    const b4 = host2.measureLitBounds();
+    const ci2 = host2.compositeInfo();
+    check("R7 GAP-2 DPR2: bbox piksel ≤ kanvas piksel & konsisten skala",
+      !!b4 && b4.maxX <= ci2.cubPixels.width && b4.maxY <= ci2.cubPixels.height,
+      JSON.stringify(b4));
+    m2.destroy(); host2.destroy();
+
+    const allOk = results.every((r) => r.ok);
+    log(allOk ? "SEMUA CHECK PASS (" + results.length + ")" :
+      "GAGAL — " + results.filter((r) => !r.ok).map((r) => r.name).join("; "),
+      allOk ? "ok" : "fail");
+    window.__r7Results = results;
+  } catch (e) {
+    console.error(e);
+    check("exception", false, String((e && (e.stack || e.message)) || e));
+    el.className = "fail";
+  }
+})();
+</script>
+</body>
+</html>

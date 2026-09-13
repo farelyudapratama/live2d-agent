@@ -86,10 +86,12 @@ ok('applyPreset mencatat param yang di-sticky (basis tombol Reset Pose)',
   /setSticky\(id, Math\.max\(lo, Math\.min\(hi, Number\(raw\)\)\), 1\);[\s\S]{0,80}presetPoseParams\.add\(id\);/.test(appSrc));
 ok('opacity part dicatat SEBELUM diubah sebagai dasar pemulihan',
   /if \(!presetPoseParts\.has\(id\)\) \{[\s\S]{0,400}getPartOpacityById\(id\);/.test(appSrc));
-ok('releasePresetPose menghapus override + memulihkan part + resetEmotion',
-  /function releasePresetPose\(\)[\s\S]{0,900}delete state\.overrides\[id\];[\s\S]{0,1400}setPartOpacityById\(id,[\s\S]{0,1600}resetEmotion\(\);/.test(appSrc));
+ok('releasePresetPose menghapus override + memulihkan part + resetEmotion (fallback legacy)',
+  /function releasePresetPose\(\)[\s\S]{0,900}delete state\.overrides\[id\];[\s\S]{0,2000}setPartOpacityById\(id,[\s\S]{0,1600}resetEmotion\(\);/.test(appSrc));
+ok('releasePresetPose jalur produksi memulihkan part lewat handle.setPartOpacity (R7-2)',
+  /function releasePresetPose\(\)[\s\S]{0,900}delete state\.overrides\[id\];[\s\S]{0,2000}state\.handle\.setPartOpacity\(id,[\s\S]{0,2000}resetEmotion\(\);/.test(appSrc));
 ok('releasePresetPose total: SEMUA override + motion berhenti + aiPose di-nol-kan + param ke default',
-  /for \(const id in state\.overrides\) delete state\.overrides\[id\];[\s\S]*?stopAllMotions\(\);[\s\S]*?state\.aiPose = \{[\s\S]*?setParameterValueById\(id, def, 1\);/.test(appSrc));
+  /for \(const id in state\.overrides\) delete state\.overrides\[id\];[\s\S]*?stopAllMotions\(\);[\s\S]*?state\.aiPose = \{[\s\S]*?pokeActual\(id, def\);/.test(appSrc));
 ok('tombol Reset Pose ada di atas daftar preset',
   /resetBtn\.textContent = 'Reset Pose';/.test(appSrc));
 ok('setiap ekspresi teradopsi punya tombol tes (pasang di model)',

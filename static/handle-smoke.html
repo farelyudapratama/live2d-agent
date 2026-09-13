@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live2DModelHandle Smoke — Stage R2 (adapter produksi → Cubism 5.3 → canvas)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f2f2f2; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  #status {
+    position: fixed; top: 12px; left: 12px; z-index: 2;
+    padding: 10px 14px; border-radius: 8px; max-width: 640px;
+    background: rgba(0,0,0,.82); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 12.5px/1.55 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  #status.ok   { border-color: #2e8b57; }
+  #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<!-- Urutan wajib: Core → framework resmi 5.3 → adapter produksi R2 -->
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/cubism-framework.js"></script>
+<script src="js/live2d-adapter.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  const q = new URLSearchParams(location.search);
+  const MODEL_PATH = q.get("model") || "model/tesmodel/runtime/ren.model3.json";
+  const el = document.getElementById("status");
+  const lines = [];
+  const log = (m, cls) => {
+    lines.push(m);
+    el.textContent = lines.slice(-40).join("\n");
+    if (cls) el.className = cls;
+    console.log("[handle-smoke]", m);
+  };
+  const results = [];
+  const check = (name, ok, detail) => {
+    results.push({ name, ok });
+    log((ok ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : ""), ok ? null : "fail");
+  };
+
+  try {
+    const api = window.__live2dApi;
+    check("adapter terpasang", !!api && !api.isStub, api && api.version());
+
+    // ── 1. Host (context GL milik adapter) ──
+    const canvas = document.createElement("canvas");
+    document.getElementById("stage").appendChild(canvas);
+    const host = api.createHost({
+      canvas,
+      width: window.innerWidth,
+      height: window.innerHeight,
+      backgroundAlpha: 0,
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
+    });
+    check("host dibuat (WebGL2)", !!host);
+    check("capability backend=webgl2", api.capabilities().backend === "webgl2");
+
+    // ── 2. Load model (pipeline nyata) ──
+    const t0 = performance.now();
+    const model = await api.loadModel(host, { kind: "path", path: MODEL_PATH });
+    log("load " + MODEL_PATH + " dalam " + Math.round(performance.now() - t0) + " ms");
+    check("model load", !!model);
+    check("moc version terbaca", model.getMocVersion() > 0, "v" + model.getMocVersion());
+    check("profil nyata", model.getProfile().counts.parameters > 0,
+      model.getProfile().counts.parameters + " param, " +
+      model.getProfile().counts.drawables + " drawable, " +
+      model.getProfile().counts.expressions + " exp");
+    host.add(model);
+
+    // ── 3. Seam beforeModelUpdate ──
+    let seamCount = 0;
+    const off = model.onBeforeModelUpdate(() => seamCount++);
+    model.update(1 / 60);
+    check("beforeModelUpdate dipanggil di update()", seamCount === 1);
+    off();
+    model.update(1 / 60);
+    check("unregister seam", seamCount === 1);
+
+    // ── 4. Parameter backing nyata ──
+    const meta = model.getProfile().parameters.find((p) => p.id === "ParamMouthOpenY") ||
+      model.getProfile().parameters[0];
+    model.setParameter(meta.id, meta.max);
+    model.update(1 / 60);
+    check("setParameter → readback", Math.abs(model.getParameter(meta.id) - meta.max) < 1e-4,
+      meta.id + "=" + model.getParameter(meta.id));
+    check("NaN ditolak", model.setParameter(meta.id, NaN) === false);
+    check("id asing ditolak", model.setParameter("TidakAda99", 1) === false);
+
+    // ── 5. Native motion ──
+    const groups = model.motionGroups();
+    check("motionGroups terbaca", groups.length > 0, groups.join(","));
+    const g0 = groups[0];
+    check("playNativeMotion", model.playNativeMotion(g0, 0, 1) === true);
+    check("isMotionFinished false saat main", model.isMotionFinished() === false);
+    model.stopAllMotions();
+    check("stopAllMotions → finished", model.isMotionFinished() === true);
+
+    // ── 6. Expression ──
+    const exps = model.getProfile().expressions.map((e) => e.name);
+    if (exps.length) {
+      check("playExpression dikenal", model.playExpression(exps[0]) === true, exps[0]);
+      model.update(1 / 60);
+      model.resetExpression();
+      check("playExpression asing ditolak", model.playExpression("tidak_ada") === false);
+    } else {
+      log("SKIP expression — model tanpa .exp3");
+    }
+
+    // ── 7. Effects gating ──
+    check("breath off", model.setEffectEnabled("breath", false) === true);
+    check("breath on", model.setEffectEnabled("breath", true) === true);
+    check("efek asing ditolak", model.setEffectEnabled("tidakAda" , true) === false);
+
+    // ── 8. Render loop nyata (pemilik loop = halaman; handle tanpa loop sendiri) ──
+    // Bukti render WAJIB bisa jalan tanpa rAF (pane browser bisa ter-occlude →
+    // rAF beku, issue environment yang dikenal) → __smokeProof() sinkron.
+    window.__smokeProof = () => {
+      const out = { checks: [] };
+      const check = (name, ok, detail) => out.checks.push({ name, ok, detail });
+      const gl = canvas.getContext("webgl2");
+      beforeParamsKeep = model.getProfile().counts.parameters;
+      // a) render sinkron 90 siklus — tidak ada rAF, host.render dipanggil langsung
+      model.playNativeMotion(g0, -1, 1);
+      for (let i = 0; i < 90; i++) {
+        model.update(1 / 60);
+        host.render();
+      }
+      const w = canvas.width, h = canvas.height;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let lit = 0, minX = w, maxX = -1, minY = h, maxY = -1;
+      for (let y = 0; y < h; y += 4) for (let x = 0; x < w; x += 4) {
+        const a = px[(y * w + x) * 4 + 3];
+        if (a > 8) { lit++; if (x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }
+      }
+      check("render sinkron 90 frame (motion main)", true, "90 update+render");
+      check("frame tergambar (piksel lit > 1000)", lit > 1000,
+        lit + " px, bbox=[" + minX + ".." + maxX + "]x[" + minY + ".." + maxY + "]");
+      // b) seam tetap jalan selama loop
+      check("seam sebelum loop", seamCount > 0, "seamCount=" + seamCount);
+      // c) destroy + re-load (lifecycle R2-K)
+      model.destroy();
+      check("destroy → fail-safe", model.getParameters().length === 0 &&
+        model.setParameter("X", 1) === false);
+      return out;
+    };
+    window.__smokeReload = async () => {
+      // create → destroy → create lagi (R2-K) — dipanggil terpisah (async)
+      const m2 = await api.loadModel(host, { kind: "path", path: MODEL_PATH });
+      const ok = m2.getProfile().counts.parameters > 0 && m2.motionGroups().length > 0;
+      const r = { reloaded: ok, params: m2.getProfile().counts.parameters,
+        groups: m2.motionGroups().length, before: beforeParamsKeep };
+      m2.destroy();
+      return r;
+    };
+    let beforeParamsKeep = 0;
+    let frames = 0;
+    const loop = () => {
+      model.update(1 / 60);
+      host.render();
+      frames++;
+      if (frames < 600) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    window.__smokeDebug = { canvas, host, model, g0, api };
+    log("siap — panggil window.__smokeProof() untuk bukti render sinkron");
+  } catch (e) {
+    console.error(e);
+    check("exception", false, String((e && e.message) || e));
+    el.className = "fail";
+  }
+})();
+</script>
+</body>
+</html>

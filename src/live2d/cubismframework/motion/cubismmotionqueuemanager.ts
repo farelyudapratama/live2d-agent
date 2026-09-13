@@ -153,7 +153,12 @@ export class CubismMotionQueueManager {
     // ------- 処理を行う -------
     // 既にモーションがあれば終了フラグを立てる
 
-    for (let i = 0; i < this._motions.length; i++) {
+    // NOTE(l2d R5): iterasi MAJU dengan splice(i,1)+continue tanpa decrement
+    // melewatkan setiap entri kedua (entri yang bergeser ke indeks i dilompati
+    // oleh i++) — queue tidak pernah kosong untuk 2+ entri, isFinished()
+    // palsu selamanya. Iterasi MUNDUR menghapus semuanya; semantik method
+    // (stop SEMUA motion) tidak berubah.
+    for (let i = this._motions.length - 1; i >= 0; i--) {
       const motionQueueEntry: CubismMotionQueueEntry = this._motions[i];
 
       if (motionQueueEntry == null) {

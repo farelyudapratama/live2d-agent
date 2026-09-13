@@ -53,6 +53,23 @@ export class MotionRegistry {
     for(const g of groups||[]){ if(!g) continue; const m=meta[g]||{}; this.register({ version:1, id:"motion_"+g, name:g, source:"native", type:"motion3", description: m.description||("Motion bawaan model: "+g), tags:m.tags||[], duration:m.duration||2, loop:false, intensity:{min:0.3,max:1.0,default:0.8} as any, emotionCompatibility:m.emotionCompatibility||{}, cooldown:0, priority:90, aiEnabled:true, requires:[], tracks:[] } as any, {overwrite:true}); }
   }
 
+  /**
+   * Hapus SEMUA entri source:"native" — dipanggil sebelum registerNativeGroups
+   * model baru (Phase 11): tanpa ini, grup native model lama selamat dan bisa
+   * ter-play di model baru (playNative ke grup yang tidak dimiliki → gagal).
+   * Entri builtin/user/DSL TIDAK disentuh. Kembalikan jumlah yang dihapus.
+   */
+  clearNativeMotions(): number {
+    let n = 0;
+    for (const [id, a] of Array.from(this.byId)) {
+      if ((a as any).source !== "native") continue;
+      this.byId.delete(id);
+      this.cooldownUntil.delete(id);
+      n++;
+    }
+    return n;
+  }
+
   replaceUserMotions(assets: MotionAsset[]): number {
     for(const [id,a] of Array.from(this.byId)) if(a.source==="user") this.byId.delete(id);
     let n=0; for(const a of assets||[]) if(this.register({...a, source:"user"} as any,{overwrite:true}).ok) n++; return n;

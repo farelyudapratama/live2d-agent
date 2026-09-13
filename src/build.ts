@@ -96,4 +96,70 @@ if (!paramApi.success) {
   process.exit(1);
 }
 
-console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/cubism-framework.js + static/js/live2d-param-api.js (TS is now the live client source-of-truth)");
+// Entry kelima: MODEL INSPECTOR (Phase 9) untuk halaman golden pixi8-official.html.
+// Murni (type-only import ke Phase 8) — ekspos buildModelProfile +
+// createCubismInspectorBacking + formatProfileSummary ke window.Live2DModelProfile.
+const modelProfile = await Bun.build({
+  entrypoints: ["./src/live2d/profile-entry.ts"],
+  outdir: "./static/js",
+  naming: "live2d-model-profile.[ext]",
+  target: "browser",
+  format: "iife",
+  splitting: false,
+  minify: false,
+  sourcemap: "inline",
+});
+
+if (!modelProfile.success) {
+  console.error("model-profile build failed:");
+  for (const msg of modelProfile.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+// Entry keenam: ROLE BRIDGE (Phase 10) untuk halaman golden pixi8-official.html —
+// modul yang sama dengan yang dipakai engine utama via bundle.js
+// (window.__engineRoleLink); sandbox memuatnya sebagai window.Live2DRoleBridge.
+const roleBridge = await Bun.build({
+  entrypoints: ["./src/client/engine/role-bridge-entry.ts"],
+  outdir: "./static/js",
+  naming: "live2d-role-bridge.[ext]",
+  target: "browser",
+  format: "iife",
+  splitting: false,
+  minify: false,
+  sourcemap: "inline",
+});
+
+if (!roleBridge.success) {
+  console.error("role-bridge build failed:");
+  for (const msg of roleBridge.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+// Entry ketujuh: ADAPTER PRODUKSI (Stage R2) untuk halaman smoke/golden yang
+// memuat Core + cubism-framework.js. ENGINE MAIN TIDAK memuat bundle ini —
+// bundle.js tetap memasang stub, jadi perilaku engine existing tidak berubah.
+const production = await Bun.build({
+  entrypoints: ["./src/live2d/production-entry.ts"],
+  outdir: "./static/js",
+  naming: "live2d-adapter.[ext]",
+  target: "browser",
+  format: "iife",
+  splitting: false,
+  minify: false,
+  sourcemap: "inline",
+});
+
+if (!production.success) {
+  console.error("live2d-adapter build failed:");
+  for (const msg of production.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/cubism-framework.js + static/js/live2d-param-api.js + static/js/live2d-model-profile.js + static/js/live2d-role-bridge.js + static/js/live2d-adapter.js (TS is now the live client source-of-truth)");

@@ -74,6 +74,17 @@
 
     overrides: {},
 
+    // PHASE 13 STAGE 1 — lipsync bukan lagi entri state.overrides (yang
+    // membuatnya menimpa sticky preset di map yang sama): channel arbiter
+    // terpisah, priority di atas sticky (evidence: last-write-wins map lama).
+    lipSyncDrive: null,
+
+    // PHASE 13 STAGE 2 — easing feedback pose milik idle sendiri: buffer
+    // core di-revert pixi-live2d (loadParameters) setelah tiap update, jadi
+    // readParam() di tick tidak membawa tulisan guard frame sebelumnya.
+    // Trajektori easing lama = lerp dari tulisan sendiri — direplikasi di sini.
+    idlePoseCur: {},
+
     visfxMap: null,
 
     cdiInfo: null,
@@ -81,6 +92,19 @@
     rawDrive: null,
 
     rawDrivePrev: null,
+
+    // PHASE 13 STAGE 0 — Parameter Arbiter (dibuat per model load, di-reset
+    // saat teardown). Belum ada channel yang mendaftar; writer lama tetap
+    // jalan sampai migrasi bertahap Stage 1+.
+    arbiter: null,
+
+    // R7-2 — jalur produksi: handle asli (API publik) + host + layer DOM.
+    // state.model = compat facade DI ATAS handle (bukan pixi-live2d).
+    production: false,
+    handle: null,
+    host: null,
+    sceneLayers: null,
+
     isDragging: false,
     dragTarget: null,
     dragOffset: { x: 0, y: 0 },
@@ -146,6 +170,10 @@
     },
     paramRange: {},
 
+    // PHASE 10 — link role → Parameter API (dibuat window.__engineRoleLink
+    // saat model dimuat; null = bundle belum siap / model belum ada).
+    roleLink: null,
+
     lastSheet: null,
 
     lastFileSheet: null,
@@ -180,6 +208,9 @@
   let refreshSheetUI = () => {};
 
   function coreModel() {
+    // R7-2: jalur produksi TIDAK punya coreModel legacy (fallback pokeParam
+    // off — semua tulis via roleLink/handle).
+    if (state.production) return null;
     return state.model && state.model.internalModel
       ? state.model.internalModel.coreModel
       : null;
@@ -193,14 +224,36 @@
     } catch (e) {}
   }
 
+  // PHASE 13 STAGE 4 — satu titik tulis RESTORE/RESET engine: Parameter API
+  // dulu (roleLink.writeActual → clamp + indeks framework 5.3), pokeParam
+  // legacy hanya fallback tanpa link. Dipakai semua writer restore/reset
+  // (toggle aksesori, release pose → default, reset mulut setelah bicara).
+  function pokeActual(id, value) {
+    const L = state.roleLink;
+    if (L) {
+      try {
+        L.writeActual(id, value);
+        return;
+      } catch (e) {}
+    }
+    pokeParam(id, value, 1);
+  }
+
   function setSticky(id, value, weight) {
+    // PHASE 13 STAGE 1 — setSticky bukan lagi penulis core: state plane saja;
+    // nilai dikomit arbiter di slot beforeModelUpdate (slot yang sama dengan
+    // re-apply lama → waktu efektif identik: dikonsumsi update berikutnya).
     state.overrides[id] =
       (weight === undefined ? 1 : weight) === 1
         ? value
         : { value, weight: weight === undefined ? 1 : weight };
-    pokeParam(id, value, weight);
   }
 
+  // LEGACY (Phase 13 Stage 1) — tidak dipanggil runtime lagi: komit
+  // sticky/lipsync kini milik arbiter di slot beforeModelUpdate (tulis via
+  // ParameterApi). Fungsi dipertahankan untuk guard vm (test-override-guard)
+  // dan sebagai fallback dokumentasi jalur lama — DILARANG dipanggil dari
+  // jalur hidup tanpa melewatkan arbiter.
   function applyOverrides() {
     const cm = coreModel();
     if (!cm) return;
@@ -214,31 +267,88 @@
     }
   }
 
+  // PHASE 13 STAGE 1 — sync state plane → channel arbiter. Prioritas dari
+  // urutan tulis existing (audit Phase 13 §5): rawDrive selalu ditulis
+  // TERAKHIR (idle applyOverrides→applyRawDrive; guard sticky→rawDrive),
+  // lipsync menang atas preset sticky via last-write map saat bicara.
+  function syncGuardChannelsToArbiter() {
+    const arb = state.arbiter;
+    if (!arb) return;
+    const stickyVals = {};
+    for (const id in state.overrides) {
+      const o = state.overrides[id];
+      // bentuk {value, weight} hanya dipakai weight≠1 — tidak ada caller yang
+      // memakainya (audit Phase 13 §1m); komit arbiter selalu weight 1.
+      const v = typeof o === "object" ? o.value : o;
+      if (Number.isFinite(v)) stickyVals[id] = v;
+    }
+    arb.submit({ channel: "sticky", priority: 10, domain: "param", values: stickyVals });
+    if (state.lipSyncDrive && Number.isFinite(state.lipSyncDrive.value)) {
+      const d = state.lipSyncDrive;
+      arb.submit({ channel: "lipsync", priority: 20, domain: "param", values: { [d.id]: d.value } });
+    } else {
+      arb.clearSource("lipsync");
+    }
+    const driveVals = {};
+    if (state.rawDrive) {
+      for (const id in state.rawDrive) {
+        const v = state.rawDrive[id];
+        if (Number.isFinite(v)) driveVals[id] = v;
+      }
+    }
+    arb.submit({ channel: "rawDrive", priority: 30, domain: "param", values: driveVals });
+  }
+
   function installOverrideGuard(im) {
     if (!im || typeof im.on !== "function" || im.__overrideGuard) return;
     im.__overrideGuard = true;
     im.on("beforeModelUpdate", () => {
       const cm = coreModel();
       if (!cm) return;
-      for (const id in state.overrides) {
-        const o = state.overrides[id];
-        try {
-          if (typeof o === "object")
-            cm.setParameterValueById(id, o.value, o.weight);
-          else cm.setParameterValueById(id, o, 1);
-        } catch (e) {}
+      if (state.arbiter) {
+        // PHASE 13 STAGE 1 — guard bukan penulis lagi: state plane
+        // (overrides / lipSyncDrive / rawDrive) disubmit ke arbiter, SATU
+        // komit di akhir slot ini lewat ParameterApi (roleLink). Urutan
+        // kontrak: framework writers → ARBITER → coreModel.update().
+        syncGuardChannelsToArbiter();
+      } else {
+        // Fallback legacy (harness vm / bundle lama tanpa arbiter) — bukan
+        // jalur pilihan; dipertahankan agar perilaku fallback identik.
+        for (const id in state.overrides) {
+          const o = state.overrides[id];
+          try {
+            if (typeof o === "object")
+              cm.setParameterValueById(id, o.value, o.weight);
+            else cm.setParameterValueById(id, o, 1);
+          } catch (e) {}
+        }
+        const d = state.rawDrive;
+        // PHASE 11 — re-apply rawDrive lewat Parameter API bila link ada
+        // (kanonik); cm langsung hanya fallback legacy.
+        const link = state.roleLink;
+        if (d) {
+          if (link) {
+            for (const id in d) {
+              const v = d[id];
+              if (!Number.isFinite(v)) continue;
+              try {
+                link.writeActual(id, v);
+              } catch (e) {}
+            }
+          } else {
+            for (const id in d) {
+              let v = d[id];
+              if (!Number.isFinite(v)) continue;
+              const r = state.paramRange && state.paramRange[id];
+              if (r) v = Math.max(r.min, Math.min(r.max, v));
+              try {
+                cm.setParameterValueById(id, v, 1);
+              } catch (e) {}
+            }
+          }
+        }
       }
-      const d = state.rawDrive;
-      if (!d) return;
-      for (const id in d) {
-        let v = d[id];
-        if (!Number.isFinite(v)) continue;
-        const r = state.paramRange && state.paramRange[id];
-        if (r) v = Math.max(r.min, Math.min(r.max, v));
-        try {
-          cm.setParameterValueById(id, v, 1);
-        } catch (e) {}
-      }
+      if (state.arbiter) state.arbiter.commit();
     });
   }
 
@@ -288,6 +398,8 @@
   }
 
   function readParam(id) {
+    if (state.production && state.handle)
+      return state.handle.getParameter(id) ?? 0; // buffer pasca-loadParameters — parity undo-buffer legacy
     const cm = coreModel();
     if (!cm) return 0;
     try {
@@ -307,7 +419,47 @@
     };
   }
   const _sz = stageSize();
-  const app = new PIXI.Application({
+  // ── R7-2: rendererMode — "production" (default) | "legacy" (?renderer=legacy)
+  // Produksi: Live2DApi → Live2DHost → Live2DModelHandle → Cubism 5.3 → Core
+  // 6.0.1 → compositor v8. Legacy (fallback): Pixi6 + pixi-live2d — tetap
+  // utuh, KEDUANYA tidak pernah aktif bersamaan untuk model yang sama.
+  const stageCanvas = $("#live2d-canvas");
+  state.production =
+    new URLSearchParams(location.search).get("renderer") !== "legacy" &&
+    !!window.__live2dApi &&
+    window.__live2dApi.isStub === false;
+  const app = state.production
+    ? {
+        // Shim PIXI6-app untuk jalur produksi — kontrak minimal yang benar2
+        // dipakai app.js. stage SENGAJA throw (fail-loud): bg/dim wajib via
+        // L2DSceneLayers, model via host.add — tidak ada scene-graph kedua.
+        screen: {
+          get width() { return stageCanvas.clientWidth || window.innerWidth; },
+          get height() { return stageCanvas.clientHeight || window.innerHeight; },
+        },
+        renderer: {
+          resize(w, h) {
+            stageCanvas.style.width = w + "px";
+            stageCanvas.style.height = h + "px";
+            if (state.host) state.host.resize(w, h);
+            if (state.sceneLayers) state.sceneLayers.syncSize();
+          },
+          // setBackgroundColor produksi di-branch di fitStageBg caller
+        },
+        stage: new Proxy(
+          {},
+          {
+            get() {
+              throw new Error(
+                "[r7-2] production: stage Pixi6 tidak ada — bg/dim via L2DSceneLayers, model via host.add",
+              );
+            },
+          },
+        ),
+        ticker: { add() { /* frame owner = idle tick (handle.update) — R4 */ } },
+        destroyed: false,
+      }
+    : new PIXI.Application({
     view: $("#live2d-canvas"),
     width: _sz.w,
     height: _sz.h,
@@ -473,6 +625,81 @@
     }
   }
 
+  // ── R7-2: compatibility adapter — fasad display-object legacy DI ATAS
+  // production handle. Semua tulis/baca diteruskan ke handle (NOL akses
+  // internalModel/coreModel). Konversi ruang koordinat = seam R6-D:
+  //   legacy lokal px (origin top-left rect, y-down) ↔ produksi posisi
+  //   center-relative + natural×scale. Dipakai interaksi drag/zoom/eye-track.
+  function createCompatModel(handle) {
+    const nat = () => handle.getNaturalSize();
+    const sz = () => stageSize();
+    const rect = () => {
+      const n = nat();
+      const sc = handle.getScale();
+      const pos = handle.getPosition();
+      return { x: pos.x, y: pos.y, w: n.width * sc, h: n.height * sc };
+    };
+    return {
+      __isCompatModel: true,
+      get width() { return rect().w; },
+      get height() { return rect().h; },
+      get x() { return sz().w / 2 + rect().x; },
+      set x(v) { handle.setPosition(v - sz().w / 2, handle.getPosition().y); },
+      get y() { return sz().h / 2 + rect().y; },
+      set y(v) { handle.setPosition(handle.getPosition().x, v - sz().h / 2); },
+      get scale() {
+        // Paritas legacy: ObservablePoint punya x/y/set(x,y). Produksi hanya
+        // punya skala seragam → x dan y membaca/menulis nilai yang sama.
+        // R7-2: tanpa getter y, frameModel menghitung natH = h/scale.y = NaN
+        // → early return → model tetap scale=1/pos(0,0) → proyeksi menggambar
+        // model jauh di luar layar (measureLitBounds null, karakter hilang).
+        // Setter x/y khusus (bukan method set) agar write langsung `scale.x = v`
+        // tidak melempar — parity penuh ObservablePoint.
+        return {
+          get x() { return handle.getScale(); },
+          set x(v) { handle.setScale(v); },
+          get y() { return handle.getScale(); },
+          set y(v) { handle.setScale(v); },
+          set(x) { handle.setScale(x); },
+        };
+      },
+      set rotation(v) { handle.setRotation(v); },
+      anchor: { set(x, y) { handle.setAnchor(x, y); } },
+      motion(group, index, priority) {
+        // prioritas legacy (1 idle/2 normal/3 force) = semantik framework sama
+        return Promise.resolve(
+          handle.playNativeMotion(group, index === undefined ? -1 : index, priority || 2),
+        );
+      },
+      expression(name) {
+        return Promise.resolve(handle.playExpression(name));
+      },
+      destroy() { handle.destroy(); },
+      getBounds() {
+        const r = rect();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return {
+          left: L, top: T, right: L + r.w, bottom: T + r.h,
+          width: r.w, height: r.h,
+          centerX: L + r.w / 2, centerY: T + r.h / 2,
+        };
+      },
+      toGlobal(p) {
+        const r = rect();
+        const sc = handle.getScale();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return new PIXI.Point(L + p.x * sc, T + p.y * sc);
+      },
+      toLocal(p) {
+        const r = rect();
+        const sc = handle.getScale();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return new PIXI.Point((p.x - L) / sc, (p.y - T) / sc);
+      },
+      texture: null,
+    };
+  }
+
   async function loadModel(modelPath) {
     try {
       if (typeof modelPath !== "string" || !modelPath) {
@@ -489,19 +716,30 @@
       state.clipUntil = 0;
       state.clipName = null;
       state.clipStartedAt = 0;
+      // PHASE 13 STAGE 3 — gerbang native motion (status queue aktual)
+      state.clipGateUntil = 0;
+      state.clipGateStartedAt = 0;
 
       state._zoomTarget = null;
       state._zoomCursor = null;
 
       if (state.model) {
-        try {
-          app.stage.removeChild(state.model);
-          // Destroy penuh: tanpa opsi, Container.destroy PIXI tidak
-          // membebaskan texture anak-anaknya — tiap ganti model, tekstur GPU
-          // model lama menumpuk (basis texture model unik per folder, aman
-          // dihancurkan; tidak dibagi dengan model lain).
-          state.model.destroy({ children: true, texture: true, baseTexture: true });
-        } catch (e) {}
+        if (state.production && state.handle) {
+          // R7-2 — produksi: host.remove + handle.destroy (GL texture,
+          // scheduler, managers dibebaskan di dalamnya).
+          try { state.host.remove(state.handle); } catch (e) {}
+          try { state.handle.destroy(); } catch (e) {}
+          state.handle = null;
+        } else {
+          try {
+            app.stage.removeChild(state.model);
+            // Destroy penuh: tanpa opsi, Container.destroy PIXI tidak
+            // membebaskan texture anak-anaknya — tiap ganti model, tekstur GPU
+            // model lama menumpuk (basis texture model unik per folder, aman
+            // dihancurkan; tidak dibagi dengan model lain).
+            state.model.destroy({ children: true, texture: true, baseTexture: true });
+          } catch (e) {}
+        }
         state.model = null;
 
         state.overrides = {};
@@ -527,6 +765,11 @@
         state.emoTarget = {};
         state.emoCur = {};
         state.paramRange = {};
+        state.roleLink = null;
+        // PHASE 13 STAGE 0/1 — stale arbitration state tidak boleh lintas model
+        state.arbiter = null;
+        state.lipSyncDrive = null;
+        state.idlePoseCur = {};
 
         state.lastSheet = null;
         state.lastFileSheet = null;
@@ -539,9 +782,164 @@
       } catch (e) {}
 
       const settings = await buildModelSettings(modelPath);
+
+      // ══ R7-2 — JALUR PRODUKSI ══
+      if (state.production) {
+        await window.__compositor8Ready;
+        const szp = stageSize();
+        if (!state.host) {
+          state.host = window.__live2dApi.createHost({
+            canvas: stageCanvas,
+            width: szp.w,
+            height: szp.h,
+            backgroundAlpha: 0,
+            resolution: Math.min(window.devicePixelRatio || 1, 2),
+            composite: "canvas-texture",
+          });
+          state.sceneLayers = window.L2DSceneLayers.createStageLayers(stageCanvas);
+          stageCanvas.style.position = "absolute";
+          stageCanvas.style.inset = "0";
+        } else {
+          state.host.resize(szp.w, szp.h);
+        }
+
+        // parity legacy `settings || modelPath`: bila buildModelSettings
+        // gagal (fetch manifest/expressions hiccup) → jatuh ke path source
+        const handle = await window.__live2dApi.loadModel(
+          state.host,
+          settings
+            ? { kind: "settings", settings }
+            : { kind: "path", path: modelPath },
+        );
+        state.handle = handle;
+        handle.setAnchor(0, 0); // konvensi legacy: posisi = top-left rect
+        state.host.add(handle);
+        state.model = createCompatModel(handle);
+
+        // roleLink Phase 10 DI ATAS handle (bridge semantik identik)
+        try {
+          state.roleLink = window.__engineRoleLink.attachHandle(
+            handle,
+            () => state.caps.ids,
+          );
+          console.log(
+            "[r7-2] roleLink produksi aktif:",
+            handle.getParameters().length,
+            "parameter",
+          );
+        } catch (e) {
+          console.warn("[r7-2] roleLink produksi gagal:", e.message);
+          state.roleLink = null;
+        }
+
+        // Arbiter Phase 13 — backing shape IDENTIK jalur legacy; komit di
+        // seam beforeModelUpdate handle (framework writers → arbiter → core).
+        try {
+          state.arbiter = window.__l2dArbiter.createArbiter({
+            writeRole: (role, v) =>
+              state.roleLink ? !!state.roleLink.bridge.writeRef(role, v) : false,
+            writeRoleNorm: (role, t) =>
+              state.roleLink ? !!state.roleLink.bridge.writeNorm(role, t) : false,
+            writeParam: (id, v) =>
+              state.roleLink ? !!state.roleLink.writeActual(id, v) : false,
+          });
+        } catch (e) {
+          console.warn("[r7-2] arbiter init gagal:", e.message);
+          state.arbiter = null;
+        }
+        handle.onBeforeModelUpdate(() => {
+          if (!state.arbiter) return;
+          syncGuardChannelsToArbiter();
+          state.arbiter.commit();
+        });
+
+        state.stageArea = { width: stageSize().w };
+
+        applyModelConfig(loadModelConfigLocal());
+        applyCharacterIdentity();
+        // R7-2 — framing paritas legacy (compat model: getBounds/scale.set/x/y)
+        frameModel(state.fullBody ? "full" : "upper");
+        if (typeof window.__refreshModels === "function") window.__refreshModels();
+
+        console.log("[r7-2] Model loaded (production):", handle.getName(),
+          "moc v" + handle.getMocVersion(),
+          handle.uses53Pipeline() ? "(pipeline 5.3)" : "(pipeline legacy)");
+        rememberModel(modelPath);
+
+        fetchSheetFile().catch(() => {});
+
+        // loader hide (pengganti app.ticker legacy)
+        $("#loader").classList.add("done");
+        setTimeout(() => {
+          $("#loader").classList.add("fade-out");
+          setTimeout(() => $("#loader").classList.add("hidden"), 650);
+        }, 600);
+
+        startIdle();
+        state.visfxMap = visfxLoad();
+        wireInteractions();
+        detectModelCapabilities();
+        prefetchOverlayGate();
+        prefetchCdiInfo();
+        startIdleMotion();
+
+        loadMotionTaxonomy()
+          .then(() => initMotionRegistry())
+          .then(() => refreshRoleEmotions())
+          .catch((e) => {
+            console.warn("[taxonomy] load error", e);
+          });
+        return;
+      }
+      // ══ R7-2 — JALUR LEGACY (fallback ?renderer=legacy) ══
       state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
         autoInteract: false,
       });
+
+      // PHASE 10 — sambungkan role system ke Parameter API (Phase 8) untuk
+      // model INI. roleIds dibaca lazy (state.caps.ids terisi belakangan).
+      try {
+        state.roleLink = window.__engineRoleLink
+          ? window.__engineRoleLink.attach(coreModel(), () => state.caps.ids)
+          : null;
+        if (state.roleLink) {
+          console.log(
+            "[roles] Parameter API link aktif (Phase 10):",
+            state.roleLink.api.getParameters().length,
+            "parameter",
+          );
+        }
+      } catch (e) {
+        console.warn("[roles] Parameter API link gagal:", e.message);
+        state.roleLink = null;
+      }
+
+      // PHASE 13 STAGE 0 — Parameter Arbiter: satu titik komit tulisan intent
+      // JS. Backing mendelegasikan ke Parameter API via roleLink (kanonik,
+      // `pin:false` — semantik tulis engine existing); fallback tanpa link =
+      // no-op aman (temporary compatibility path, migrasi Stage 1+).
+      // BELUM ada channel yang mendaftar → commit() tanpa operasi, perilaku
+      // visual tidak berubah sama sekali.
+      try {
+        state.arbiter = window.__l2dArbiter
+          ? window.__l2dArbiter.createArbiter({
+              writeRole: (role, v) =>
+                state.roleLink
+                  ? !!state.roleLink.bridge.writeRef(role, v)
+                  : false,
+              // PHASE 13 STAGE 2 — ruang normalized (kedip/napas)
+              writeRoleNorm: (role, t) =>
+                state.roleLink
+                  ? !!state.roleLink.bridge.writeNorm(role, t)
+                  : false,
+              writeParam: (id, v) =>
+                state.roleLink ? !!state.roleLink.writeActual(id, v) : false,
+            })
+          : null;
+      } catch (e) {
+        console.warn("[arbiter] init gagal:", e.message);
+        state.arbiter = null;
+      }
 
       app.stage.addChild(state.model);
       app.stage.sortableChildren = true;
@@ -645,24 +1043,48 @@
   state.blinkNext = 2 + Math.random() * 3; // dtk sampai kedip berikutnya
   function tickBlink(dt) {
     if (!state.model) return;
-    const eyes = [
-      roleId("eyeLOpen"),
-      roleId("eyeROpen"),
-    ].filter(Boolean);
+    // PHASE 13 STAGE 4 — OWNERSHIP BLINK (regression fix, eksperimen A/B/C):
+    // framework EyeBlink (im.eyeBlink) adalah pemilik kedip idle SAAT IA ADA
+    // — baseline runtime sebelum Stage 3 (tickBlink lama no-op laten sejak
+    // konversi pokeRoleNorm; bukti: framework-only tetap berkedip 184 ms
+    // halus tiap ±4,3 dtk, kedua penulis OFF → mata datar). Custom idle
+    // blink HANYA untuk model TANPA framework EyeBlink; kalau framework
+    // pemilik → tickBlink nonaktif total (tidak ada intent, tidak ada
+    // tulisan) — kembali persis no-op seperti baseline.
+    if (
+      state.production &&
+      state.handle &&
+      state.handle.getEyeBlinkParameters().length > 0
+    )
+      return; // R7-2: produksi — framework EyeBlink owner (profil manifest)
+    if (state.model.internalModel && state.model.internalModel.eyeBlink) return;
+    // PHASE 13 STAGE 3 — BLINK FIX: key intent = ROLE NAME ("eyeLOpen"),
+    // bukan param id. Bug laten (ditemukan Stage 2): writer lama memanggil
+    // pokeRoleNorm/writeNorm dengan HASIL roleId() (param id) → writeNorm
+    // tidak mengenali param id → kedip tidak pernah menulis (no-op laten,
+    // dikonfirmasi audit). writeNorm("eyeLOpen", t) terbukti bekerja
+    // (probe Stage 3). Rumus & fase tidak berubah.
+    const eyeRoles = [
+      { role: "eyeLOpen", id: roleId("eyeLOpen") },
+      { role: "eyeROpen", id: roleId("eyeROpen") },
+    ].filter((e) => e.id);
+    const blinkIntent = {};
     // Saat klip emosi/motion memutar, kurva klip bisa menganimasi mata
     // (mis. wink) — kedip otomatis dijeda supaya tidak menimpanya.
+    // (Scope: tetap membaca clipUntil, bukan gerbang Stage 3.)
     const clipOwns = !!(state.clipUntil && performance.now() < state.clipUntil);
     if (
-      !eyes.length ||
+      !eyeRoles.length ||
       !state.blinkEnabled ||
       state.frozen ||
       clipOwns
     ) {
       // Pulihkan mata ke buka penuh bila sempat tertutup, lalu reset fase.
       if (state.blinkState) {
-        for (const id of eyes) pokeRoleNorm(id, 1);
+        for (const e of eyeRoles) blinkIntent[e.role] = 1;
         state.blinkState = null;
       }
+      state.__blinkIntent = blinkIntent;
       return;
     }
     const CLOSE_MS = 100,
@@ -675,31 +1097,33 @@
         state.blinkNext = 2 + Math.random() * 4 - (Math.random() < 0.2 ? 1.2 : 0);
         state.blinkState = { phase: "close", t: 0 };
       }
+      state.__blinkIntent = blinkIntent;
       return;
     }
     const bs = state.blinkState;
     bs.t += dt * 1000;
     if (bs.phase === "close") {
       const v = 1 - Math.min(1, bs.t / CLOSE_MS);
-      for (const id of eyes) pokeRoleNorm(id, v);
+      for (const e of eyeRoles) blinkIntent[e.role] = v;
       if (bs.t >= CLOSE_MS) {
         bs.phase = "closed";
         bs.t = 0;
       }
     } else if (bs.phase === "closed") {
-      for (const id of eyes) pokeRoleNorm(id, 0);
+      for (const e of eyeRoles) blinkIntent[e.role] = 0;
       if (bs.t >= CLOSED_MS) {
         bs.phase = "open";
         bs.t = 0;
       }
     } else {
       const v = Math.min(1, bs.t / OPEN_MS);
-      for (const id of eyes) pokeRoleNorm(id, v);
+      for (const e of eyeRoles) blinkIntent[e.role] = v;
       if (bs.t >= OPEN_MS) {
-        for (const id of eyes) pokeRoleNorm(id, 1);
+        for (const e of eyeRoles) blinkIntent[e.role] = 1;
         state.blinkState = null;
       }
     }
+    state.__blinkIntent = blinkIntent;
   }
 
   function startIdle() {
@@ -712,6 +1136,16 @@
       if (!m) {
         state.idleRAF = requestAnimationFrame(tick);
         return;
+      }
+
+      // R7-2 — FRAME OWNER: satu update+render eksplisit per frame (R4).
+      // Urutan dalam handle.update: loadParameters → motion → save →
+      // scheduler efek → seam (arbiter commit) → core.update. Intent idle
+      // dihitung SETELAHNYA di tick ini dan dikomit di seam frame berikutnya
+      // — latensi 1 frame, identik jalur legacy.
+      if (state.production && state.handle) {
+        state.handle.update(dt);
+        if (state.host) state.host.render();
       }
 
       tickBlink(dt);
@@ -828,36 +1262,88 @@
 
       const CLIP_IN_MS = 200,
         CLIP_OUT_MS = 350;
+      // PHASE 13 STAGE 3 — GERBANG NATIVE MOTION: window poseAuthority
+      // mengikuti status queue motion AKTUAL (motionManager.isFinished(),
+      // tersedia di pixi-live2d 0.4.0), bukan sekadar tebakan durasi.
+      // Tebakan lama (2200+250 ms playNative / durasi taxonomy playEmotion
+      // Clip) dipertahankan sebagai window MINIMUM; gerbang rolling (+450 ms
+      // selama queue belum selesai) memperpanjang selama motion benar-benar
+      // main — termasuk idle motion acak yang kini tidak lagi diberangi
+      // idle-pose — dan menutup ≤450 ms setelah selesai (fade CLIP_OUT tetap
+      // berjalan). Blink clipOwns sengaja tetap membaca clipUntil (scope).
+      const motionPlaying = state.production
+        ? !state.handle.isMotionFinished()
+        : (() => {
+            const mmGate = m.internalModel && m.internalModel.motionManager;
+            return !!mmGate && typeof mmGate.isFinished === "function"
+              ? !mmGate.isFinished()
+              : false;
+          })();
+      if (motionPlaying) {
+        const nowG = performance.now();
+        if (!(state.clipGateUntil > nowG)) state.clipGateStartedAt = nowG;
+        if (nowG + 450 > (state.clipGateUntil || 0))
+          state.clipGateUntil = nowG + 450;
+      }
       let poseAuthority = 1;
-      if (state.clipUntil) {
+      const clipUntilEff = Math.max(
+        state.clipUntil || 0,
+        state.clipGateUntil || 0,
+      );
+      if (clipUntilEff > 0) {
         const nowMs = performance.now();
-        const remain = state.clipUntil - nowMs;
+        const remain = clipUntilEff - nowMs;
         if (remain > 0) {
-          const elapsed = nowMs - (state.clipStartedAt || nowMs);
+          const elapsed =
+            nowMs -
+            (state.clipStartedAt || state.clipGateStartedAt || nowMs);
           poseAuthority = Math.max(0, 1 - elapsed / CLIP_IN_MS);
         } else if (-remain < CLIP_OUT_MS) {
           poseAuthority = Math.min(1, -remain / CLIP_OUT_MS);
         } else {
           state.clipUntil = 0;
+          state.clipGateUntil = 0;
           state.clipName = null;
         }
       }
 
       // Saat layer motion aktif, pose dimiliki motion (lihat cabang di atas)
       // — tulis langsung tanpa lerp supaya amplitudo motion tidak teredam.
+      // PHASE 13 STAGE 2 — target() = PRODUSEN INTENT (komit di slot
+      // beforeModelUpdate lewat arbiter; urutan konsumsi frame identik:
+      // tulisan lama jatuh setelah render → dikonsumsi update berikutnya,
+      // komit channel jatuh di guard slot → dikonsumsi update yang sama).
+      // Dua channel mengikuti ruang nilai existing:
+      //   idle-pose        (param)  — easing ruang ACTUAL per param (normal)
+      //   idle-pose-motion (role,ref) — nilai motion-driven (cabang motion)
+      // poseAuthority <= 0.001 → tanpa intent → channel kosong → native clip
+      // pemilik penuh (paritas early-return lama).
+      const idlePoseIntent = {};
+      const idlePoseMotionIntent = {};
       const ease = state.talking ? 0.25 : 0.16;
       const target = (role, vRef) => {
         const id = roleId(role);
         if (!id || !owned(id)) return;
-        if (poseAuthority <= 0.001) return;
-
-        const actual = roleClampActual(role, toActual(role, vRef));
-        if (motionLayersActive) {
-          pokeParam(id, actual, 1);
+        if (poseAuthority <= 0.001) {
+          // klip pemilik: buang easing state → setelah klip, re-seed dari
+          // buffer (paritas: kode lama membaca buffer hasil klip)
+          delete state.idlePoseCur[id];
           return;
         }
-        const cur = readParam(id);
-        pokeParam(id, cur + (actual - cur) * ease * poseAuthority, 1);
+
+        if (motionLayersActive) {
+          // PHASE 11 — channel role motion (math role-mapping yang sama).
+          idlePoseMotionIntent[role] = vRef;
+          return;
+        }
+        const actual = roleClampActual(role, toActual(role, vRef));
+        const cur =
+          state.idlePoseCur[id] !== undefined
+            ? state.idlePoseCur[id]
+            : readParam(id);
+        const v = cur + (actual - cur) * ease * poseAuthority;
+        state.idlePoseCur[id] = v;
+        idlePoseIntent[id] = v;
       };
       if (state.caps.hasHead) {
         target("angleX", bAx);
@@ -879,12 +1365,20 @@
 
       // Breath app.js hanya saat tick ini pemilik pose. Saat layer motion
       // aktif, kurva motion3 bisa membawa breath sendiri — menimpanya tiap
-      // frame berarti kurva itu tak pernah terdengar. Framework bawaan
-      // (updateNaturalMovements) menambahkan breath tersendiri di bawah —
-      // aman karena tick menulis SETELAH framework (beforeModelUpdate).
+      // frame berarti kurva itu tak pernah terdengar. PHASE 13 STAGE 2 —
+      // intent channel "idle-breath" (role, norm); komit di guard slot
+      // (tetap SETELAH framework naturalMovements — urutan sama).
+      const idleBreathIntent = {};
       if (state.hasBreath && !state.frozen && !motionLayersActive)
-        pokeRoleNorm("breath", clamp(breath, 0, 1));
+        idleBreathIntent.breath = clamp(breath, 0, 1);
 
+      // PHASE 13 STAGE 2 — emotion easing = intent channel "idle-emotion"
+      // (param). Dibuktikan perlu (bukan duplikasi target()): emo menulis
+      // PARAM RAW yang bisa overlap dengan param hasil mapping role pose —
+      // hari ini emo menang (ditulis sesudah pose di tick yang sama); tanpa
+      // channel, pose di guard slot akan merebut menang. Priority 5 < sticky
+      // 10 (sticky memenangkan update hari ini) dan > idle-pose 3.
+      const idleEmoIntent = {};
       if (state.emoCur) {
         const e = 0.12;
         const eyeLO = roleId("eyeLOpen"),
@@ -896,7 +1390,7 @@
             state.emoCur[id] === undefined ? readParam(id) : state.emoCur[id];
           const nv = cur + (tgt - cur) * e;
           state.emoCur[id] = nv;
-          if (owned(id)) pokeParam(id, nv, 1);
+          if (owned(id)) idleEmoIntent[id] = nv;
         }
       }
 
@@ -914,13 +1408,58 @@
           }
 
           const r = roleRange("mouthOpenY");
-          state.overrides[mId] = r
-            ? r.min + openness * (r.max - r.min)
-            : openness;
+          // PHASE 13 STAGE 1 — lipsync = channel arbiter sendiri (bukan entri
+          // state.overrides): nilai dikomit di slot beforeModelUpdate.
+          state.lipSyncDrive = {
+            id: mId,
+            value: r ? r.min + openness * (r.max - r.min) : openness,
+          };
         }
       }
-      applyOverrides();
+      // STAGE 1 — applyOverrides() tidak dipanggil runtime lagi (lihat
+      // komentar di fungsinya); komit via arbiter di slot beforeModelUpdate.
       applyRawDrive();
+
+      // PHASE 13 STAGE 2 — SUBMIT intent idle → arbiter (idle = kalkulator,
+      // arbiter = komitor di slot beforeModelUpdate). Submit SELALU: entry
+      // kosong melepas ownership → stale intent mustahil bertahan saat
+      // motion layer aktif / frozen / poseAuthority 0 / idle tidak menulis.
+      // Prioritas (evidence urutan konsumsi update hari ini):
+      //   param: rawDrive 30 > lipsync 20 > sticky 10 > idle-emotion 5 >
+      //   idle-pose 3;  role: idle-pose-motion / blink / breath = 3
+      //   (target disjoint; blink sengaja no-op — lihat catatan tickBlink).
+      if (state.arbiter) {
+        const arb = state.arbiter;
+        arb.submit({ channel: "idle-pose", priority: 3, domain: "param", values: idlePoseIntent });
+        arb.submit({ channel: "idle-pose-motion", priority: 3, domain: "role", mode: "ref", values: idlePoseMotionIntent });
+        // PHASE 13 STAGE 4 — OWNERSHIP BLINK (regression fix pasca-Stage 3):
+        // framework EyeBlink (im.eyeBlink) adalah pemilik kedip idle SAAT IA
+        // ADA — baseline runtime sebelum Stage 3 (tickBlink lama no-op sejak
+        // konversi pokeRoleNorm, terverifikasi di HEAD). Mengaktifkan channel
+        // idle-blink di sampingnya = dua penulis dengan jadwal independen →
+        // frekuensi kedip dobel + tabrakan fase (terukur: 20 kedip/10 dtk vs
+        // baseline 3/10 dtk, lompatan maxDelta 1.0). Karena itu: channel
+        // idle-blink HANYA aktif untuk model TANPA framework EyeBlink; kalau
+        // framework pemilik, channel selalu dikosongkan.
+        const fwEyeBlinkOwns = !!(
+          state.production
+            ? state.handle && state.handle.getEyeBlinkParameters().length > 0
+            : m.internalModel && m.internalModel.eyeBlink
+        );
+        const blinkIntent = fwEyeBlinkOwns
+          ? {}
+          : state.__blinkIntent || {};
+        if (Object.keys(blinkIntent).length)
+          arb.submit({ channel: "idle-blink", priority: 3, domain: "role", mode: "norm", values: blinkIntent });
+        else arb.clearSource("idle-blink");
+        if (Object.keys(idleBreathIntent).length)
+          arb.submit({ channel: "idle-breath", priority: 3, domain: "role", mode: "norm", values: idleBreathIntent });
+        else arb.clearSource("idle-breath");
+        if (Object.keys(idleEmoIntent).length)
+          arb.submit({ channel: "idle-emotion", priority: 5, domain: "param", values: idleEmoIntent });
+        else arb.clearSource("idle-emotion");
+        state.__blinkIntent = null;
+      }
       state._tickCount = (state._tickCount || 0) + 1;
       state.idleRAF = requestAnimationFrame(tick);
     };
@@ -931,12 +1470,16 @@
     if (state.idleMotionTimer) clearInterval(state.idleMotionTimer);
     const m = state.model;
     if (!m) return;
-    const im = m.internalModel && m.internalModel.motionManager;
-    if (!im) return;
-    const groups =
-      (im.definitions && Object.keys(im.definitions)) ||
-      (m.motions && Object.keys(m.motions)) ||
-      [];
+    const groups = state.production
+      ? state.handle.motionGroups()
+      : (() => {
+          const im = m.internalModel && m.internalModel.motionManager;
+          return (
+            (im && im.definitions && Object.keys(im.definitions)) ||
+            (m.motions && Object.keys(m.motions)) ||
+            []
+          );
+        })();
     if (!groups.length) return;
     const playRandom = () => {
       if (!state.model || !state.idleEnabled) return;
@@ -1262,6 +1805,13 @@
 
   function getOfficialGroups(m) {
     const out = { eyeBlinkIds: [], lipSyncIds: [] };
+    if (state.production && state.handle) {
+      // R7-2 — grup resmi dari profil (manifest), tanpa internalModel
+      return {
+        eyeBlinkIds: state.handle.getEyeBlinkParameters(),
+        lipSyncIds: state.handle.getLipSyncParameters(),
+      };
+    }
     if (!m || !m.internalModel) return out;
     const im = m.internalModel;
     try {
@@ -1402,6 +1952,11 @@
   }
 
   function pokeRoleNorm(role, t) {
+    // PHASE 10 — jalur kanonik: role → role-mapping.ts → Parameter API.
+    // Gagal aman (role tak termapping / param tak dikenal) → jatuh ke
+    // jalur legacy di bawah (bundle belum siap / model tanpa API).
+    const L = state.roleLink;
+    if (L && L.bridge.writeNorm(role, t)) return true;
     const id = roleId(role);
     if (!id) return false;
     const r = roleRange(role);
@@ -1410,6 +1965,9 @@
     return true;
   }
   function pokeRoleRef(role, vRef) {
+    // PHASE 10 — jalur kanonik yang sama dengan pokeRoleNorm (lihat catatan).
+    const L = state.roleLink;
+    if (L && L.bridge.writeRef(role, vRef)) return true;
     const id = roleId(role);
     if (!id) return false;
     pokeParam(id, roleClampActual(role, toActual(role, vRef)), 1);
@@ -1580,12 +2138,16 @@
   }
 
   function resetEmotion() {
-    const mgr =
-      state.model &&
-      state.model.internalModel &&
-      state.model.internalModel.motionManager &&
-      state.model.internalModel.motionManager.expressionManager;
-    if (mgr && typeof mgr.resetExpression === "function") mgr.resetExpression();
+    if (state.production && state.handle) {
+      state.handle.resetExpression();
+    } else {
+      const mgr =
+        state.model &&
+        state.model.internalModel &&
+        state.model.internalModel.motionManager &&
+        state.model.internalModel.motionManager.expressionManager;
+      if (mgr && typeof mgr.resetExpression === "function") mgr.resetExpression();
+    }
     setEmotionTargets({});
 
     try {
@@ -1596,6 +2158,45 @@
   function detectModelCapabilities() {
     const m = state.model;
     if (!m) return;
+    if (state.production && state.handle) {
+      // R7-2 — capability dari profil publik (Parameter API + manifest):
+      const paramIds = state.handle.getParameters().map((p) => p.id);
+      state.capProbe = "profile";
+      state.modelParams = new Set(paramIds);
+      state.caps.ids = mapRoles(state.modelParams, getOfficialGroups(m));
+      const R = state.caps.ids;
+      state.caps.hasHead = !!(R.angleX || R.angleY);
+      state.caps.hasEyes = !!(
+        R.eyeBallX || R.eyeBallY || R.eyeLOpen || R.eyeROpen
+      );
+      state.caps.hasMouth = !!(R.mouthOpenY || R.mouthForm);
+      state.caps.hasBody = !!(R.bodyAngleX || R.bodyAngleY || R.bodyAngleZ);
+      state.caps.hasBrow = !!(R.browLForm || R.browRForm);
+      state.hasBreath = !!R.breath;
+      state.caps.motionGroups = state.handle.motionGroups();
+      state.paramRange = Object.fromEntries(
+        state.handle.getParameters().map((p) => [
+          p.id,
+          { min: p.min, max: p.max, def: p.defaultValue },
+        ]),
+      );
+      state.modelExpressions = state.handle
+        .getProfile()
+        .expressions.map((e) => e.name);
+      state.emotionMode = state.modelExpressions.length ? "native" : "synthetic";
+      console.log(
+        "[cap][r7-2] paramIds:",
+        paramIds.length,
+        "roles:",
+        JSON.stringify(state.caps.ids),
+        "motions:",
+        state.caps.motionGroups.length,
+        "expressions:",
+        state.modelExpressions.length,
+      );
+      state.roleEmotions = buildRoleEmotions();
+      return;
+    }
     const cm = coreModel();
     console.log("[cap] coreModel?", !!cm, "internalModel?", !!m.internalModel);
     if (m.internalModel)
@@ -2091,7 +2692,8 @@
     state.accessoryValues[paramId] = next;
     if (next > 0.5) setSticky(paramId, next, 1);
     else delete state.overrides[paramId];
-    pokeParam(paramId, next, 1);
+    // PHASE 13 STAGE 4 — restore lewat Parameter API (pokeActual), bukan core
+    pokeActual(paramId, next);
 
     $$(".acc-btn").forEach((btn) => {
       if (btn.dataset.param === paramId) {
@@ -2552,12 +3154,12 @@
 
       const mId = roleId("mouthOpenY");
       if (mId) {
-        delete state.overrides[mId];
-        pokeParam(
-          mId,
-          state.mouthRest != null ? state.mouthRest : roleDefault("mouthOpenY"),
-          1,
-        );
+        // PHASE 13 STAGE 1/4 — release lipsync: bersihkan channel + restore
+        // lewat pokeActual (Parameter API dulu, fallback pokeParam legacy).
+        state.lipSyncDrive = null;
+        const rest =
+          state.mouthRest != null ? state.mouthRest : roleDefault("mouthOpenY");
+        pokeActual(mId, rest);
       }
       if (onDone) onDone();
     };
@@ -2573,14 +3175,12 @@
         state.talking = false;
         const mId = roleId("mouthOpenY");
         if (mId) {
-          delete state.overrides[mId];
-          pokeParam(
-            mId,
+          state.lipSyncDrive = null;
+          const rest =
             state.mouthRest != null
               ? state.mouthRest
-              : roleDefault("mouthOpenY"),
-            1,
-          );
+              : roleDefault("mouthOpenY");
+          pokeActual(mId, rest);
         }
       }, dur);
     };
@@ -2849,7 +3449,18 @@
       playEmotionClip,
       clipIsPlaying,
       applyExpression,
-      renderer: app.renderer,
+      // R7-2 FIX: getter live — snapshot lama `state.host` dibekukan saat boot
+      // (sebelum loadModel membuat host) sehingga __l2dDebug.host terkunci
+      // null; emotion-overlay isProd() melihat null → jalur legacy → overlay
+      // tidak pernah spawn & measureLitBounds tak pernah terbaca. Getter
+      // membaca state langsung tiap akses (host/handle dibuat async di
+      // loadModel, renderer legacy = app.renderer Pixi6 tetap).
+      get renderer() {
+        return state.production ? null : app.renderer;
+      },
+      get host() {
+        return state.production ? state.host : null;
+      },
     };
 
     // Jalur kirim bersama: input manual & quick phrase menempuh alur yang
@@ -3260,6 +3871,7 @@
                   state.model.destroy({ children: true, texture: true, baseTexture: true });
                 } catch (e) {}
                 state.model = null;
+                state.roleLink = null;
                 showNoModelState();
               }
             }
@@ -4826,6 +5438,16 @@
       if (!state.aiLock) {
         state.aiLock = true;
       }
+      if (state.production && state.handle) {
+        // R7-2 — freeze via gate efek (R1/R2): state updater dipertahankan,
+        // unfreeze mengembalikan persis.
+        state._frozenRefs = true;
+        try { state.handle.stopAllMotions(); } catch (e) {}
+        try { state.handle.resetExpression(); } catch (e) {}
+        for (const e of ["eyeBlink", "breath", "physics"])
+          state.handle.setEffectEnabled(e, false);
+        state.handle.resetFocus();
+      } else {
       const im = state.model && state.model.internalModel;
       if (im && !state._frozenRefs) {
         state._frozenRefs = {
@@ -4847,6 +5469,7 @@
           im.focusController.x = 0;
           im.focusController.y = 0;
         }
+      }
       }
       _freezeStatusEl = statusEl || null;
       if (_freezeTimer) clearTimeout(_freezeTimer);
@@ -4878,12 +5501,18 @@
         clearTimeout(_freezeTimer);
         _freezeTimer = null;
       }
+      if (state.production && state.handle && state._frozenRefs) {
+        for (const e of ["eyeBlink", "breath", "physics"])
+          state.handle.setEffectEnabled(e, true);
+        state._frozenRefs = null;
+      } else {
       const im = state.model && state.model.internalModel;
       if (im && state._frozenRefs) {
         im.physics = state._frozenRefs.physics;
         im.eyeBlink = state._frozenRefs.eyeBlink;
         im.breath = state._frozenRefs.breath;
         state._frozenRefs = null;
+      }
       }
       state.frozen = false;
       if (state.aiLock) state.aiLock = false;
@@ -6071,6 +6700,10 @@
         };
       }
     }
+    // PHASE 11 — buang grup native model LAMA sebelum mendaftarkan yang baru
+    // (tanpa ini, grup model sebelumnya selamat dan bisa ter-play di model
+    // lain). Entri builtin/user tidak tersentuh.
+    motionRegistry.clearNativeMotions();
     motionRegistry.registerNativeGroups(groups, meta);
 
     try {
@@ -6429,12 +7062,28 @@
     //    override guard akan menulis ulang nilai lama tiap frame).
     released += Object.keys(state.overrides).length;
     for (const id in state.overrides) delete state.overrides[id];
+    // PHASE 13 STAGE 1 — lipsync channel ikut dibersihkan (dulu entri
+    // overrides[mId] terhapus bersama map ini)
+    state.lipSyncDrive = null;
+    // PHASE 13 STAGE 2 — channel idle juga dibersihkan (pose reset → idle
+    // tick berikutnya men-submit intent baru yang sudah dinetralkan aiPose)
+    if (state.arbiter) {
+      for (const ch of ["idle-pose", "idle-pose-motion", "idle-blink", "idle-breath", "idle-emotion"])
+        state.arbiter.clearSource(ch);
+    }
+    state.idlePoseCur = {};
     presetPoseParams.clear();
 
     // 2) Part opacity (aksesori/properti): kembalikan ke opacity sebelum
     //    preset dipasang (atau 1 = tampil) lalu tulis langsung ke core model.
     if (presetPoseParts.size) {
       try {
+        if (state.production && state.handle) {
+          for (const [id, prev] of presetPoseParts) {
+            const v = prev != null && Number.isFinite(prev) ? prev : 1;
+            try { state.handle.setPartOpacity(id, Math.max(0, Math.min(1, v))); released++; } catch (e) {}
+          }
+        } else {
         const cm = state.model.internalModel.coreModel;
         const partDefs = new Map(
           ((state.lastSheet && state.lastSheet.parts) || []).map((p) => [
@@ -6453,6 +7102,7 @@
             cm.setPartOpacityById(id, Math.max(0, Math.min(1, v)));
             released++;
           } catch (e) {}
+        }
         }
       } catch (e) {}
       presetPoseParts.clear();
@@ -6494,7 +7144,15 @@
     try {
       const cm = state.model.internalModel.coreModel;
       const gm = cm && cm.getModel ? cm.getModel() : cm;
-      if (gm && gm.parameters && gm.parameters.ids) {
+      if (state.production && state.handle) {
+        // R7-2 — default poke dari profil (Parameter API), tulis via pokeActual
+        for (const p of state.handle.getParameters()) {
+          try { pokeActual(p.id, p.defaultValue); } catch (e) {}
+          if (state.paramRange && !state.paramRange[p.id]) {
+            state.paramRange[p.id] = { min: p.min, max: p.max, def: p.defaultValue };
+          }
+        }
+      } else if (gm && gm.parameters && gm.parameters.ids) {
         const P = gm.parameters;
         const ids = P.ids || [];
         const mins = P.minimumValues || [];
@@ -6520,13 +7178,13 @@
               : typeof defs[i] === "number"
                 ? defs[i]
                 : 0;
-          try { cm.setParameterValueById(id, def, 1); } catch (e) {}
+          try { pokeActual(id, def); } catch (e) {}
         }
       } else if (cm && state.paramRange) {
         for (const id in state.paramRange) {
           const r = state.paramRange[id];
           if (r && typeof r.def === "number") {
-            try { cm.setParameterValueById(id, r.def, 1); } catch (e) {}
+            try { pokeActual(id, r.def); } catch (e) {}
           }
         }
       }
@@ -6569,6 +7227,11 @@
       if (!partIds.has(id)) continue;
       const v = Math.max(0, Math.min(1, Number(raw)));
       try {
+        if (state.production && state.handle) {
+          if (!presetPoseParts.has(id))
+            presetPoseParts.set(id, state.handle.getPartOpacity(id));
+          state.handle.setPartOpacity(id, v);
+        } else {
         const cm = state.model.internalModel.coreModel;
         if (!presetPoseParts.has(id)) {
           let prev = null;
@@ -6580,6 +7243,7 @@
           presetPoseParts.set(id, prev);
         }
         cm.setPartOpacityById(id, v);
+        }
         applied++;
       } catch (e) {
         /* part vanished with a model swap — ignore */
@@ -6665,22 +7329,31 @@
       motionRuntime.play(name, { priority: 60 });
   }
 
+  // PHASE 11 — param-drive MotionRuntime ditulis lewat Parameter API (Phase 8)
+  // saat roleLink ada (clamp model range dari getParameterInfo — data sama
+  // dengan state.paramRange). Jalur cm langsung = fallback legacy ketika
+  // bundle/link belum siap; bukan jalur pilihan.
   function applyRawDrive() {
     const d = state.rawDrive;
     if (!d) return;
-    const cm = coreModel();
-    if (!cm) return;
+    const L = state.roleLink;
+    const cm = L ? null : coreModel();
+    if (!L && !cm) return;
     state._rawDriveTicks = (state._rawDriveTicks || 0) + 1;
     const wrote = {};
     for (const id in d) {
       let v = d[id];
       if (!Number.isFinite(v)) continue;
-      const r = state.paramRange && state.paramRange[id];
-      if (r) v = Math.max(r.min, Math.min(r.max, v));
+      if (L) {
+        L.writeActual(id, v);
+      } else {
+        const r = state.paramRange && state.paramRange[id];
+        if (r) v = Math.max(r.min, Math.min(r.max, v));
+        try {
+          cm.setParameterValueById(id, v, 1);
+        } catch (e) {}
+      }
       wrote[id] = v;
-      try {
-        cm.setParameterValueById(id, v, 1);
-      } catch (e) {}
     }
     state._rawDriveLast = wrote;
   }
@@ -6693,9 +7366,14 @@
       const v = patch[id];
       if (v == null) {
         if (id in state.rawDrivePrev) {
+          // PHASE 11 — pemulihan nilai lewat Parameter API bila link ada.
+          const L = state.roleLink;
           try {
-            const cm = coreModel();
-            if (cm) cm.setParameterValueById(id, state.rawDrivePrev[id], 1);
+            if (L) L.writeActual(id, state.rawDrivePrev[id]);
+            else {
+              const cm = coreModel();
+              if (cm) cm.setParameterValueById(id, state.rawDrivePrev[id], 1);
+            }
           } catch (e) {}
           delete state.rawDrivePrev[id];
         }
@@ -6710,11 +7388,13 @@
   }
   function clearRawDrive() {
     const prev = state.rawDrivePrev;
+    const L = state.roleLink;
     if (prev) {
-      const cm = coreModel();
+      const cm = L ? null : coreModel();
       for (const id in prev) {
         try {
-          if (cm) cm.setParameterValueById(id, prev[id], 1);
+          if (L) L.writeActual(id, prev[id]);
+          else if (cm) cm.setParameterValueById(id, prev[id], 1);
         } catch (e) {}
       }
     }
@@ -6805,6 +7485,10 @@
     },
 
     setPartOpacity: (id, v) => {
+      if (state.production && state.handle) {
+        state.handle.setPartOpacity(id, v);
+        return;
+      }
       const cm = coreModel();
       if (!cm) return;
       const val = Number(v);
@@ -6818,8 +7502,9 @@
     isReady: () => !!state.model,
     getMouth: () => {
       const mId = roleId("mouthOpenY");
-      return mId && state.overrides[mId] != null
-        ? state.overrides[mId]
+      // PHASE 13 STAGE 1 — lipsync kini di state.lipSyncDrive
+      return mId && state.lipSyncDrive && state.lipSyncDrive.id === mId
+        ? state.lipSyncDrive.value
         : state.mouthRest;
     },
     frameModel,
@@ -6866,6 +7551,34 @@
     // pernah menyusup (versi core vs moc, patch lib aktif, pemetaan role,
     // rentang param model). Console.table(window.__live2dAgent.diagnostics())
     diagnostics: () => {
+      if (state.production && state.handle) {
+        // R7-2 — diagnostik dari API publik handle/adapter (nol internal legacy)
+        const h = state.handle;
+        const roles = { ...(state.caps.ids || {}) };
+        const ranges = {};
+        for (const role of ["angleX", "eyeLOpen", "mouthOpenY", "bodyAngleZ", "breath"]) {
+          const id = roleId(role);
+          if (id && state.paramRange[id])
+            ranges[role] = id + " [" + state.paramRange[id].min + ".." +
+              state.paramRange[id].max + "] def " + state.paramRange[id].def;
+        }
+        const ci = state.host ? state.host.compositeInfo() : null;
+        return {
+          model: h.getName(),
+          coreVersion: window.__live2dApi.coreInfo().version,
+          mocVersion: h.getMocVersion(),
+          mocVersionNote: h.uses53Pipeline() ? null : "pipeline legacy (moc < 6)",
+          canvasAlpha: 0,
+          patches: { production: true, composite: ci ? ci.mode : null },
+          roleCount: Object.keys(roles).length,
+          roles,
+          paramRanges: ranges,
+          emotions: Object.keys(window.__live2dAgent.getExpressibleEmotions()),
+          sheetStale: state.sheetStale || null,
+          capProbe: state.capProbe || null,
+          sheetKey: typeof currentModelKey === "function" ? currentModelKey() : null,
+        };
+      }
       const cm = coreModel();
       const core = window.Live2DCubismCore;
       const m = state.model;
@@ -7613,6 +8326,16 @@
     }
 
     const want = c.bgImage || "";
+    if (state.production) {
+      // R7-2 — bg via scene-layers DOM (di bawah kanvas transparan); dim via setDim
+      if (state.sceneLayers) {
+        state.sceneLayers.setBackground(want || null);
+        state.sceneLayers.setDim(c.bgDim || 0);
+        state._bgSprite = want ? { texture: { width: 1, height: 1 } } : null;
+        state._bgImageKey = want;
+      }
+      return;
+    }
     if (!want) {
       removeStageBgImage();
       return;
@@ -7638,6 +8361,11 @@
     img.src = want;
   }
   function fitStageBgImage(dim) {
+    if (state.production) {
+      // bg cover-fit & dim ditangani layer DOM (object-fit + opacity)
+      if (state.sceneLayers) state.sceneLayers.setDim(dim || 0);
+      return;
+    }
     const spr = state._bgSprite;
     if (!spr || !spr.texture) return;
     const W = app.screen.width,
@@ -7660,6 +8388,16 @@
     g.endFill();
   }
   function removeStageBgImage() {
+    if (state.production) {
+      if (state.sceneLayers) {
+        state.sceneLayers.setBackground(null);
+        state.sceneLayers.setDim(0);
+      }
+      state._bgSprite = null;
+      state._bgDimSprite = null;
+      state._bgImageKey = null;
+      return;
+    }
     if (state._bgSprite) {
       try {
         app.stage.removeChild(state._bgSprite);
@@ -7889,6 +8627,14 @@
 
     const rawParams = [];
     let rangeSource = "none";
+    if (state.production && state.handle) {
+      // R7-2 — metadata dari Parameter API (profil publik); blok fallback
+      // legacy di bawah di-skip karena rawParams sudah terisi
+      rangeSource = "profile";
+      for (const p of state.handle.getParameters()) {
+        rawParams.push({ id: p.id, min: p.min, max: p.max, def: p.defaultValue });
+      }
+    }
     try {
       const gm = cm && cm.getModel ? cm.getModel() : null;
       const pp = gm && gm.parameters;
@@ -8078,8 +8824,12 @@
 
     let motionGroups = [];
     try {
-      const mm = m.internalModel && m.internalModel.motionManager;
-      if (mm && mm.definitions) motionGroups = Object.keys(mm.definitions);
+      motionGroups = state.production && state.handle
+        ? state.handle.motionGroups()
+        : (() => {
+            const mm = m.internalModel && m.internalModel.motionManager;
+            return mm && mm.definitions ? Object.keys(mm.definitions) : [];
+          })();
     } catch (e) {}
 
     const paramRange = {};
@@ -8683,7 +9433,15 @@
   }
 
   function clipIsPlaying() {
-    return state.clipUntil > performance.now();
+    // PHASE 13 STAGE 4 — window gabungan: tebakan lama (clipUntil, minimum
+    // window playNative/playEmotionClip) + gerbang status queue aktual
+    // (clipGateUntil, Stage 3). Koreksi ownership: motion native yang masih
+    // benar-benar main memblokir motion native berikutnya. Blink clipOwns
+    // sengaja tetap clipUntil saja (keputusan scope Stage 3).
+    return (
+      Math.max(state.clipUntil || 0, state.clipGateUntil || 0) >
+      performance.now()
+    );
   }
 
   /**

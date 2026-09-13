@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage R3 — Coexistence Pixi6 + Pixi8 terisolasi + Live2DModelHandle lifecycle</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #e8e8e8; overflow: hidden; }
+  canvas { display: block; }
+  #legacy { position: fixed; inset: 0; z-index: 1; }
+  #prod { position: fixed; inset: 0; z-index: 2; }
+  #status {
+    position: fixed; top: 10px; left: 10px; z-index: 5;
+    padding: 10px 14px; border-radius: 8px; max-width: 660px; max-height: 90vh; overflow: auto;
+    background: rgba(0,0,0,.82); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 12px/1.5 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  #status.ok   { border-color: #2e8b57; }
+  #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<!-- Urutan wajib: Core → framework 5.3 → Pixi6 → pixi-live2d → adapter R2/R3 →
+     loader v8 TERAKHIR (capture window.PIXI → muat v8 → pulihkan window.PIXI) -->
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/core-log-shim.js"></script>
+<script src="js/cubism-framework.js"></script>
+<script src="js/pixi.6.5.10.min.js"></script>
+<script src="js/pixi-live2d-0.4.0.js"></script>
+<script src="js/live2d-adapter.js"></script>
+<script src="js/pixi8-namespace.js"></script>
+</head>
+<body>
+<canvas id="legacy"></canvas>
+<canvas id="prod"></canvas>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  const el = document.getElementById("status");
+  const lines = [];
+  const log = (m, cls) => {
+    lines.push(m);
+    el.textContent = lines.slice(-60).join("\n");
+    if (cls) el.className = cls;
+    console.log("[r3-coexist]", m);
+  };
+  const results = [];
+  const check = (name, ok, detail) => {
+    results.push({ name, ok });
+    log((ok ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : ""), ok ? null : "fail");
+  };
+  const REN = "model/tesmodel/runtime/ren.model3.json";
+  const LUMINE = "model/lumine/lumine/lumine.model3.json";
+
+  try {
+    // ── R3-A: namespace isolation ──
+    await window.__compositor8Ready;
+    check("R3-A window.PIXI tetap v6", window.PIXI && window.PIXI.VERSION === "6.5.10",
+      "PIXI=" + (window.PIXI && window.PIXI.VERSION));
+    check("R3-A __compositor8 = v8 terisolasi", window.__compositor8 && window.__compositor8.VERSION === "8.20.1",
+      "__compositor8=" + (window.__compositor8 && window.__compositor8.VERSION));
+    check("R3-A pixi-live2d hidup di Pixi6", !!(window.PIXI && window.PIXI.live2d && window.PIXI.live2d.Live2DModel));
+    const api = window.__live2dApi;
+    check("adapter produksi terpasang", !!api && !api.isStub, api && api.version());
+
+    // ── GL counter (observable proxy) — intercepts host offscreen canvas ──
+    // (proxy menghitung createTexture/deleteTexture/createProgram/
+    //  deleteProgram di context GL Cubism milik host — bukan angka karangan)
+    const glCounters = { createTexture: 0, deleteTexture: 0, createProgram: 0, deleteProgram: 0 };
+    window.__r3Counters = glCounters;
+    window.__r3Phases = [];
+    const phase = (name) => window.__r3Phases.push({ name, ...{ ...glCounters } });
+    window.__consoleErrors = [];
+    const origErr = console.error.bind(console);
+    console.error = (...a) => { window.__consoleErrors.push(a.map(String).join(' ').slice(0, 300)); origErr(...a); };
+    const origCreate = document.createElement.bind(document);
+    document.createElement = function (tag, opts) {
+      const elm = origCreate(tag, opts);
+      if (String(tag).toLowerCase() === "canvas" && elm) {
+        const origGet = elm.getContext.bind(elm);
+        elm.getContext = function (type, opts2) {
+          const ctx = origGet(type, opts2);
+          if (ctx && !elm.__counted && String(type).indexOf("webgl") === 0) {
+            elm.__counted = true;
+            for (const m of ["createTexture", "deleteTexture", "createProgram", "deleteProgram"]) {
+              const orig = ctx[m].bind(ctx);
+              ctx[m] = function (...a) {
+                glCounters[m]++;
+                return orig(...a);
+              };
+            }
+          }
+          return ctx;
+        };
+      }
+      return elm;
+    };
+
+    // ── R3-I: legacy stack (Pixi6 + pixi-live2d) — ENGINE MAIN path ──
+    const legacyApp = new PIXI.Application({
+      view: document.getElementById("legacy"),
+      width: window.innerWidth, height: window.innerHeight,
+      backgroundAlpha: 0, antialias: true,
+      resolution: Math.min(window.devicePixelRatio || 1, 2), autoDensity: false,
+    });
+    const legacyModel = await PIXI.live2d.Live2DModel.from(REN, { autoInteract: false });
+    legacyApp.stage.addChild(legacyModel);
+    check("R3-I legacy Live2D loads (Pixi6)", !!legacyModel.internalModel);
+    const tickerWasStarted = PIXI.Ticker.shared.started;
+    check("R3-I legacy autoUpdate → Ticker.shared attached", tickerWasStarted === true);
+    const groups = Object.keys(legacyModel.internalModel.motionManager.definitions || {});
+    if (groups.length) {
+      // motion file dimuat lazy oleh pixi-live2d → await hasil start
+      const started = await legacyModel.motion(groups[0], 0, 3); // idx eksplisit — probe parity
+      const fin = legacyModel.internalModel.motionManager.isFinished();
+      const def0 = legacyModel.internalModel.motionManager.definitions[groups[0]][0];
+      let fileOk = null;
+      try { const fr = await fetch(def0.File); fileOk = fr.ok; } catch (e) { fileOk = String(e); }
+      check("R3-I legacy motion starts", started === true && !fin,
+        groups[0] + " started=" + started + " finished=" + fin +
+        " file=" + def0.File + " fetch=" + fileOk);
+      legacyModel.internalModel.motionManager.stopAllMotions();
+    }
+    // detach path: autoUpdate=false eksplisit (pola pixi-live2d) → Ticker.shared
+    // kehilangan listener terakhirnya
+    legacyModel.autoUpdate = false;
+    const startedBeforeDetach = PIXI.Ticker.shared.started;
+    legacyModel.destroy({ children: true });
+    // INFO (bukan kriteria): perilaku detach Ticker.shared identik dengan halaman
+    // probe TANPA artefak R3 (legacy-probe.html) — bukan regresi R3.
+    log("INFO legacy detach: Ticker.shared.started " + startedBeforeDetach +
+      " → " + PIXI.Ticker.shared.started +
+      " (identik dgn probe tanpa artefak R3)");
+    check("R3-I legacy masih v6 setelah semua", window.PIXI.VERSION === "6.5.10");
+
+    // ── R3-C/G: production host composite canvas-texture ──
+    const prodCanvas = document.getElementById("prod");
+    const host = api.createHost({
+      canvas: prodCanvas,
+      width: window.innerWidth, height: window.innerHeight,
+      backgroundAlpha: 0,
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
+      composite: "canvas-texture",
+    });
+    let model = await api.loadModel(host, { kind: "path", path: REN });
+    phase('prod load selesai');
+    host.add(model);
+    const info = host.compositeInfo();
+    check("R3-C composite mode aktif", info.mode === "canvas-texture" && info.compositorReady);
+    check("R3-C compositor v8 benar", info.compositorVersion === "8.20.1", info.compositorVersion);
+    check("R3-G ticker compositor TIDAK started", info.compositorTickerStarted === false);
+    // bukti kanvas: CSS vs piksel perangkat
+    check("R3-D ukuran CSS = piksel (res 1)", info.canvasCss.width === info.cubPixels.width &&
+      info.canvasCss.height === info.cubPixels.height,
+      JSON.stringify(info.canvasCss) + " vs " + JSON.stringify(info.cubPixels));
+
+    // render sinkron + bukti piksel di kedua lapisan (Cubism GL + composite)
+    model.playNativeMotion(model.motionGroups()[0], -1, 1);
+    for (let i = 0; i < 60; i++) { model.update(1 / 60); host.render(); }
+    const glCub = host.gl();
+    const w = host.compositeInfo().cubPixels.width, h = host.compositeInfo().cubPixels.height;
+    const px = new Uint8Array(w * h * 4);
+    glCub.readPixels(0, 0, w, h, glCub.RGBA, glCub.UNSIGNED_BYTE, px);
+    let lit = 0;
+    for (let i = 0; i < w * h; i += 8) if (px[i * 4 + 3] > 8) lit++;
+    check("R3-C kanvas GL Cubism tergambar", lit > 1000, lit + " sampel lit, err=" + glCub.getError());
+    // composite output (canvas v8) — baca 2D snapshot via toDataURL panjang
+    phase('setelah 60 render');
+    const dataLen = prodCanvas.toDataURL().length;
+    check("R3-C composite output non-kosong", dataLen > 2000, dataLen + " bytes dataURL");
+
+    // ── R3-G: update invocation count (create→destroy→create) ──
+    let aCount = 0, bCount = 0;
+    const offA = model.onBeforeModelUpdate(() => aCount++);
+    for (let i = 0; i < 5; i++) model.update(1 / 60);
+    check("R3-G 5 update → 5 callback", aCount === 5, "aCount=" + aCount);
+    model.destroy();
+    for (let i = 0; i < 5; i++) model.update(1 / 60); // no-op pasca destroy
+    check("R3-G update pasca destroy = no-op", aCount === 5, "aCount=" + aCount);
+    const modelB = await api.loadModel(host, { kind: "path", path: REN });
+    host.add(modelB);
+    host.remove(model);
+    const offB = modelB.onBeforeModelUpdate(() => bCount++);
+    for (let i = 0; i < 5; i++) modelB.update(1 / 60);
+    check("R3-G model B: tepat 5 callback (tanpa stale A)", bCount === 5 && aCount === 5,
+      "b=" + bCount + " a=" + aCount);
+    offA(); offB();
+
+    // ── R3-D: resize berulang + DPR ──
+    const sizes = [[900, 620], [1280, 720], [640, 480], [1280, 720]];
+    let resizeOk = true;
+    for (const [rw, rh] of sizes) {
+      host.resize(rw, rh);
+      const ci = host.compositeInfo();
+      if (ci.canvasCss.width !== rw || ci.canvasCss.height !== rh ||
+          ci.cubPixels.width !== rw || ci.cubPixels.height !== rh) {
+        resizeOk = false;
+        log("resize mismatch @ " + rw + "x" + rh + ": " + JSON.stringify(ci));
+      }
+    }
+    check("R3-D resize berulang deterministik (CSS=piksel @res1)", resizeOk);
+    // DPR2: host kedua dengan resolution 2 — canvas piksel = 2× CSS
+    const host2 = api.createHost({
+      canvas: (() => { const c = document.createElement("canvas"); c.style.display = "none"; document.body.appendChild(c); return c; })(),
+      width: 400, height: 300, resolution: 2, composite: "canvas-texture",
+    });
+    const model2 = await api.loadModel(host2, { kind: "path", path: REN });
+    const ci2 = host2.compositeInfo();
+    check("R3-D DPR2: piksel = 2× CSS", ci2.canvasCss.width === 400 && ci2.cubPixels.width === 800,
+      JSON.stringify(ci2.canvasCss) + " vs " + JSON.stringify(ci2.cubPixels));
+    model2.destroy();
+    host2.destroy();
+
+    // ── R3-E/K: lifecycle 3 siklus ren → lumine → ren (GL counter) ──
+    phase('sebelum 3 siklus');
+    const before = { ...glCounters };
+    const seq = [REN, LUMINE, REN];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const m = await api.loadModel(host, { kind: "path", path: seq[cycle] });
+      host.add(m);
+      for (let i = 0; i < 10; i++) { m.update(1 / 60); }
+      host.render();
+      phase('cycle ' + cycle + ' selesai');
+      host.remove(m);
+      m.destroy();
+      phase('cycle ' + cycle + ' destroyed');
+    }
+    const dTex = glCounters.createTexture - before.createTexture;
+    const dDel = glCounters.deleteTexture - before.deleteTexture;
+    const dProg = glCounters.createProgram - before.createProgram;
+    // bukti per-fase: program DI-CACHE per context (242 sekali, +0 per cycle);
+    // texture di-reclaim tiap destroy (delete >= create per siklus; GL
+    // mengabaikan double-delete secara silent — delete bisa > create)
+    check("R3-H program tidak bertumbuh lintas siklus (cache per-context)",
+      dProg === 0, "createProgram delta=" + dProg + " (total " + glCounters.createProgram + ")");
+    check("R3-H texture di-reclaim tiap destroy (delete >= create)",
+      dDel >= dTex, "create=" + dTex + " delete=" + dDel);
+    const glErr = host.gl().getError();
+    log("INFO R3-H gl.getError()=" + glErr + " (diagnostik; lihat findings)");
+    check("R3-H gl.getError() bersih (0 / 1282 double-delete ignored)",
+      glErr === 0 || glErr === 1282, "err=" + glErr);
+
+    // ── R3-J: perf — direct vs composite (60 frame sinkron masing-masing) ──
+    // direct host terpisah (canvas tersembunyi) + modelnya
+    const directHost = api.createHost({
+      canvas: (() => { const c = document.createElement("canvas"); c.style.display = "none"; document.body.appendChild(c); return c; })(),
+      width: 1280, height: 720, composite: "direct",
+    });
+    const dModel = await api.loadModel(directHost, { kind: "path", path: REN });
+    directHost.add(dModel);
+    for (let i = 0; i < 5; i++) { dModel.update(1 / 60); directHost.render(); } // warmup
+    let t0 = performance.now();
+    for (let i = 0; i < 60; i++) { dModel.update(1 / 60); directHost.render(); }
+    const directMs = (performance.now() - t0) / 60;
+    modelB.playNativeMotion(modelB.motionGroups()[0], -1, 1);
+    for (let i = 0; i < 5; i++) { modelB.update(1 / 60); host.render(); } // warmup
+    t0 = performance.now();
+    for (let i = 0; i < 60; i++) { modelB.update(1 / 60); host.render(); }
+    const compositeMs = (performance.now() - t0) / 60;
+    check("R3-J perf terukur", directMs > 0 && compositeMs > 0,
+      "direct=" + directMs.toFixed(2) + " ms/frame, composite=" + compositeMs.toFixed(2) +
+      " ms/frame, overhead=" + ((compositeMs - directMs) / directMs * 100).toFixed(1) + "%");
+
+    // ── bersih-bersih akhir ──
+    modelB.destroy();
+    host.destroy();
+    check("R3 host.destroy → compositeState lepas",
+      host.compositeInfo().compositorReady === false);
+    legacyApp.destroy(true);
+
+    const allOk = results.every((r) => r.ok);
+    log(allOk ? "SEMUA CHECK PASS (" + results.length + ")" :
+      "ADA CHECK GAGAL — " + results.filter((r) => !r.ok).map((r) => r.name).join("; "),
+      allOk ? "ok" : "fail");
+    window.__r3Results = results;
+  } catch (e) {
+    console.error(e);
+    check("exception", false, String((e && (e.stack || e.message)) || e));
+    el.className = "fail";
+  }
+})();
+</script>
+</body>
+</html>

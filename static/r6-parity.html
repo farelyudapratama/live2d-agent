@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage R6 — Transform Parity: legacy Pixi6/pixi-live2d vs production Cubism 5.3 + compositor v8</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101010; overflow: hidden; }
+  canvas { display: block; }
+  #legacy { position: fixed; inset: 0; z-index: 1; }
+  #prod { position: fixed; inset: 0; z-index: 2; }
+  #status {
+    position: fixed; top: 10px; left: 10px; z-index: 5;
+    padding: 10px 14px; border-radius: 8px; max-width: 760px; max-height: 94vh; overflow: auto;
+    background: rgba(0,0,0,.85); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 11.5px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap;
+  }
+  #status.ok { border-color: #2e8b57; } #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/core-log-shim.js"></script>
+<script src="js/cubism-framework.js"></script>
+<script src="js/pixi.6.5.10.min.js"></script>
+<script src="js/pixi-live2d-0.4.0.js"></script>
+<script src="js/live2d-adapter.js"></script>
+<script src="js/pixi8-namespace.js"></script>
+</head>
+<body>
+<canvas id="legacy"></canvas>
+<canvas id="prod"></canvas>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  const el = document.getElementById("status");
+  const lines = [];
+  const log = (m, cls) => { lines.push(m); el.textContent = lines.slice(-90).join("\n"); if (cls) el.className = cls; console.log("[r6]", m); };
+  const results = [];
+  const check = (name, ok, detail) => { results.push({ name, ok }); log((ok ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : ""), ok ? null : "fail"); };
+  const REN = "model/tesmodel/runtime/ren.model3.json";
+  // pose netral deterministik di KEDUA stack: tanpa motion, efek off, fokus 0
+  const NEUTRAL = (handle) => {
+    handle.stopAllMotions?.();
+    for (const e of ["breath", "physics", "eyeBlink"]) handle.setEffectEnabled?.(e, false);
+    handle.resetFocus?.();
+  };
+
+  try {
+    await window.__compositor8Ready;
+    const api = window.__live2dApi;
+    let CW = window.innerWidth, CH = window.innerHeight;
+
+    // ══ STACK LEGACY (Pixi6 + pixi-live2d) ══
+    const legacyCanvas = document.getElementById("legacy");
+    const legacyApp = new PIXI.Application({
+      view: legacyCanvas, width: CW, height: CH,
+      backgroundAlpha: 0, antialias: true,
+      resolution: 1, autoDensity: false, preserveDrawingBuffer: true,
+    });
+    const legacy = await PIXI.live2d.Live2DModel.from(REN, { autoInteract: false, autoUpdate: false });
+    legacyApp.stage.addChild(legacy);
+    legacy.autoUpdate = false; // deterministik: update manual
+    const rawCI = legacy.internalModel.coreModel.getModel().canvasinfo;
+    log("legacy canvasinfo: Canvas=" + rawCI.CanvasWidth + "x" + rawCI.CanvasHeight +
+        " PPU=" + rawCI.PixelsPerUnit);
+    const legacyGL = legacyCanvas.getContext("webgl") || legacyCanvas.getContext("webgl2");
+
+    // ══ STACK PRODUCTION (handle + composite v8) ══
+    const prodCanvas = document.getElementById("prod");
+    const host = api.createHost({
+      canvas: prodCanvas, width: CW, height: CH,
+      backgroundAlpha: 0, resolution: 1, composite: "canvas-texture",
+    });
+    const prod = await api.loadModel(host, { kind: "path", path: REN });
+    host.add(prod);
+    NEUTRAL(prod);
+
+    // ══ helper: posisikan KEDUA model dengan center di canvas center ══
+    function centerBoth() {
+      legacy.scale.set(legacy.__s || 1);
+      legacy.position.set(CW / 2 - legacy.width / 2, CH / 2 - legacy.height / 2);
+      prod.setScale(legacy.__s || 1);
+      prod.setAnchor(0.5, 0.5);
+      prod.setPosition(0, 0); // konvensi center
+    }
+    function legacyAABB() {
+      legacy.updateTransform();
+      const b = legacy.getBounds();
+      return { left: b.left, right: b.right, top: b.top, bottom: b.bottom,
+               width: b.width, height: b.height,
+               centerX: (b.left + b.right) / 2, centerY: (b.top + b.bottom) / 2 };
+    }
+    function prodAABB() {
+      const nat = prod.getNaturalSize();
+      const s = prod.getScale();
+      // toGlobal produksi = RELATIF PUSAT KANVAS (konvensi API terdokumentasi)
+      // → konversi ke koordinat kanvas absolut untuk dibandingkan dgn legacy
+      const c = prod.toGlobal({ x: 0, y: 0 });
+      const ax = CW / 2 + c.x, ay = CH / 2 + c.y;
+      const hw = nat.width * s / 2, hh = nat.height * s / 2;
+      return { left: ax - hw, right: ax + hw, top: ay - hh, bottom: ay + hh,
+               width: nat.width * s, height: nat.height * s,
+               centerX: ax, centerY: ay };
+    }
+    function litBBox(gl, w, h) {
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let minX = w, maxX = -1, minY = h, maxY = -1;
+      for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+        if (px[(y * w + x) * 4 + 3] > 8) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+      return maxX < 0 ? null : { minX, maxX, minY, maxY,
+        width: maxX - minX, height: maxY - minY,
+        // GL origin bawah-kiri → layar atas-kiri:
+        top: h - maxY, bottom: h - minY };
+    }
+    function frameBoth() { // satu update+render sinkron per stack
+      legacy.update(1 / 60);
+      legacyApp.render();
+      prod.update(1 / 60);
+      host.render();
+    }
+
+    // ══ R6-B: GOLDEN GEOMETRY @1280×720 DPR1 ══
+    CW = 1280; CH = 720;
+    legacyApp.renderer.resize(CW, CH);
+    legacy.__s = 1; centerBoth(); frameBoth(); frameBoth();
+    const la = legacyAABB(), pa = prodAABB();
+    log("legacy  AABB: " + JSON.stringify(la, (k, v) => typeof v === "number" ? +v.toFixed(1) : v));
+    log("prod    AABB: " + JSON.stringify(pa, (k, v) => typeof v === "number" ? +v.toFixed(1) : v));
+    check("R6-B natural size parity (legacy.width === prod natural)",
+      Math.abs(la.width - pa.width) < 1 && Math.abs(la.height - pa.height) < 1,
+      "legacy=" + la.width.toFixed(1) + "x" + la.height.toFixed(1) +
+      " prod=" + pa.width.toFixed(1) + "x" + pa.height.toFixed(1));
+    check("R6-B center parity", Math.abs(la.centerX - pa.centerX) < 1 && Math.abs(la.centerY - pa.centerY) < 1);
+    // bukti piksel: bbox lit kedua kanvas (pose netral identik)
+    const lb = litBBox(legacyGL, legacyCanvas.width, legacyCanvas.height);
+    const ci = host.compositeInfo();
+    const pb = litBBox(host.gl(), ci.cubPixels.width, ci.cubPixels.height);
+    log("legacy pixel bbox: " + JSON.stringify(lb));
+    log("prod   pixel bbox: " + JSON.stringify(pb));
+    check("R6-B pixel bbox parity (pose netral, toleransi antialias 8px)",
+      lb && pb && Math.abs(lb.minX - pb.minX) < 8 && Math.abs(lb.maxX - pb.maxX) < 8 &&
+      Math.abs(lb.top - pb.top) < 8 && Math.abs(lb.bottom - pb.bottom) < 8,
+      lb && pb && "dX=" + (lb.minX - pb.minX) + "/" + (lb.maxX - pb.maxX) +
+      " dY=" + (lb.top - pb.top) + "/" + (lb.bottom - pb.bottom));
+
+    // ══ R6-C: SCALE MATRIX 0.5 / 1 / 2 ══
+    for (const s of [0.5, 1, 2]) {
+      legacy.__s = s; centerBoth(); frameBoth();
+      const l = legacyAABB(), p = prodAABB();
+      check("R6-C scale " + s + ": AABB parity",
+        Math.abs(l.width - p.width) < 1 && Math.abs(l.height - p.height) < 1 &&
+        Math.abs(l.left - p.left) < 1 && Math.abs(l.top - p.top) < 1,
+        "legacy=" + l.width.toFixed(1) + "x" + l.height.toFixed(1) +
+        " prod=" + p.width.toFixed(1) + "x" + p.height.toFixed(1));
+    }
+
+    // ══ R6-C: POSITION MATRIX ±100 + anchor corners ══
+    for (const [dx, dy, label] of [[100, 0, "x+100"], [-100, 0, "x-100"], [0, 100, "y+100"], [0, -100, "y-100"]]) {
+      prod.setScale(1); prod.setAnchor(0.5, 0.5); prod.setPosition(dx, dy);
+      legacy.__s = 1;
+      legacy.position.set(CW / 2 + dx - legacy.width / 2, CH / 2 + dy - legacy.height / 2);
+      frameBoth();
+      const l = legacyAABB(), p = prodAABB();
+      check("R6-C posisi " + label + ": AABB parity",
+        Math.abs(l.centerX - p.centerX) < 1 && Math.abs(l.centerY - p.centerY) < 1,
+        "center legacy=(" + l.centerX.toFixed(1) + "," + l.centerY.toFixed(1) +
+        ") prod=(" + p.centerX.toFixed(1) + "," + p.centerY.toFixed(1) + ")");
+    }
+
+    // ══ R6-D: POINTER / COORDINATE PARITY ══
+    // pemetaan space: legacy lokal px (origin top-left model, y-down) ↔
+    // produksi unit model (origin center, y-up): px = (ux*PPU + W/2, H/2 - uy*PPU)
+    prod.setScale(1); prod.setAnchor(0.5, 0.5); prod.setPosition(0, 0);
+    legacy.__s = 1; centerBoth(); frameBoth();
+    const PPU = rawCI.PixelsPerUnit, W = rawCI.CanvasWidth, H = rawCI.CanvasHeight;
+    const probes = [["center", 0, 0], ["top", 0, H / 2], ["bottom", 0, -H / 2],
+                    ["left", -W / 2, 0], ["right", W / 2, 0]];
+    let pointerParity = true, detail = [];
+    for (const [name, ux, uy] of probes) {
+      const gr = prod.toGlobal({ x: ux, y: uy });          // produksi: unit → relatif center
+      const g = { x: CW / 2 + gr.x, y: CH / 2 + gr.y };     // → absolut kanvas
+      const localPx = new PIXI.Point(ux * PPU + W / 2, H / 2 - uy * PPU);
+      const lg = legacy.toGlobal(localPx);                  // legacy: lokal px → layar
+      const ok = Math.abs(g.x - lg.x) < 1 && Math.abs(g.y - lg.y) < 1;
+      pointerParity = pointerParity && ok;
+      detail.push(name + ": d=(" + (g.x - lg.x).toFixed(2) + "," + (g.y - lg.y).toFixed(2) + ")");
+      // round-trip produksi (toLocal menerima koordinat relatif center)
+      const back = prod.toLocal({ x: g.x - CW / 2, y: g.y - CH / 2 });
+      if (Math.abs(back.x - ux) > 0.01 || Math.abs(back.y - uy) > 0.01) pointerParity = false;
+    }
+    check("R6-D pointer/coordinate parity (5 probe + round-trip)", pointerParity, detail.join("; "));
+
+    // ══ R6-E: RESIZE — tidak ada drift ══
+    centerBoth(); frameBoth();
+    const relBase = prodAABB(); // relatif center canvas
+    const relCenterBase = { x: relBase.centerX - CW / 2, y: relBase.centerY - CH / 2, w: relBase.width };
+    let resizeDrift = 0;
+    for (const [rw, rh] of [[900, 620], [640, 480], [1280, 720]]) {
+      CW = rw; CH = rh;
+      legacyApp.renderer.resize(rw, rh);
+      host.resize(rw, rh);
+      centerBoth(); frameBoth();
+      const p = prodAABB();
+      const drift = Math.abs((p.centerX - rw / 2) - relCenterBase.x) +
+                    Math.abs((p.centerY - rh / 2) - relCenterBase.y);
+      resizeDrift = Math.max(resizeDrift, drift);
+    }
+    check("R6-E resize ×3: drift pusat model = 0 (posisi relatif dipertahankan)", resizeDrift < 0.5,
+      "maxDrift=" + resizeDrift.toFixed(3));
+
+    // ══ R6-F: DPR2 — CSS tetap, piksel ×2, geometri logis identik ══
+    const host2 = api.createHost({
+      canvas: (() => { const c = document.createElement("canvas"); c.style.display = "none"; document.body.appendChild(c); return c; })(),
+      width: 640, height: 360, resolution: 2, composite: "canvas-texture",
+    });
+    const prod2 = await api.loadModel(host2, { kind: "path", path: REN });
+    host2.add(prod2);
+    NEUTRAL(prod2);
+    prod2.setScale(1); prod2.setAnchor(0.5, 0.5); prod2.setPosition(0, 0);
+    for (let i = 0; i < 3; i++) { prod2.update(1 / 60); host2.render(); }
+    const ci2 = host2.compositeInfo();
+    check("R6-F DPR2: piksel = 2× CSS",
+      ci2.canvasCss.width === 640 && ci2.cubPixels.width === 1280,
+      JSON.stringify(ci2.canvasCss) + " → " + JSON.stringify(ci2.cubPixels));
+    // geometri logis identik (toGlobal di ruang CSS — bukan piksel): model pusat di center 640×360
+    const g2r = prod2.toGlobal({ x: 0, y: 0 }); // relatif center (CSS)
+    const g2 = { x: 320 + g2r.x, y: 180 + g2r.y };
+    check("R6-F DPR2: pusat model di center CSS (fix MVP-res terverifikasi)",
+      Math.abs(g2.x - 320) < 0.5 && Math.abs(g2.y - 180) < 0.5,
+      "center=(" + g2.x.toFixed(1) + "," + g2.y.toFixed(1) + ") expected (320,180)");
+    // bukti piksel pada DPR2: model CSS 5200px pada kanvas CSS 640 → piksel
+    // 1280: bbox memenuhi kanvas & pusatnya di piksel (640,360) — sama seperti
+    // representasi DPR1 (geometri logis identik, hanya piksel ×res)
+    const pb2 = litBBox(host2.gl(), ci2.cubPixels.width, ci2.cubPixels.height);
+    if (pb2) {
+      const cpx = { x: (pb2.minX + pb2.maxX) / 2, y: (pb2.top + pb2.bottom) / 2 };
+      check("R6-F DPR2: bbox piksel memenuhi kanvas & center di (640,360)",
+        pb2.minX <= 2 && pb2.maxX >= ci2.cubPixels.width - 3 &&
+        Math.abs(cpx.x - 640) < 8 && Math.abs(cpx.y - 360) < 8,
+        "center=(" + cpx.x.toFixed(0) + "," + cpx.y.toFixed(0) + ") bbox=" +
+        JSON.stringify(pb2));
+    }
+    prod2.destroy(); host2.destroy();
+
+    // ══ R6-H: exactly-once (R4 invariant) ══
+    const s0 = { ...prod.data.stats };
+    const r0 = host.renderStats();
+    for (let i = 0; i < 60; i++) { prod.update(1 / 60); host.render(); }
+    const s1 = prod.data.stats, r1 = host.renderStats();
+    check("R6-H exactly-once 60 frame",
+      s1.frames - s0.frames === 60 && s1.coreUpdates - s0.coreUpdates === 60 &&
+      r1.renders - r0.renders === 60 && r1.composites - r0.composites === 60 &&
+      r1.textureUpdates - r0.textureUpdates === 60);
+
+    legacy.destroy({ children: true }); legacyApp.destroy(true);
+    prod.destroy(); host.destroy();
+
+    const allOk = results.every((r) => r.ok);
+    log(allOk ? "SEMUA CHECK PASS (" + results.length + ")" :
+      "GAGAL — " + results.filter((r) => !r.ok).map((r) => r.name).join("; "),
+      allOk ? "ok" : "fail");
+    window.__r6Results = results;
+  } catch (e) {
+    console.error(e);
+    check("exception", false, String((e && (e.stack || e.message)) || e));
+    el.className = "fail";
+  }
+})();
+</script>
+</body>
+</html>

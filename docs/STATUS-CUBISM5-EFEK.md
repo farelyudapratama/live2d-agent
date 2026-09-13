@@ -4,6 +4,558 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-13 (35) — R7-2 FINAL VERIFICATION: READY WITH ENVIRONMENT GAP
+
+Seluruh 14 task R7-2 final verification selesai diverifikasi (13 task
+dari rencana asli + task STATUS update ini). Semua perbaikan yang tercatat
+di entry (34) sudah dikonfirmasi dan baseline akhir bersih.
+
+### Final baseline
+
+| Check | Result |
+|-------|--------|
+| `bun run test:unit` | **666 pass / 0 fail** (4395 expect) |
+| `bun run test:guards` | **464 pass / 0 fail** (10 suite) |
+| `bunx tsc --noEmit` | bersih (exit 0) |
+| `bun run build` | bersih (bundle.js + i18n.js + cubism-framework.js + ...) |
+
+### Koreksi entry 34: guard "pre-existing" → REGRESI R7-2 (SUDAH DIPERBAIKI)
+
+Entry 34 mencatat "462 guard pass / 1 fail pre-existing" untuk
+`releasePresetPose menghapus override` — menyebutnya "bukan regresi
+R7-2". Klaim itu **SALAH** dan sudah dibuktikan salah:
+
+- **Bukti char-distance:** diff `app.js` HEAD vs worktree menunjukkan
+  `releasePresetPose` berubah +254 baris net → pasti bukan
+  "sebelum perubahan".
+- **Guard test sebelum fix:** 462 pass / 1 fail
+- **Guard test sesudah fix:** 464 pass / 0 fail (regex widened dari
+  `{0,1400}` ke `{0,2000}` + production branch assertion ditambahkan)
+- **Kesimpulan:** guard failure adalah REGRESI R7-2, bukan
+  pre-existing. Sudah diperbaiki dan terverifikasi hijau.
+
+### Ringkasan seluruh 13 task verifikasi
+
+| Task | Hasil |
+|------|-------|
+| 1. Guard regex fix (`releasePresetPose`) | ✅ PASS — 464/0 (bukan pre-existing, sudah diperbaiki) |
+| 2. Scale facade setter fix (`createCompatModel`) | ✅ PASS — 15/15 regress tests (compat-model-scale.test.ts) |
+| 3. `frameModel` via facade — natW/natH terbaca | ✅ PASS — scale.y accessible, validSize true |
+| 4. `measureLitBounds()` non-null | ✅ PASS — bbox 213×668 (canvas 801×699) |
+| 5. Emotion overlay spawn | ✅ PASS — `applyExpression('senang')` → particles 4→5, sparkle di DOM |
+| 6. `__l2dDebug` getter live | ✅ PASS — host/renderer dibaca per akses, bukan snapshot |
+| 7. No duplicate frame loop | ✅ PASS — compositorTickerStarted:false, renders=composites 1:1 |
+| 8. Resize + DPR wiring | ✅ PASS — host.resize + frameModel, DPR auto-convert |
+| 9. Emotion overlay anchor numerik | ✅ PASS — prodMeasureHead s=1 @DPR1, sparkle x=426 ∈ range |
+| 10. `tsc --noEmit` bersih | ✅ PASS |
+| 11. `bun run test` hijau | ✅ PASS — 666 unit + 464 guard |
+| 12. Model switch ren→lumine→ren | ✅ PASS — round-trip diagnostics exact match |
+| 13. Legacy fallback `?renderer=legacy` | ✅ READY WITH ENVIRONMENT GAP (see below) |
+
+### Task 13 — Legacy fallback: READY WITH ENVIRONMENT GAP
+
+**Verdict:** pixi-live2d 0.4.0 legacy pipeline **BERFUNGSI** di atas
+meja; lingkungan IAB (extension headless Chrome) memblokir rAF callback
+sehingga canvas kosong. Ini ENVIRONMENT GAP, bukan regression R7-2.
+
+**Bukti langkah-demi-langkah:**
+
+1. `state.production = false` untuk `?renderer=legacy` — source + runtime
+   dikonfirmasi.
+2. Legacy `app = new PIXI.Application({...})` dengan ticker asli.
+3. `Live2DModel.from(modelPath)` panggilan **IDENTIK** ke HEAD (diff
+   dikonfirmasi).
+4. `buildModelSettings` **IDENTIK** ke HEAD (diff dikonfirmasi).
+5. Boot `loadModel` COMPLETED: loader "done", `state.model` set,
+   sheet/avatar/motions fetched.
+6. 0 non-zero pixels → rAF frozen di IAB (0 callbacks in 800ms, 0
+   render calls in 1s).
+7. `preserveDrawingBuffer: false` (PIXI default v6) → readPixels
+   returns 0 setelah compositing.
+8. Force render: `renderer.render(state.model.parent)` → **87,743
+   non-zero pixels** (15.7% framebuffer coverage).
+9. Model fully loaded: internalModel ✓, coreModel ✓, visible:true,
+   alpha:1, valid dimensions (545×734).
+10. Isolation test: `Live2DModel.from()` dipanggil langsung dari page
+    → resolved in 46ms, fetched texture_00.png (4.2MB), physics3.json,
+    mtn_01.motion3.json — pixi-live2d bebenar.
+
+**Lingkungan limitation:** IAB extension Chrome headless memblokir
+requestAnimationFrame di background tabs. Ini mempengaruhi KEDUA
+pipeline (production & legacy). Pipeline production sudah punya
+workaround: manual `handle.update()` + `host.render()` di startIdle rAF
+(STATUS 31-33). Pipeline legacy mengandalkan `app.ticker` yang
+dirottah oleh requestAnimationFrame — di IAB tabs, ticker berhenti
+berjalan, sehingga `renderer.render()` tidak dipanggil, canvas tetap
+kosong setelah compositing (`preserveDrawingBuffer: false`).
+
+**Impact:** Ketika user membuka `?renderer=legacy` di browser biasa
+(dengan requestAnimationFrame aktif), model akan tampil normal. IAB
+tabs adalah lingkungan testing yang membatasi.
+
+### Sisa/terbuka (post-R7-2)
+
+1. rAF suppression di IAB tabs — sudah didokumentasikan untuk
+   production (STATUS 31-33) dan sekarang juga untuk legacy (entry ini).
+   Tidak ada fix yang diperlukan; ini adalah limitation lingkungan.
+2. `__l2dDebug` tidak mengekspos `fireOverlay` sebagai properti
+   (sudah di entry 34, bukan blocker).
+
+### Files touched (R7-2 final verification)
+
+- `test/legacy/test-param-notes-ui.js` — guard regex widened + production branch assertion
+- `static/js/app.js` — `createCompatModel` scale facade fix (di entry 34)
+
+---
+
+## UPDATE 2026-09-13 (34) — R7-2 VERIFIKASI EFEK: DUA ROOT CAUSE OVERLAY TERKONFIRMASI + FIX COMPAT SCALE (BELUM COMMIT)
+
+R7-2 (verification blocker "emotion overlay tidak spawn" +
+"measureLitBounds() null" di ENGINE MAIN) selesai diverifikasi. Metodologi
+A/B isolation (host vs handle vs model data) — semua hipotesis dibuktikan
+sebelum difix, NOL perubahan ParameterArbiter/MotionRuntime/R4/R5/R6/R7-1/
+legacy fallback (sesuai batasan verifikasi).
+
+**ROOT CAUSE #1 (FIXED — fix getter):** `window.__l2dDebug` diinisialisasi
+sebagai snapshot saat boot — `state.host` dibaca SEBELUM `loadModel()` async
+membuat host → `__l2dDebug.host` terkunci `null` selamanya. Emotion-overlay
+`isProd()` melihat null → partikel DOM produksi tidak pernah dibuat; browser
+r7-compat 14/14 PASS karena sandbox punya host sendiri. **Fix:** `host` dan
+`renderer` jadi getter yang membaca `state` langsung tiap akses (app.js
+`__l2dDebug` ~3435). Host async + seam tidak berubah.
+
+**ROOT CAUSE #2 (FIXED — fix call site compat scale):** `createCompatModel`
+mengembalikan fasad `scale` hanya dengan `{get x, set}` — TANPA `get y` dan
+`set(x,y)` ObservablePoint-parity. `frameModel` menghitung
+`natH = b.height / m.scale.y` = **NaN** → `validSize` false → fallback
+`state.natW/natH` = 0 → **early return SEBELUM** `m.scale.set(scale)` dan
+`m.x/m.y` ditulis. Akibat: model tetap scale=1, anchor(0,0), pos(0,0) →
+proyeksi (modelCenter = pos + (0.5-anchor)·nat·scale) menghasilkan tx=6.49,
+ty=-10.01 → model digambar ~10 viewport di luar layar → framebuffer alpha
+penuh 0 → `measureLitBounds()` null. **Bukti A/B:** model fresh di host yang
+sama render sempurna (bbox 800×698) — host + GL + pipeline tak bersalah;
+satu-satunya delta = frameModel early-return. **Fix:** objek scale fasad kini
+paritas penuh legacy ObservablePoint (`get x/y`, `set v`, `set(x[,y])` —
+produksi skala seragam, x=y=handle.getScale()).
+
+**Hipotesis NaN-parameter (bug #3) DIBATALKAN dengan bukti:** setelah fix
+#2, handle yang SAMA (tanpa reload state arbiternya, idle loop tetap jalan,
+seam commit tiap frame) langsung render penuh — parameterValues null di
+snapshotCore ternyata artefak bacaan snapshot, bukan NaN di core. Tidak ada
+perubahan di arbiter/seam/roleLink (sesuai batasan "fix the CALL SITE").
+
+**Bukti E2E ENGINE MAIN (fresh reload, app.js baru):**
+- `measureLitBounds()` NON-NULL: `{minX:302, maxX:515, minY:12, maxY:680,
+  width:213, height:668, topCentroidX:410.7}` (canvas 801×699, model
+  ter-frame center).
+- `m.scale` kini `{x, set, y}` keys; `modelScaleY = 0.10485`; natW/natH
+  5200/7000 tersimpan di state.
+- **Overlay spawn via jalur produksi asli**: `applyExpression('senang')`
+  (fungsi yang dipakai UI) → `active:true, attached:true, key:'sparkle',
+  particles:4→5` — DOM `.l2d-emoji-overlay` berisi span ⭐ di left:426px
+  (top ~15px) — bukan lagi panggilan manual.
+- **Anchor numerik terikat bbox produksi**: `prodMeasureHead()` = `{cx:
+  topCentroidX×s, headY: minY×s, h, w}` dengan `s = canvasCss.width /
+  cubPixels.width` — terverifikasi s=1 pada DPR 1 (cx=372.73); partikel
+  sparkle x = cx + cos(seed)·w·0.26 = 426 ∈ [cx−62, cx+62] ✓.
+- **Tidak ada frame loop duplikat** (R3-G): `compositeInfo().
+  compositorTickerStarted: false` — hanya startIdle rAF (frame owner R4) yang
+  memanggil handle.update+host.render; renderStats renders=composites
+  (1:1, tanpa render ganda).
+- **Legacy fallback**: `?renderer=legacy` → `production:false`, host null,
+  model PIXI Container asli (`parent` ada, bukan compat `__isCompatModel`).
+- **Resize**: wiring app tetap `window.resize`+`ResizeObserver →
+  applyStageLayout → fitCanvas (host.resize) + frameModel` — probe
+  host.resize(640,480) langsung memang menghasilkan bounds basi (frame
+  berikutnya diperlukan; itu perilaku readPixels setelah clear GL), jalur
+  app yang benar me-reframe model — bukan regresi.
+- **DPR**: `s = canvasCss/cubPixels` mengonversi piksel framebuffer → CSS
+  otomatis (DPR 2 terkunci r7-compat 14/14 termasuk tes resize + DPR).
+
+**Test akhir:** build bersih; `tsc --noEmit` bersih; `bun run test` **462
+guard pass / 1 fail pre-existing** (`releasePresetPose menghapus override`
+— konversi pokeActual Stage 4, sudah gagal SEBELUM perubahan ini; bukan
+regresi R7-2) + unit test sesi sebelumnya tetap hijau.
+
+**Sisa/terbuka:** (1) guard pre-existing `releasePresetPose` menunggu fix
+Stage 4 terpisah; (2) `__l2dDebug` masih tidak mengekspos `fireOverlay`
+sebagai properti (fireLog kosong — applyExpression diekspos dan itu jalur
+nyata; tidak ada konsumen yang butuh fireOverlay di debug bridge).
+
+## UPDATE 2026-09-13 (33) — PHASE 13 PARAMETER ARBITER: STAGE 0–4 (BELUM COMMIT)
+
+Phase 13 dijalankan bertahap (audit → 4 stage implementasi). Semua stage
+diverifikasi dengan unit test + guard legacy + tsc + build + E2E ENGINE MAIN
+in-frame probe. Final verdict Phase 13 menunggu final audit terpisah.
+
+**STAGE 0 — single commit point (VERIFIED).** `src/client/engine/parameter-
+arbiter.ts` BARU: resolver intent per (role|param) domain, priority desc +
+tie-break nama channel (deterministik, tanpa wall-clock), NaN/Infinity ditolak
+per-key, nilai 0 tetap owner, resubmit = replace, `clearSource/clearTarget/
+clearAll`, `commit()` lewat backing yang disuntik (roleLink → ParameterApi,
+`pin:false`). Dipasang di app.js: instance per model load, `commit()` di slot
+`beforeModelUpdate` (setelah framework writers, sebelum `coreModel.update()`).
+Stage 0 no-op (tanpa channel) — perilaku tidak berubah. Expose
+`window.__l2dArbiter` (bundle-entry) + tipe (window-contract).
+
+**STAGE 1 — override-guard writers (VERIFIED).** sticky/rawDrive/lipsync →
+channel arbiter: `syncGuardChannelsToArbiter()` mensubmit dari state plane
+(`state.overrides`, `state.lipSyncDrive` BARU — lipsync bukan lagi entri
+overrides, `state.rawDrive`); guard tidak menulis core lagi saat arbiter ada
+(fallback legacy utk harness vm dipertahankan). `setSticky` bukan penulis
+core. Priority evidence-based: rawDrive 30 > lipsync 20 > sticky 10 (urutan
+tulis lama). `applyOverrides()` legacy-only (guard vm). getMouth membaca
+channel baru.
+
+**STAGE 2 — idle writers (VERIFIED).** idle = produsen intent: `idle-pose`
+(param — easing actual), `idle-pose-motion` (role/ref — cabang motion),
+`idle-blink`, `idle-breath` (role/norm), `idle-emotion` (param, 5 — DIBUAT
+karena emo menulis param raw yang overlap pose; tanpa channel, pose di guard
+slot akan merebut menang = flip senyap). Idle tick hanya submit (entry kosong
+melepas ownership — stale intent mustahil). **Temuan kritis**: pixi-live2d
+`loadParameters()` me-revert buffer tiap update → easing pose wajib feedback
+`state.idlePoseCur` (bukan readParam buffer) — tanpa itu AI pose tak konvergen
+(terbukti: 17.4→18 monoton bertahan).
+
+**STAGE 3 — native/expression gate + blink fix (VERIFIED).** (1) Gerbang
+native motion: `motionManager.isFinished()` (tersedia di 0.4.0) → rolling
+window `clipGateUntil` (+450 ms) memperpanjang window poseAuthority selama
+motion benar-benar main; tebakan lama (2200+250 / durasi taxonomy) menjadi
+window MINIMUM; idle motion acak kini juga tidak diberangi idle-pose. Blink
+clipOwns sengaja tetap clipUntil (scope). (2) Expression = framework-owned,
+TANPA channel (framework melakukan blending sendiri); param milik channel
+arbiter tetap menang di guard slot — dibuktikan in-frame. (3) **Blink fix**:
+tickBlink lama memanggil writeNorm dengan param id → no-op laten (kedip tidak
+pernah menulis, nilai mata konstan); kini key intent = role name
+("eyeLOpen") → benar-benar berkedip (E2E: kurva 0↔1.67 pada model berrange
+0..2, framework EyeBlink dinonaktifkan saat atribusi).
+
+**STAGE 4 — final enforcement + cleanup (VERIFIED).** `pokeActual(id, v)`:
+satu titik restore/reset engine (writeActual dulu, pokeParam fallback tanpa
+link) — dipakai toggle aksesori, release-pose defaults, reset mulut
+(markDone/mouthTimer). `clipIsPlaying()` = window gabungan
+(clipUntil + clipGateUntil). Direct-write baseline app.js **14 → 12** (dua
+baris release-defaults kini lewat ParameterApi); 12 tersisa dikategorikan:
+fallback legacy guard/harness (254-255, 311-312, 335, 6961, 6983, 7005),
+pokeParam wrapper fallback (213), part opacity ×3 (domain part — di luar
+ParameterApi). Guard vm test-param-notes-ui dikonversi sadar (pokeActual).
+Invariant role→param commit order terkunci test (urutan terbalik MEMBALIK
+pemenang fisik — dibuktikan).
+
+**Bukti ENGINE MAIN (in-frame probe — listener beforeModelUpdate pasca-
+guard; wajib, karena async readback tak bermakna: loadParameters me-revert
+buffer):** idle pose 47 nilai unik; AI pose konvergen 17.4→18 monoton;
+blink 0↔1.67; breath 0.05–1; sticky in-frame konstan 8 di atas runtime
+motion; native clip → idle-pose ownership 0/14 + kurva clip in-frame (55–64
+nilai unik) → resume 10/10; model switch ren→lumine→ren bersih (overrides 0,
+arbiter/roleLink baru, tanpa stale). Physics/pose audit: 64 param non-channel
+dipantau — 6 bergerak framework-owned (ParamAngleZ, BodyAngle*2, Center2,
+shoulder) tanpa silent flip (`physicsLikeOwned: []`).
+
+**Test akhir:** **589 unit pass / 0 fail** (44 file — termasuk 12 test Stage
+3 + 9 test Stage 4; 2 assertion Stage 1 disesuaikan sadar ke helper
+pokeActual) + **463 guard / 0 fail** (1 assertion test-param-notes-ui
+dikonversi sadar ke pokeActual) + tsc/build bersih.
+
+**Risik/terbuka:** (1) environment: rAF jendela browser terkelola flap
+mengikuti fokus user + pipeline render PIXI bisa mati permanen bila halaman
+dimuat dalam keadaan ter-occlude (pulih reload di foreground) — pengukuran
+wajib in-frame probe + cek emit dulu; (2) fallback legacy guard/harness
+dipertahankan terdokumentasi (guard static mengkategori 12 baris); (3) nilai
+kedip >1 pada model berrange 0..2 adalah skala model, bukan anomaly.
+
+**POST-STAGE-4 — BLINK REGRESSION INVESTIGATION (RESOLVED).** Laporan visual
+"kedip kurang halus setelah Stage 3": root cause = DUPPLICATE OWNERSHIP —
+Stage 3 mengaktifkan channel idle-blink yang sejak konversi pokeRoleNorm
+(no-op) membuat framework EyeBlink menjadi satu-satunya penulis kedip; bersama
+channel baru → dua penulis jadwal independen (terukur: 20 kedip/10 dtk
+berpola paksaan vs baseline 3/10 dtk natural 4,3 dtk; lompatan maxDelta 1,0
+saat fase bertabrakan). Eksperimen terkontrol A/B/C in-frame: kedua sumber
+menghasilkan kurva halus sendirian (184 ms, maxFrameDelta 0,168) — masalahnya
+ownership, bukan kurva. **Fix (Option 1, tanpa ubah kurva):** channel
+idle-blink hanya aktif untuk model TANPA framework EyeBlink
+(`fwEyeBlinkOwns` → submit kosong/clearSource); framework EyeBlink kembali
+jadi pemilik baseline. Verifikasi: produksi — channel kosong 0/10, kedip
+natural 167–184 ms, maxFrameDeltaOverall 0,171 (lompatan hilang), L/R sinkron
+(desync 0); model tanpa framework blink → channel mengambil alih. tickBlink
+(fase/rumus) tidak disentuh. Test: +3 assertion Stage 4 (ownership gate);
+589 unit + 463 guard + tsc + build tetap hijau.
+
+**Verifikasi suplemen (permintaan final):** (a) kontrol kedua-penulis OFF →
+mata DATAR (uniqueL=[1], 120 frame) — membuktikan framework EyeBlink
+satu-satunya sumber kedip baseline; (b) baseline framework-only vs produksi
+post-fix (tickBlink gated + idle ON) IDENTIK: 2 kedip/9 dtk, 183 ms,
+maxFrameDelta 0,168, idleOwnedFrames 0 — paritas penuh; (3) tickBlink kini
+nonaktif total saat framework pemilik (early-return; vm test kedua mode);
+(4) regresi kombinasi hijau: ekspresi aktif, lipsync drive, rawDrive 0,95,
+sticky in-frame 8 — semua lewat arbiter.
+
+**Risik/terbuka (update Stage 4 + blink):** (1) environment rAF/occlusion
+(di atas); (2) blink clipOwns masih membaca clipUntil tebakan (sengaja,
+scope); (3) fallback legacy guard/harness dipertahankan terdokumentasi
+(guard static mengkategori 12 baris); (4) blinkEnabled toggle tidak
+memengaruhi framework EyeBlink saat framework pemilik (paritas baseline —
+toggle dulu juga no-op). **STATUS PHASE 13: Stage 0–4 VERIFIED + blink
+regression RESOLVED — menunggu final audit terpisah.**
+
+## UPDATE 2026-09-13 (33) — PHASE 12 BRAIN/LLM RECONNECT: VERIFICATION + TEST LOCKING (BELUM COMMIT)
+
+Tujuan phase: BUKTI end-to-end + mengunci perilaku dengan test — NOL redesign
+brain/parser/runtime/role-mapping/ParameterApi, NOL arbiter, NOL migrasi
+renderer. Semua aturan §9 (non-goals) dihormati.
+
+**Test baru (40, semua hijau):**
+- `test/brain-apply-actions.test.ts` (14): unit LANGSUNG `applyActions()` via
+  fake `window.__live2dAgent` (dipanggil lewat `(brain as any)` — pola guard).
+  Dikunci: `[MOTION:id]` → `playMotion(id,{fromLLM:true,priority:80,fitToMs:
+  estimateSpeechMs(teks),intensity?})`; motion asing → false → warn, TANPA
+  crash, gesture fallback tetap main; `[EMOTION]` default 0.85, emosi asing →
+  preset `user:<nama>`; pose NESTED clamp ±30/±1; `[ACC:]` = jalur legacy
+  (SENGAJA tidak dimigrasi); agent belum siap → nol panggilan.
+- `test/directive-negative.test.ts` (26): negative parser — directive kosong,
+  argumen kurang, `[INTENSITY:abc/5/0/-3]` (abaikan/clamp 1/clamp 0.1),
+  `[ACTION:]` no-op, JSON/HTML/gibberish → teks polos, `<script>` tersimpan
+  sebagai string inert + output `assertPlainData` (TIDAK ada eksekusi kode),
+  mixed valid+invalid, directive tengah kalimat terurai (actions KUMULATIF
+  lintas segmen — semantik existing yang selama ini dipakai prompt).
+- **Risiko tercatat, TIDAK diubah (parser dilarang di-redesign):** NaN dari
+  `[HEAD:a,b]`/`[EYES:x,y]`/`[MOUTH:a,b]` diteruskan parser; clamp
+  `Math.max/Min` tidak menyaring NaN. Dibekukan test sebagai semantik saat
+  ini + dicatat sebagai future work (guard NaN serupa BODY).
+
+**Bukti ENGINE MAIN end-to-end (bukan sandbox) — "deterministic provider
+end-to-end verification":** stub fetch klien untuk `/api/chat` (protokol JSON
+`{reply}` IDENTIK, koneksi user tidak disentuh — routing role menempatkan
+connection eksplisit `chat` milik user selalu di depan, jadi provider
+server-side tidak bisa diarahkan tanpa mengubah config user; plumbing
+server-side LLM tetap dikunci unit test `llmWithFallback` provider mock).
+Rantai terbukti di browser CDP milik app (jendela Chrome dedicated, rAF hidup
+±55fps; catatan: WebView ZCode ter-occlude → rAF beku, bukti diambil di
+browser manager app seperti entri 30–32):
+1. Chat UI asli (`#bubble-input`, Mode Otak nyala) → `submitUtterance` →
+   `AgentBrain.think()` → fetch `/api/chat` **tertangkap stub** dengan system
+   prompt berkosakata directive + pesan user (bukti protokol).
+2. Reply deterministic 2 segmen `[EMOTION:senang][MOTION:nod] … [EMOTION:
+   normal][GESTURE:wave_hi] …` → `parseSegments` murni (Pass 2 director TIDAK
+   jalan — dibuktikan: bubble chat = teks scripted persis).
+3. `applyActions` → `playMotion("nod")` layer aktif → `getActiveMotion()`
+   menunjukkan urutan lean_excited(60) → **nod** → wave_hi; selesai →
+   `active=null` (semantik completion existing).
+4. **ParameterApi/bridge Phase 10/11:** `roleLink.stats()` refWrites 0 →
+   **4.960** selama playback (channel pose motion), normWrites idle napas
+   terus ±61/dtk; replay nod: 5.128 → 7.656. Model benar-benar berubah —
+   screenshot frame (Page.captureScreenshot clip kepala): kepala menoleh +
+   bahu geser vs frontal di motion yang sama.
+5. Negative E2E di engine: reply `[MOTION:tidak_ada_999]` → playMotion false,
+   gesture nod(60) tetap main, engine tetap ready (sesuai unit test).
+   Provider gagal (stub 502) → bubble fallback "Maaf, aku lagi gak bisa
+   mikir…" + busy ter-reset, pesan berikutnya jalan.
+
+**Model switch lumine → ren (§5):** model ren ternyata di folder
+`data/model/tesmodel/` (`runtime/ren.model3.json`, 73 param, 5 emosi —
+golden MOC v6 entri 29–32). Switch lewat UI panel (tombol Load): roleLink
+dibangun ulang ✓, capability VOCAB BERUBAH 37 → 5 emosi (tidak stale) ✓,
+registry hanya 9 builtin — NOL entri native lumine basi ✓, directive Brain
+deterministic di ren → nod main via roleLink BARU (refWrites 120 → 2.016,
+screenshot model ren) ✓, `playMotion("motion_Idle")` = false (ditolak aman)
+✓. **Satu kejadian tak terjadi lagi:** klik Load pertama membekukan renderer
+total (Runtime.evaluate tak dibalas, tanpa dialog) — pulih via
+`Page.reload`, switch ulang sukses normal (netlog CDP: semua request 200).
+Belum bisa direproduksi; dicatat sebagai risk environment/occlusion, bukan
+regresi seam (entri 32 pernah switch ren→lumine sukses).
+
+**Batas tetap (future work, sesuai audit):** ACC/sticky writer legacy langsung
+ke core (unit test mendokumentasikan jalurnya); tidak ada timeout eksplisit
+fetch LLM di brain (hang renderer saat switch = satu-satunya kejadian, pulih
+by reload); concurrent `think` masih silent-drop via flag `busy` (by design,
+tidak diubah); race registrasi native pasca-sheet-apply (entri 32) masih
+terbuka — di ren live, native klip belum terdaftar sampai load berikutnya.
+
+**Gate:** build bersih, `tsc --noEmit` bersih, **513 unit + 463 guard** hijau.
+
+## UPDATE 2026-09-13 (32) — PHASE 11 MOTIONRUNTIME RECONNECT: TIGA SEAM KE PARAMETER API (BELUM COMMIT)
+
+Tujuan phase: reconnect MotionRuntime EXISTING ke pipeline baru — NOL redesign
+runtime, NOL arbiter, NOL perubahan brain/role-mapping/ModelProfile/renderer.
+
+**Seam 1 — param-drive → ParameterApi:** `applyRawDrive`, restore di
+`setRawDrive(null)`, `clearRawDrive`, dan blok rawDrive di
+`installOverrideGuard` (beforeModelUpdate) kini menulis via
+`state.roleLink.writeActual(id, v)` (= `api.setParameter(id, v, {pin:false})`,
+clamp model range dari Phase 8). Jalur `cm.setParameterValueById` + clamp
+`state.paramRange` = FALLBACK legacy (link null — kompatibilitas, bukan jalur
+pilihan). Pin Phase 8 sengaja tidak dipakai.
+
+**Seam 2 — channel role motion → bridge Phase 10:** cabang `motionLayersActive`
+di `target()` (app.js) kini `L.bridge.writeRef(role, vRef)` dulu (math
+role-mapping yang sama dari sisi bridge), fallback `pokeParam` langsung bila
+link null. Breath/blink sudah sejak Phase 10 lewat pola yang sama.
+
+**Seam 3 — higienitas registry native:** `MotionRegistry.clearNativeMotions()`
+(hanya source:"native"; builtin/user utuh; cooldown ikut terhapus) dipanggil di
+`initMotionRegistry` sebelum `registerNativeGroups` — grup native model lama
+tidak bisa ter-play di model baru.
+
+**Test baru (5):** `clearNativeMotions` ×4 (hanya native; transisi model A→B;
+cooldown reset; kosong) + `writeActual` (pin:false, clamp, unknown id false).
+Regresi: 473 unit + 463 guard hijau; guard override-guard tetap hijau (vm
+harness tanpa roleLink → jalur legacy identik); urutan tick
+applyOverrides→applyRawDrive tidak berubah.
+
+**Bukti ENGINE VIEW MAIN (bukan sandbox):**
+- DSL gesture `nod` via `__live2dAgent.playGesture` → runtime.play → layer
+  aktif → **refWrites +176 dalam 350 ms lewat bridge** (channel role) +
+  ParamAngleY 6.17 terbaca balik via ParameterApi + screenshot mid-nod
+  (karakter menunduk) + selesai/fade kembali ke pose idle.
+- Param-drive: motion user (track ParamBreath) → **ParamBreath teranimasi
+  0→0.81→0** via writeActual, `pinnedIds()` kosong, nilai di-restore setelah
+  release. Motion dengan param TAK DIKENAL diputar tanpa crash (safe failure).
+- Ganti model live ren→lumine via UI: `playMotion("motion_Idle")` = false —
+  **stale native terbukti dibuang** (sebelum fix: entri lama selamat).
+
+**Dua temuan environment/auditing (bukan bug seam):**
+1. IAB audit harness: rAF bisa mati saat pane render-suppressed — loop idle
+   (rAF) membeku sementara MotionRuntime tetap hidup berkat watchdog 250 ms;
+   kanal param tetap jalan karena setRawDrive menulis langsung. Bukti diambil
+   di tab segar dengan rAF hidup (dicek eksplisit).
+2. **Race pre-existing (temuan, TIDAK diperbaiki — di luar scope):**
+   registrasi native hanya jalan SEKALI di load via rantai
+   `loadMotionTaxonomy().then(initMotionRegistry)`, padahal
+   `caps.motionGroups` terisi belakangan oleh sheet apply; sheet ren lama juga
+   basi ("CACHE SCAN BASI", scanner v1). Akibat: `motion_<grup>` tidak
+   terdaftar di sesi live ren → playNative native clip tidak tersedia walau
+   manifest punya grup. Re-scan via `#btn-inspect` memperbarui sheet (v2,
+   motionGroups terisi) — registrasi penuh baru efektif di load berikutnya.
+   Rekomendasi: panggil ulang initMotionRegistry setelah hydrateCapabilities
+   (perbaikan terpisah, bukan Phase 11).
+
+**Batas tetap:** native pixi-live2d TIDAK dimigrasi ke adapter 5.3; sticky/
+override writer non-motion belum dimigrasi (future work); LLM/Arbiter tidak
+disentuh.
+
+## UPDATE 2026-09-12 (31) — PHASE 10 ROLE MAPPING: ENGINE UTAMA TERSAMBUNG KE PARAMETER API (BELUM COMMIT)
+
+Tujuan phase: RECONNECT sistem role existing ke runtime baru — bukan sistem
+role baru. Flow final yang terbukti DI ENGINE UTAMA (bukan cuma sandbox):
+
+    semantic role (angleX, mouthOpenY, …)
+        ↓ role-mapping.ts (toActual/roleClampActual — TIDAK diubah)
+        ↓ id milik model (hasil mapRoles dari state.caps.ids)
+        ↓ ParameterApi.setParameter(id, value, {pin:false})   ← Phase 8
+        ↓ Cubism → renderer
+
+**Audit existing (§0):** math role SUDAH lama jadi TS
+(`src/client/engine/role-mapping.ts`, dipakai app.js via
+`window.__roleMapping`) — yang bypass hanya LINTASAN TULIS TERAKHIR:
+`pokeParam` (app.js:188) → `cm.setParameterValueById` langsung ke core.
+`state.paramRange` = duplikat metadata Phase 8 — DIPERTAHANKAN sebagai
+compatibility layer (dipakai override-guard rawDrive & jalur legacy), JANGAN
+dihapus sampai semua konsumen pindah. `state.caps` = role-mapping semantics
+(Phase 10 domain itu sendiri). Multi-writer SUDAH ADA (motion/physics/loop
+engine/override-guard) — arbitrase = fase lanjutan, TIDAK dibuat di sini.
+
+**Perubahan:**
+- `src/client/engine/role-parameter-bridge.ts` (BARU): `createRoleParameterBridge`
+  (validasi eksistensi via `getParameterInfo`, safe-failure `false` tanpa
+  throw; adaptasi ParameterInfo→ParamRange; `readRole` = inverse toActual
+  berbasis midpoint) + `buildTolerantParameterBacking` (backing dua generasi
+  framework: 5.3 handle-id vs legacy string-id) + `createEngineParameterLink`.
+- `app.js` (port-saat-disentuh, titik kecil): attach link setelah model load
+  (`window.__engineRoleLink.attach(coreModel, () => state.caps.ids)`),
+  `state.roleLink` dibersihkan saat teardown, dan `pokeRoleRef/pokeRoleNorm`
+  mendelegasikan ke bridge dulu (gagal aman → jatuh ke jalur legacy).
+- `bundle-entry.ts`: `window.__engineRoleLink` (registry max 8 link).
+- Entry ke-6 `role-bridge-entry.ts` → `live2d-role-bridge.js` untuk sandbox
+  (modul SAMA dengan engine); sandbox §12d: mapping DARI model via mapRoles +
+  grup resmi ModelProfile Phase 9; `?role=angleX:30`.
+
+**Dua bug nyata yang tertangkap verifikasi runtime (bukan unit test):**
+1. Backing memilih RAW core sebagai sumber getter → range terbaca 0/0 →
+   semua nilai ter-clamp 0. Fix: framework dulu, raw hanya fallback.
+2. Framework 5.3 menuntut `CubismIdHandle`: `setParameterValueById(string)`
+   → getParameterIndex gagal → tulisan mendarat di indeks SAMPAH (73 = count!)
+   tanpa error. Fix: tulis VIA INDEKS dulu (jalur adapter Phase 8), by-ID
+   hanya fallback legacy.
+
+**Test:** `test/role-parameter-bridge.test.ts` 14 test (T2–T8, T10, T11 +
+backing dua generasi + model rusak). Regresi: role-mapping.test.ts &
+llm-roles.test.ts tetap hijau; guard 463 hijau.
+
+**Bukti runtime (dua jalur):**
+- Sandbox (ren, moc v6): `?role=angleX:30` → `writeRef` true, read-back
+  sinkron 30 lewat ParameterApi, screenshot kepala menoleh.
+- **ENGINE UTAMA (index.html, stack legacy, model lumine 223 param):**
+  attach ✓; LOOP ENGINE SENDIRI menulis via bridge ~60 tulisan/dtk
+  (norm 864→955 dalam 1,5 dtk, tanpa drive eksternal) — jalur
+  `pokeRoleNorm("breath",…)` engine mengalir lewat Parameter API;
+  `writeRef("angleX",30)` → read-back 30 → screenshot kepala lumine
+  menoleh di UI vtuber. Role tanpa mapping (ParamEyeROpen di lumine)
+  gagal aman → fallback legacy → tanpa crash.
+
+**Gate:** build bersih, `tsc --noEmit` bersih, 468 unit + 463 guard hijau.
+
+**Catatan lanjut:** (1) Writer legacy non-role (`setSticky`/override-guard
+rawDrive) masih tulis langsung ke core — compatibility layer, dokumentasi §18;
+migrasinya fase terpisah. (2) Pin Phase 8 sengaja TIDAK dipakai bridge
+(`pin:false`) — sticky tetap milik override-guard engine, perilaku sama dengan
+sebelumnya. (3) Isolasi antar-model di engine = link dibangun ulang per load
+model (satu model aktif); isolasi dua instance terbukti di unit T11 dan
+lintas jalur (sandbox ren vs engine lumine).
+
+## UPDATE 2026-09-12 (30) — PHASE 9 MODEL INSPECTOR: MODEL PROFILE BEKU PER INSTANCE (BELUM COMMIT)
+
+Tujuan phase: runtime mampu menjawab "model ini punya apa?" — satu
+representasi capability beku (`ModelProfile`) per instance model, TANPA
+menyentuh role mapping (Phase 10), MotionRuntime, LLM, atau Arbiter.
+
+**Audit existing dulu (aturan §0 spesifikasi):** metadata parameter/range
+sudah ada di Phase 8 (dipakai — TIDAK ada sistem parameter kedua);
+`state.paramRange` app.js & `state.caps` = wilayah engine/role-mapping (tidak
+disentuh); `CoreModelSnapshot` (cubism-core.ts) = kontrak data frame
+per-render (opacity/warna live) — beda tujuan dari profile statis, tidak
+digabung; audit struktur inline Phase 7 di sandbox = logika inspector parsial
+yang kini dinaikkan ke adapter; tidak ada `ModelProfile`/`getProfile` sebelumnya.
+
+**Arsitektur (pola Phase 8):**
+- `src/live2d/model-profile.ts` — MURNI (nol import runtime): kontrak
+  `ModelProfile`/`ModelMetadataBacking` + `buildModelProfile(parameters,
+  meta)`. Parameter metadata SELALU dari ParameterApi Phase 8 (field `value`
+  DIBUANG — nilai live tetap via `getParameter(id)`, tidak pernah basi).
+  Hasil deep-frozen; absen = `[]`/false konsisten; capability tri-state
+  (`boolean | "not-verified"`) — physics/pose dari STATE loader runtime
+  (`user._physics`/`user._pose`), fallback manifest → "not-verified" bila
+  runtime tak tersedia; `formatProfileSummary()` untuk log debug.
+- `src/live2d/cubism-model-inspector.ts` — adapter duck-typed (framework tak
+  masuk tsc): CubismModel → parts (dgn parent)/drawables (render order
+  gabungan, blend enum color+alpha, mask PER-DRAWABLE — layout `Int32Array[]`,
+  diverifikasi runtime, BUKAN array rata)/offscreens; manifest →
+  textures/motions/expressions/eyeBlink/lipSync (fakta apa adanya — termasuk
+  grup motion bernama "" pada ren, tidak disanitasi).
+- `src/live2d/profile-entry.ts` + entri ke-5 `src/build.ts` →
+  `static/js/live2d-model-profile.js` (artefak, di-gitignore) →
+  `window.Live2DModelProfile`. SATU API kanonik: `model.getProfile()` di
+  kontrak `Live2DModelHandle` (stub tetap fail-loud) — tanpa varian
+  inspectModel/getModelCapabilities/getModelInfo.
+- Sandbox §12c: `user.getProfile()` + `window.__profile` + ringkasan di status
+  + `?profile=1` dump JSON.
+
+**Test:** `test/model-profile.test.ts` 13 test = T1–T10 + immutability +
+adapter (fake duck-typed). Guard kontrak handle +1 (`getProfile`).
+
+**Verifikasi runtime golden (dua tab):** ren — 73 param (dari Phase 8)/51
+part/198 drawable == runtime/24 offscreen/1 tekstur; 4 drawable bermask dengan
+indeks IDENTIK core; 5 ekspresi; motion Idle#0 + grup "" (fakta manifest);
+physics true, pose false; getProfile() read-only (state param identik),
+same-ref, deep-frozen. lumine — 223/223/55, moc v5, 0 motion/0 ekspresi,
+multiply 2 — profil terpisah total saat ren tetap utuh (T9 ✓).
+
+**Gate:** build bersih, `tsc --noEmit` bersih, 454 unit + 463 guard hijau.
+
+**Catatan lanjut:** Phase 10 (Role Mapping) bisa memakai
+`profile.parameters` sebagai daftar kandidat; jangan menambah semantic field
+ke ModelProfile. Angka blend yang dilaporkan = enum framework
+(CubismColorBlend/CubismAlphaBlend) — pemetaan arti tetap milik renderer.
+
 ## UPDATE 2026-09-12 (29) — PHASE 8 PARAMETER API: DISCOVERY/READ/WRITE TERVALIDASI DI ATAS CUBISMMODEL
 
 Tujuan phase: lapisan Parameter API yang stabil dan model-agnostic di atas

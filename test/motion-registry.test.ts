@@ -99,3 +99,51 @@ describe("MotionRegistry", () => {
     expect(reg.register(null as any).ok).toBe(false);
   });
 });
+
+// ── Phase 11 — native registry hygiene saat ganti model ──
+describe("MotionRegistry.clearNativeMotions (Phase 11)", () => {
+  let reg: MotionRegistry;
+  beforeEach(() => {
+    reg = new MotionRegistry();
+  });
+
+  it("menghapus SEMUA entri native, membiarkan builtin & user", () => {
+    reg.register(makeAsset("motion_Idle", { source: "native" }));
+    reg.register(makeAsset("motion_Tap", { source: "native" }));
+    reg.register(makeAsset("nod", { source: "builtin" }));
+    reg.register(makeAsset("my_motion", { source: "user" }));
+    expect(reg.clearNativeMotions()).toBe(2);
+    expect(reg.has("motion_Idle")).toBe(false);
+    expect(reg.has("motion_Tap")).toBe(false);
+    expect(reg.has("nod")).toBe(true);
+    expect(reg.has("my_motion")).toBe(true);
+  });
+
+  it("model B: grup native model A tidak bisa ter-play lagi, grup B terdaftar", () => {
+    // model A
+    reg.register(makeAsset("motion_IdleA", { source: "native" }));
+    reg.register(makeAsset("motion_UniqueA", { source: "native" }));
+    // transisi A → B: bersihkan lalu daftarkan B
+    reg.clearNativeMotions();
+    reg.register(makeAsset("motion_IdleB", { source: "native" }));
+    expect(reg.has("motion_UniqueA")).toBe(false);
+    expect(reg.has("motion_IdleA")).toBe(false);
+    expect(reg.has("motion_IdleB")).toBe(true);
+    // id bentrok lintas sumber tetap terlindungi setelah clear
+    const r = reg.register(makeAsset("motion_IdleB", { source: "user" }));
+    expect(r.ok).toBe(false);
+  });
+
+  it("cooldown ikut ter-reset saat entri native dibuang", () => {
+    reg.register(makeAsset("motion_Idle", { source: "native", cooldown: 10 }));
+    reg.markPlayed("motion_Idle", 100);
+    expect(reg.canPlay("motion_Idle", 105)).toBe(false);
+    reg.clearNativeMotions();
+    reg.register(makeAsset("motion_Idle", { source: "native", cooldown: 10 }));
+    expect(reg.canPlay("motion_Idle", 105)).toBe(true);
+  });
+
+  it("registry kosong native → 0, tanpa error", () => {
+    expect(reg.clearNativeMotions()).toBe(0);
+  });
+});

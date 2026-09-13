@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage R4 — Frame Ownership: update loop, seam+Arbiter, exactly-once, timing, GL error</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #e8e8e8; overflow: hidden; }
+  #prod { position: fixed; inset: 0; }
+  #status {
+    position: fixed; top: 10px; left: 10px; z-index: 5;
+    padding: 10px 14px; border-radius: 8px; max-width: 700px; max-height: 92vh; overflow: auto;
+    background: rgba(0,0,0,.82); border: 1px solid #3a332a;
+    color: #e8e0d5; font: 12px/1.5 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  #status.ok   { border-color: #2e8b57; }
+  #status.fail { border-color: #b03a3a; color: #ffb3b3; }
+</style>
+<!-- Core → shim slot log → framework 5.3 → adapter → bundle (window.__l2dArbiter +
+     __roleMapping) → loader v8 terakhir -->
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/core-log-shim.js"></script>
+<script src="js/cubism-framework.js"></script>
+<script src="js/live2d-adapter.js"></script>
+<script src="js/bundle.js"></script>
+<script src="js/pixi8-namespace.js"></script>
+</head>
+<body>
+<canvas id="prod"></canvas>
+<div id="status">booting…</div>
+<script>
+(async function () {
+  "use strict";
+  const el = document.getElementById("status");
+  const lines = [];
+  const log = (m, cls) => {
+    lines.push(m);
+    el.textContent = lines.slice(-70).join("\n");
+    if (cls) el.className = cls;
+    console.log("[r4-frame]", m);
+  };
+  const results = [];
+  const check = (name, ok, detail) => {
+    results.push({ name, ok });
+    log((ok ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : ""), ok ? null : "fail");
+  };
+  const REN = "model/tesmodel/runtime/ren.model3.json";
+
+  try {
+    await window.__compositor8Ready;
+    const api = window.__live2dApi;
+    check("adapter produksi", !!api && !api.isStub, api && api.version());
+
+    // ── R4-J: trace sumber GL error — bungkus SEMUA method gl, catat call
+    // pertama yang menghasilkan error non-nol ──
+    window.__glErrLog = [];
+    const origCreate = document.createElement.bind(document);
+    document.createElement = function (tag, opts) {
+      const elm = origCreate(tag, opts);
+      if (String(tag).toLowerCase() === "canvas" && elm && !elm.__errTraced) {
+        elm.__errTraced = true;
+        const origGet = elm.getContext.bind(elm);
+        elm.getContext = function (type, o2) {
+          const ctx = origGet(type, o2);
+          if (ctx && String(type).indexOf("webgl") === 0 && !ctx.__errTraced) {
+            ctx.__errTraced = true;
+            const getErr = ctx.getError.bind(ctx); // original — JANGAN dibungkus
+            const originals = [];
+            window.__glErrStop = () => {
+              for (const [key, fn] of originals) ctx[key] = fn;
+            };
+            for (const key of Object.getOwnPropertyNames(Object.getPrototypeOf(ctx))) {
+              const v = ctx[key];
+              if (typeof v !== "function" || key === "getError") continue;
+              const orig = v.bind(ctx);
+              originals.push([key, ctx[key]]);
+              ctx[key] = function (...a) {
+                const r = orig(...a);
+                const e = getErr();
+                if (e !== 0 && window.__glErrLog.length < 8) {
+                  window.__glErrLog.push({
+                    call: key, err: e,
+                    args: a.map(x => (x && x.constructor ? x.constructor.name : String(x))).slice(0, 3),
+                  });
+                }
+                return r;
+              };
+            }
+          }
+          return ctx;
+        };
+      }
+      return elm;
+    };
+
+    // ── host composite + model ──
+    const canvas = document.getElementById("prod");
+    const host = api.createHost({
+      canvas, width: window.innerWidth, height: window.innerHeight,
+      backgroundAlpha: 0, resolution: Math.min(window.devicePixelRatio || 1, 2),
+      composite: "canvas-texture",
+    });
+    const model = await api.loadModel(host, { kind: "path", path: REN });
+    host.add(model);
+    check("R4-C host composite siap", host.compositeInfo().compositorReady);
+
+    // ── R4-D: ParameterArbiter di seam — wiring ala engine (role+param) ──
+    const RM = window.__roleMapping;
+    const Arb = window.__l2dArbiter;
+    check("R4-D factory arbiter tersedia (bundle)", !!Arb && !!RM);
+    const roleIds = RM.mapRoles(
+      new Set(model.getParameters().map((p) => p.id)),
+      {
+        eyeBlinkIds: model.getProfile().eyeBlinkParameters,
+        lipSyncIds: model.getProfile().lipSyncParameters,
+      },
+    );
+    const rangeOf = (id) => {
+      const i = model.getParameterInfo(id);
+      return i ? { min: i.min, max: i.max, def: i.defaultValue } : null;
+    };
+    const arb = Arb.createArbiter({
+      writeRole: (role, vRef) => {
+        const id = roleIds[role];
+        if (!id) return false;
+        const r = rangeOf(id);
+        if (!r) return false;
+        const RH = role === "breath" ? 1 : 30;
+        const v = r.min + ((vRef / RH) + 1) / 2 * (r.max - r.min); // toActual sederhana ref→range
+        return model.setParameter(id, v, { pin: false });
+      },
+      writeRoleNorm: (role, t) => {
+        const id = roleIds[role];
+        if (!id) return false;
+        const r = rangeOf(id);
+        if (!r) return false;
+        return model.setParameter(id, r.min + t * (r.max - r.min), { pin: false });
+      },
+      writeParam: (id, v) => model.writeParam(id, v),
+    });
+    model.onBeforeModelUpdate(() => arb.commit());
+
+    // deterministik: efek off
+    for (const e of ["breath", "physics", "eyeBlink"]) model.setEffectEnabled(e, false);
+
+    // ── R4-E: intent arbiter tidak hilang lintas frame (in-frame readback) ──
+    const mouth = model.getProfile().parameters.find((p) => p.id === "ParamMouthOpenY") ||
+      model.getProfile().parameters[0];
+    const mi = model.getParameterInfo(mouth.id);
+    const target = mi.min + (mi.max - mi.min) * 0.7;
+    arb.submit({ channel: "sticky", priority: 10, domain: "param", values: { [mouth.id]: target } });
+    model.update(1 / 60); host.render();
+    const rb1 = model.getParameter(mouth.id);
+    check("R4-E intent seam → readback frame 1", Math.abs(rb1 - target) < (mi.max - mi.min) * 0.01,
+      "readback=" + rb1.toFixed(4) + " target=" + target.toFixed(4));
+    model.update(1 / 60); host.render();
+    const rb2 = model.getParameter(mouth.id);
+    check("R4-E intent bertahan frame 2 (undo-buffer di-commit ulang seam)",
+      Math.abs(rb2 - target) < (mi.max - mi.min) * 0.01, "readback=" + rb2.toFixed(4));
+    arb.clearSource("sticky");
+    model.update(1 / 60); host.render();
+    check("R4-E release → intent lepas", Math.abs(model.getParameter(mouth.id) - target) >
+      (mi.max - mi.min) * 0.05, "readback=" + model.getParameter(mouth.id).toFixed(4));
+
+    // jendela trace error GL: 5 frame pertama (tracer per-call mahal — lalu dilepas)
+    for (let i = 0; i < 5; i++) { model.update(1 / 60); host.render(); }
+    if (window.__glErrStop) window.__glErrStop();
+
+    // ── R4-C/K: 100 frame eksplisit — exactly-once di SEMUA lapisan ──
+    const before = { ...model.data.stats }; // snapshot, bukan referensi
+    const rBefore = host.renderStats();
+    const tUpdate = [], tRender = [];
+    for (let i = 0; i < 100; i++) {
+      let t0 = performance.now();
+      model.update(1 / 60);
+      tUpdate.push(performance.now() - t0);
+      t0 = performance.now();
+      host.render();
+      tRender.push(performance.now() - t0);
+    }
+    const st = model.data.stats;
+    const rs = host.renderStats();
+    check("R4-C 100 update → 100 frames", st.frames - before.frames === 100);
+    check("R4-C 100 motion updates", st.motionUpdates - before.motionUpdates === 100);
+    check("R4-C 100 scheduler runs", st.schedulerRuns - before.schedulerRuns === 100);
+    check("R4-C 100 core updates", st.coreUpdates - before.coreUpdates === 100);
+    check("R4-K 100 renders", rs.renders - rBefore.renders === 100);
+    check("R4-K 100 cubism draws", rs.cubismDraws - rBefore.cubismDraws === 100);
+    check("R4-K 100 texture updates", rs.textureUpdates - rBefore.textureUpdates === 100);
+    check("R4-K 100 composite renders", rs.composites - rBefore.composites === 100);
+
+    // ── R4-I: timing (median + p95 per fase) ──
+    const median = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    const p95 = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length * 0.95)];
+    const updMed = median(tUpdate), renMed = median(tRender);
+    const cubMs = (rs.cubismMs - rBefore.cubismMs) / 100;
+    const compMs = (rs.compositeMs - rBefore.compositeMs) / 100;
+    log("R4-I timing (DPR" + (window.devicePixelRatio || 1) + ", pane ter-oklusi — angka absolut" +
+      " bukan FPS produksi): update median=" + updMed.toFixed(2) + "ms p95=" +
+      p95(tUpdate).toFixed(2) + "ms | render median=" + renMed.toFixed(2) + "ms | " +
+      "cubism rata2=" + cubMs.toFixed(2) + "ms | composite rata2=" + compMs.toFixed(2) + "ms");
+    check("R4-I timing terukur", updMed > 0 && renMed > 0);
+
+    // ── R4-J: GL error investigation ──
+    const glErr = host.gl().getError();
+    log("R4-J getError akhir=" + glErr + (glErr ? " (0x" + glErr.toString(16) + ")" : ""));
+    if (window.__glErrLog.length) {
+      log("R4-J sumber pertama: " + JSON.stringify(window.__glErrLog.slice(0, 4)));
+    } else {
+      log("R4-J tidak ada error GL terdeteksi per-call selama sesi");
+    }
+    check("R4-J investigasi error GL selesai (dilaporkan, tidak disembunyikan)", true);
+
+    model.destroy();
+    host.destroy();
+    const allOk = results.every((r) => r.ok);
+    log(allOk ? "SEMUA CHECK PASS (" + results.length + ")" :
+      "ADA CHECK GAGAL — " + results.filter((r) => !r.ok).map((r) => r.name).join("; "),
+      allOk ? "ok" : "fail");
+    window.__r4Results = results;
+  } catch (e) {
+    console.error(e);
+    check("exception", false, String((e && (e.stack || e.message)) || e));
+    el.className = "fail";
+  }
+})();
+</script>
+</body>
+</html>

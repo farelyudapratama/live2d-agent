@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>legacy probe</title></head>
+<body><canvas id="c"></canvas><pre id="s">boot</pre>
+<script src="js/live2dcubismcore.min.js"></script>
+<script src="js/pixi.6.5.10.min.js"></script>
+<script src="js/pixi-live2d-0.4.0.js"></script>
+<script>
+(async function(){
+  const s = document.getElementById("s");
+  const log = (m) => { s.textContent += "\n" + m; console.log("[probe]", m); };
+  const warns = []; const ow = console.warn.bind(console);
+  console.warn = (...a) => { warns.push(a.map(String).join(" ").slice(0,200)); ow(...a); };
+  try {
+    const app = new PIXI.Application({ view: document.getElementById("c"), width: 400, height: 300, backgroundAlpha: 0 });
+    const m = await PIXI.live2d.Live2DModel.from("model/tesmodel/runtime/ren.model3.json", { autoInteract: false });
+    log("model loaded");
+    log("ticker.shared.started=" + PIXI.Ticker.shared.started);
+    const groups = Object.keys(m.internalModel.motionManager.definitions || {});
+    log("groups=" + JSON.stringify(groups));
+    const r = await m.motion("Idle", -1, 2);
+    log("motion()=" + r + " finished=" + m.internalModel.motionManager.isFinished());
+    const r2 = await m.motion("Idle", 0, 2);
+    log("motion(idx0)=" + r2);
+    log("warns=" + JSON.stringify(warns.slice(0,4)));
+  } catch (e) { log("ERROR " + (e && e.stack || e)); }
+})();
+</script></body></html>

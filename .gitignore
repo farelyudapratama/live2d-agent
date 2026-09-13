@@ -27,3 +27,6 @@ agent-shell/gen/
 .DS_Store
 static/js/cubism-framework.js
 static/js/live2d-param-api.js
+static/js/live2d-model-profile.js
+static/js/live2d-role-bridge.js
+static/js/live2d-adapter.js

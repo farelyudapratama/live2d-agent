@@ -17,6 +17,7 @@ import type {
   CoreModelSnapshot,
   HostOptions,
   Live2DApi,
+  Live2DEffect,
   Live2DHost,
   Live2DModelHandle,
   Live2DPoint,
@@ -71,6 +72,7 @@ export function createStubModelHandle(): Live2DModelHandle {
     getParameter: (_id: string) => belum("getParameter"),
     getParameterInfo: (_id: string) => belum("getParameterInfo"),
     setParameter: (_id: string, _value: number) => belum("setParameter"),
+    getProfile: () => belum("getProfile"),
     getPartIds: () => belum("getPartIds"),
     getPartOpacity: (_id: string) => belum("getPartOpacity"),
     setPartOpacity: (_id: string, _opacity: number) => belum("setPartOpacity"),
@@ -78,13 +80,19 @@ export function createStubModelHandle(): Live2DModelHandle {
     motionGroups: () => belum("motionGroups"),
     playNativeMotion: (_group: string, _index?: number, _priority?: number) =>
       belum("playNativeMotion"),
+    isMotionFinished: () => belum("isMotionFinished"),
+    stopAllMotions: () => belum("stopAllMotions"),
     resetExpression: () => belum("resetExpression"),
+    playExpression: (_name: string) => belum("playExpression"),
     setFocus: (_x: number, _y: number) => belum("setFocus"),
     resetFocus: () => belum("resetFocus"),
+    setEffectEnabled: (_effect: Live2DEffect, _enabled: boolean) =>
+      belum("setEffectEnabled"),
     getName: () => belum("getName"),
     getEyeBlinkParameters: () => belum("getEyeBlinkParameters"),
     getLipSyncParameters: () => belum("getLipSyncParameters"),
     snapshotCore: () => belum("snapshotCore"),
+    update: (_dt: number) => belum("update"),
     destroy: () => belum("destroy"),
   };
 }

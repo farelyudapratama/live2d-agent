@@ -107,10 +107,63 @@
   // hampa (terbukti: hati melayang ~250px di atas kepala lumine). Yang
   // diukur: baris piksel ter-atas yang benar-benar tergambar = puncak rambut;
   // cx = pusat massa piksel pada pita atas itu; tinggi konten terlihat
+  // ── R7-2: jalur produksi ──────────────────────────────────────
+  // renderer scene-graph legacy digantikan host.measureLitBounds()
+  // (readPixels) + partikel DOM (adapter ber-setter identik objek Pixi6,
+  // sehingga tick/spawn/clear tidak berubah).
+  function isProd() {
+    return !!(window.__live2dApi && !window.__live2dApi.isStub &&
+              window.__l2dDebug && window.__l2dDebug.host);
+  }
+  var prodOverlayEl = null;
+  function prodGetOverlay() {
+    if (prodOverlayEl && document.body.contains(prodOverlayEl)) return prodOverlayEl;
+    var canvas = document.getElementById('live2d-canvas');
+    if (!canvas) return null;
+    prodOverlayEl = document.createElement('div');
+    prodOverlayEl.className = 'l2d-emoji-overlay';
+    prodOverlayEl.style.cssText =
+      'position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:4;';
+    (canvas.parentElement || document.body).appendChild(prodOverlayEl);
+    prodOverlayEl.style.width = canvas.clientWidth + 'px';
+    prodOverlayEl.style.height = canvas.clientHeight + 'px';
+    return prodOverlayEl;
+  }
+  function domSprite(el) {
+    return {
+      el: el,
+      get x() { return this._x || 0; },
+      set x(v) { this._x = v; el.style.left = v + 'px'; },
+      get y() { return this._y || 0; },
+      set y(v) { this._y = v; el.style.top = v + 'px'; },
+      get alpha() { return this._a === undefined ? 0 : this._a; },
+      set alpha(v) { this._a = v; el.style.opacity = String(Math.max(0, Math.min(1, v))); },
+      scale: {
+        set(v) { el.style.transform = 'scale(' + v + ')'; },
+      },
+      destroy() { el.remove(); },
+    };
+  }
+  function prodMeasureHead() {
+    var host = window.__l2dDebug && window.__l2dDebug.host;
+    if (!host || !host.measureLitBounds) return null;
+    var b = host.measureLitBounds();
+    if (!b) return null;
+    var ci = host.compositeInfo ? host.compositeInfo() : null;
+    var s = ci && ci.cubPixels.width ? ci.canvasCss.width / ci.cubPixels.width : 1;
+    return {
+      cx: b.topCentroidX * s,
+      headY: b.minY * s,
+      h: Math.max(64, b.height * s),
+      w: Math.max(64, b.width * s),
+    };
+  }
+
   // (bawah-atas) dipakai sebagai satuan h. Hasil di-cache per aktivasi —
   // satu kali render kecil per fire ekspresi, bukan per partikel.
   var _anchorCache = null;   // { cx, headY, h, w, at, path }
   function measureHead() {
+    if (isProd()) return prodMeasureHead();
     var st = window.__l2dDebug && window.__l2dDebug.state;
     var m = st && st.model;
     if (!m) return null;
@@ -192,6 +245,25 @@
 
   function makeSprite(kind, i, cfgv, a) {
     var def = EFFECTS[kind];
+    if (isProd()) {
+      var el;
+      if (def.emoji) {
+        var idx2 = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
+        el = document.createElement('span');
+        el.textContent = def.emoji[idx2];
+        el.style.cssText = 'position:absolute;font-size:' +
+          Math.max(18, Math.round(a.w * 0.05 * cfgv.size)) + 'px;user-select:none;';
+      } else {
+        var r = Math.max(8, a.w * 0.032 * cfgv.size);
+        el = document.createElement('div');
+        el.style.cssText = 'position:absolute;width:' + (r * 2.7).toFixed(0) +
+          'px;height:' + (r * 1.5).toFixed(0) + 'px;background:rgba(255,158,194,0.55);' +
+          'border-radius:50%;';
+      }
+      el.style.opacity = '0';
+      prodGetOverlay() && prodGetOverlay().appendChild(el);
+      return domSprite(el);
+    }
     var obj;
     if (def.emoji) {
       var idx = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
@@ -328,6 +400,16 @@
   }
 
   function attach() {
+    if (isProd()) {
+      if (container) return container;
+      var ov = prodGetOverlay();
+      if (!ov) return null;
+      container = {
+        addChild: function (obj) { ov.appendChild(obj.el || obj); },
+        removeChildren: function () { ov.innerHTML = ''; },
+      };
+      return container;
+    }
     var s = stage();
     if (!s || container) return container;
     if (typeof PIXI === 'undefined' || !PIXI.Container) return null;

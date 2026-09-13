@@ -31,6 +31,10 @@
 <script src="js/cubism-framework.js"></script>
 <!-- Parameter API (Phase 8) — ekspos window.Live2DParameterApi -->
 <script src="js/live2d-param-api.js"></script>
+<!-- Model Inspector (Phase 9) — ekspos window.Live2DModelProfile -->
+<script src="js/live2d-model-profile.js"></script>
+<!-- Role Bridge (Phase 10) — ekspos window.Live2DRoleBridge (modul sama dgn engine) -->
+<script src="js/live2d-role-bridge.js"></script>
 <script src="js/pixi.8.20.1.min.js"></script>
 </head>
 <body>
@@ -352,6 +356,55 @@
         if (!m) { warn("?set format salah: " + part); continue; }
         const ok = paramApi.setParameter(m[1], parseFloat(m[2]));
         log((ok ? "set " : "set GAGAL ") + m[1] + " = " + m[2], ok ? null : "fail");
+      }
+    }
+
+    // ── 12c. MODEL INSPECTOR (Phase 9) ──
+    // buildModelProfile(paramApi, backing) — parameter METADATA tetap lewat
+    // Parameter API Phase 8 (satu-satunya sistem parameter); parts/drawables/
+    // offscreen dari CubismModel; textures/motions/expressions dari manifest;
+    // physics/pose dari state loader runtime (user._physics/_pose). Hasil:
+    // snapshot beku per instance. Read-only — tidak menyentuh nilai/motion.
+    const { buildModelProfile, createCubismInspectorBacking, formatProfileSummary } =
+      window.Live2DModelProfile;
+    const profile = buildModelProfile(paramApi, createCubismInspectorBacking({
+      model: user._model,
+      setting,
+      userModel: user,
+      mocVersion,
+      modelName: MODEL_FILE.replace(/\.model3\.json$/i, ""),
+    }));
+    user.getProfile = () => profile;
+    window.__profile = profile;
+    log("Model Inspector Phase 9 ✓\n" + formatProfileSummary(profile));
+    if (q.get("profile")) {
+      console.log("[profile]", JSON.stringify(profile, null, 2));
+    }
+
+    // ── 12d. ROLE BRIDGE (Phase 10) ──
+    // Modul yang SAMA dengan engine utama (bundle.js → window.__engineRoleLink):
+    // role → role-mapping.ts (mapRoles/toActual/roleClampActual) → id milik
+    // model → Parameter API Phase 8 → Cubism. Mapping DARI model (tanpa
+    // hard-code id) + grup resmi dari ModelProfile Phase 9.
+    const RB = window.Live2DRoleBridge;
+    const roleIds = RB.mapRoles(
+      new Set(paramApi.getParameters().map((p) => p.id)),
+      { eyeBlinkIds: profile.eyeBlinkParameters, lipSyncIds: profile.lipSyncParameters },
+    );
+    const roleLink = RB.createEngineParameterLink(user._model, () => roleIds);
+    window.__roleLink = roleLink;
+    const roleNames = Object.keys(roleIds);
+    log("Role Bridge Phase 10 ✓ (" + roleNames.length + " role termapping: " +
+      roleNames.slice(0, 6).join(", ") + (roleNames.length > 6 ? ", …" : "") + ")");
+    // ?role=angleX:0.5 → bukti visual role-space → model (head.rotation.x → ParamAngleX)
+    const roleQ = q.get("role");
+    if (roleQ) {
+      for (const part of roleQ.split(",")) {
+        const m = part.match(/^\s*([A-Za-z0-9_]+):\s*(-?\d+(?:\.\d+)?)\s*$/);
+        if (!m) { warn("?role format salah: " + part); continue; }
+        const ok = roleLink.bridge.writeRef(m[1], parseFloat(m[2]));
+        log((ok ? "role " : "role GAGAL ") + m[1] + " = " + m[2] +
+          " → " + (roleLink.bridge.roleIdOf(m[1]) || "(tanpa mapping)"), ok ? null : "fail");
       }
     }
 

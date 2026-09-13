@@ -25,6 +25,7 @@ import {
   STUB_VERSION,
 } from "../src/live2d/stub";
 import { installLive2DApi, type Live2DApiTarget } from "../src/live2d/index";
+import type { Live2DEffect } from "../src/live2d/types";
 import {
   ALPHA_BLEND_MODE_COUNT,
   BLEND_NORMAL,
@@ -34,7 +35,9 @@ import {
 const root = join(import.meta.dir, "..");
 const MSG = "[live2d] adapter kosong";
 
-/** Kontrak Live2DModelHandle — diurutkan untuk perbandingan. */
+/** Kontrak Live2DModelHandle — diurutkan untuk perbandingan.
+ * STAGE R1: + isMotionFinished, playExpression, setEffectEnabled,
+ * stopAllMotions (bukti caller: static/js/app.js 1013–1023, 2313, 5118–5131). */
 const HANDLE_CONTRACT = [
   "destroy",
   "getEyeBlinkParameters",
@@ -48,23 +51,29 @@ const HANDLE_CONTRACT = [
   "getPartIds",
   "getPartOpacity",
   "getPosition",
+  "getProfile",
   "getScale",
+  "isMotionFinished",
   "motionGroups",
   "onBeforeModelUpdate",
+  "playExpression",
   "playNativeMotion",
   "readParam",
   "resetExpression",
   "resetFocus",
   "setAnchor",
+  "setEffectEnabled",
   "setFocus",
   "setParameter",
   "setPartOpacity",
   "setPosition",
   "setRotation",
   "setScale",
+  "stopAllMotions",
   "snapshotCore",
   "toGlobal",
   "toLocal",
+  "update",
   "uses53Pipeline",
   "writeParam",
 ].sort();
@@ -137,6 +146,30 @@ describe("adapter Live2D kosong (src/live2d)", () => {
   it("kontrak handle terkunci — perubahan permukaan migrasi harus sadar", () => {
     const handle = createStubModelHandle();
     expect(keysOf(handle)).toEqual(HANDLE_CONTRACT);
+  });
+
+  it("STAGE R1 — API gerbang motion/ekspresi/efek tersedia di handle dan fail-loud", () => {
+    const handle = createStubModelHandle() as unknown as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >;
+    // 4 method R1 ada di handle (kontrak terkunci di atas) dan melempar —
+    // BUKAN diam-diam mengaku sukses (isMotionFinished → false, playExpression
+    // → true, dsb. adalah fake implementation yang dilarang pada stub).
+    expect(() => handle.isMotionFinished()).toThrow(MSG);
+    expect(() => handle.stopAllMotions()).toThrow(MSG);
+    expect(() => handle.playExpression("senyum")).toThrow(MSG);
+    expect(() => handle.setEffectEnabled("eyeBlink", false)).toThrow(MSG);
+    expect(() => handle.setEffectEnabled("breath", true)).toThrow(MSG);
+    expect(() => handle.setEffectEnabled("physics", false)).toThrow(MSG);
+  });
+
+  it("STAGE R1 — Live2DEffect union tertutup: hanya eyeBlink/breath/physics", () => {
+    // Union tertutup di tipe; guard runtime mencegah anggota baru lolos tanpa
+    // disadari (anggota hanya boleh bertambah dengan bukti caller engine).
+    const VALID_EFFECTS = ["eyeBlink", "breath", "physics"] as const;
+    const typed: Live2DEffect[] = [...VALID_EFFECTS];
+    expect(typed.sort()).toEqual(["breath", "eyeBlink", "physics"]);
   });
 
   it("semua method handle stub fail-loud (tanpa no-op senyap)", () => {

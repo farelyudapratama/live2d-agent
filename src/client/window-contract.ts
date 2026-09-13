@@ -27,6 +27,39 @@ declare global {
     __shellProjek?: { start(): Destroy };
     __browserPanel?: { start(): Destroy };
     __roleMapping?: typeof RoleMapping;
+    __engineRoleLink?: {
+      links: unknown[];
+      attach(
+        coreModel: unknown,
+        getRoleIds: () => Record<string, string> | null | undefined,
+      ): unknown;
+      /** R7-2 — roleLink Phase 10 di atas production Live2DModelHandle. */
+      attachHandle(
+        handle: import("../live2d/types").Live2DModelHandle,
+        getRoleIds: () => Record<string, string> | null | undefined,
+      ): unknown;
+    };
+    __l2dArbiter?: {
+      createArbiter(backing: {
+        writeRole(role: string, valueRef: number): boolean;
+        writeRoleNorm?(role: string, t: number): boolean;
+        writeParam(id: string, value: number): boolean;
+      }): {
+        submit(s: {
+          channel: string;
+          priority: number;
+          domain: "role" | "param";
+          values: Record<string, number>;
+          mode?: "ref" | "norm";
+        }): { accepted: number; rejected: string[] };
+        clearSource(channel: string): boolean;
+        clearTarget(channel: string, domain: "role" | "param", key: string): boolean;
+        clearAll(): void;
+        hasSource(channel: string): boolean;
+        resolve(): { role: Record<string, number>; param: Record<string, number> };
+        commit(): number;
+      };
+    };
     __framing?: typeof Framing;
     __nativeExpressions?: { collect: typeof collectNativeExpressions };
     __i18n?: typeof I18n;

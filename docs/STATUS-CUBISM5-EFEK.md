@@ -4,6 +4,37 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-14 (37) — R8-2: MIGRATE STATIC/PET.HTML TO PRODUCTION CUBISM RENDERER
+
+Tahap R8-2 selesai dieksekusi dan diverifikasi secara menyeluruh dengan status **R8-2 VERIFIED**.
+`static/pet.html` kini menggunakan Production Cubism 5.3/Core 6.0.1 renderer sebagai default, menggunakan arsitektur verified R2–R7 (`Live2DApi` → `Live2DHost` → `Live2DModelHandle` → `CubismWebFramework 5.3` → `Cubism Core 6.0.1` → `Pixi8 compositor` via `canvas-texture`). Percabangan legacy (`?renderer=legacy`) tetap utuh untuk A/B comparison.
+
+### Ringkasan Perubahan R8-2
+
+1. **Arsitektur Produksi di `static/pet.html`:**
+   - Memuat stack resmi: `live2dcubismcore.min.js`, `core-log-shim.js`, `cubism-framework.js`, `live2d-adapter.js`, `scene-layers.js`, `pixi8-namespace.js`, `bundle.js`, `i18n.js`.
+   - Script legacy (`pixi.6.5.10.min.js` dan `pixi-live2d-0.4.0.js`) dipertahankan terisolasi hanya untuk parameter URL `?renderer=legacy`.
+   - Pemilik frame eksplisit: render loop `requestAnimationFrame` tunggal yang memanggil `handle.update(dt)` dan `host.render()`. Tidak ada dependensi ke `PIXI.Ticker.shared` pada jalur produksi.
+2. **Transform, Bounds, dan Resize Parity:**
+   - Implementasi `createCompatModel(handle)` yang bersih dan bebas PIXI.
+   - Paritas geometri terbukti di browser nyata Chromium (headless): selisih bounds legacy vs produksi hanya Δwidth=0.09px, Δheight=0.05px, Δx=0.09px, Δy=0.00px (< 0.1px).
+   - Penanganan `resize` otomatis memperbarui ukuran host dan reframes model tanpa distorsi atau pergeseran geometri pada DPR 1 maupun DPR 2.
+3. **Interaksi Kursor & Parameter Writes:**
+   - Menghilangkan direct write `coreModel.setParameterValueById(...)`.
+   - Interaksi tatapan (`mousemove`) kini menggunakan `state.arbiter.submit({ channel: "mouseGaze", priority: 10, domain: "role", values: { angleX, angleY, eyeBallX, eyeBallY } })` dan dikomit di slot `handle.onBeforeModelUpdate`. Parameter ditulis melalui `state.roleLink.bridge.writeRef` model-agnostic.
+4. **Motion & Lifecycle:**
+   - Tombol "Sapa" (`#b-wave`) menggunakan `handle.playNativeMotion("TapBody", -1, 3)` dengan fallback grup yang aman.
+   - Teardown model dan full window teardown membersihkan host, handle, dan listener tanpa meninggalkan kebocoran atau callback basi.
+5. **Quality Gates & Pengujian:**
+   - `test/r8-2-pet.test.ts`: 17 unit test baru (audit dependensi statis, paritas geometri, kepemilikan frame exactly-once, interaksi arbiter, siklus hidup reload, dan penanganan kegagalan aman).
+   - `test/smoke-pet-browser.ts`: smoke test Chromium headless via CDP memverifikasi boot produksi, interaksi pointer, resize, trigger motion, siklus hidup teardown/reload, dan komparasi A/B terhadap fallback legacy.
+   - `bun run test:unit`: **691 passed / 0 failed** (naik dari 674).
+   - `bun run test:guards`: **464 passed / 0 failed** (10 legacy suites).
+   - `bunx tsc --noEmit`: Bersih (0 error).
+   - `bun run build`: Bersih (0 error).
+
+---
+
 ## UPDATE 2026-09-14 (36) — R8-1: DECOUPLE ACCIDENTAL LEGACY DEPENDENCIES IN ENGINE MAIN
 
 R8-1 selesai diverifikasi dengan status **R8-1 VERIFIED**.

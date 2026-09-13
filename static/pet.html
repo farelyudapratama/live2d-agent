@@ -53,9 +53,16 @@
   <button class="btn" id="b-through" hidden data-i18n="petWindow.ctOff">Klik tembus</button>
   <button class="btn" id="b-close" data-i18n="petWindow.close">Tutup</button>
 </div>
-<script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/live2dcubismcore.min.js"></script>
+<script src="js/core-log-shim.js"></script>
+<script src="js/cubism-framework.js"></script>
+<script src="js/live2d-adapter.js"></script>
+<script src="js/scene-layers.js"></script>
+<!-- legacy PixiJS 6 + pixi-live2d (dipertahankan untuk ?renderer=legacy fallback dan A/B comparison) -->
+<script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/pixi-live2d-0.4.0.js?v=3"></script>
+<script src="js/pixi8-namespace.js"></script>
+<script src="js/bundle.js"></script>
 <!-- Core i18n (khusus pet — app utama memuatnya di dalam bundle.js). Self-exec:
      menyweep atribut data-i18n* di atas sekaligus membaca localStorage, jadi
      bahasa pet mengikuti bahasa app utama (origin sama). -->
@@ -65,7 +72,23 @@
   const API = location.origin;
   const t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const qs = new URLSearchParams(location.search);
-  const state = { model: null, app: null, bubbleTimer: null, idleTimer: null, dir: 1 };
+  const useLegacy = qs.get("renderer") === "legacy";
+
+  const state = {
+    production: !useLegacy,
+    host: null,
+    handle: null,
+    model: null,
+    app: null,
+    roleLink: null,
+    arbiter: null,
+    bubbleTimer: null,
+    idleTimer: null,
+    legacySwayTimer: null,
+    rafId: null,
+    swayTime: 0,
+    activeModelPath: null,
+  };
 
   function bubble(text, ms) {
     const b = document.getElementById("bubble");
@@ -75,77 +98,294 @@
     state.bubbleTimer = setTimeout(() => (b.style.display = "none"), ms || 3500);
   }
 
-  async function boot() {
-    document.getElementById("status").textContent = t("petWindow.loadingModel");
-    let path = qs.get("model");
-    if (!path) {
+  function createCompatModel(handle) {
+    const nat = () => handle.getNaturalSize();
+    const sz = () => ({ w: window.innerWidth, h: window.innerHeight });
+    const rect = () => {
+      const n = nat();
+      const sc = handle.getScale();
+      const pos = handle.getPosition();
+      return { x: pos.x, y: pos.y, w: n.width * sc, h: n.height * sc };
+    };
+    return {
+      __isCompatModel: true,
+      get width() { return rect().w; },
+      get height() { return rect().h; },
+      get x() { return sz().w / 2 + rect().x; },
+      set x(v) { handle.setPosition(v - sz().w / 2, handle.getPosition().y); },
+      get y() { return sz().h / 2 + rect().y; },
+      set y(v) { handle.setPosition(handle.getPosition().x, v - sz().h / 2); },
+      get position() {
+        return {
+          get x() { return sz().w / 2 + rect().x; },
+          set x(v) { handle.setPosition(v - sz().w / 2, handle.getPosition().y); },
+          get y() { return sz().h / 2 + rect().y; },
+          set y(v) { handle.setPosition(handle.getPosition().x, v - sz().h / 2); },
+        };
+      },
+      get scale() {
+        return {
+          get x() { return handle.getScale(); },
+          set x(v) { handle.setScale(v); },
+          get y() { return handle.getScale(); },
+          set y(v) { handle.setScale(v); },
+          set(x) { handle.setScale(x); },
+        };
+      },
+      set rotation(v) { handle.setRotation(v); },
+      anchor: { set(x, y) { handle.setAnchor(x, y); } },
+      motion(group, index, priority) {
+        return Promise.resolve(
+          handle.playNativeMotion(group, index === undefined ? -1 : index, priority || 2),
+        );
+      },
+      expression(name) {
+        return Promise.resolve(handle.playExpression(name));
+      },
+      destroy() { handle.destroy(); },
+      getBounds() {
+        const r = rect();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return {
+          left: L, top: T, right: L + r.w, bottom: T + r.h,
+          width: r.w, height: r.h,
+          centerX: L + r.w / 2, centerY: T + r.h / 2,
+        };
+      },
+      toGlobal(p) {
+        const r = rect();
+        const sc = handle.getScale();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return { x: L + p.x * sc, y: T + p.y * sc };
+      },
+      toLocal(p) {
+        const r = rect();
+        const sc = handle.getScale();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return { x: (p.x - L) / sc, y: (p.y - T) / sc };
+      },
+      texture: null,
+    };
+  }
+
+  function frameModel() {
+    const m = state.model;
+    if (!m) return;
+    const natW = state.production && state.handle
+      ? state.handle.getNaturalSize().width
+      : m.width / m.scale.x;
+    const natH = state.production && state.handle
+      ? state.handle.getNaturalSize().height
+      : m.height / m.scale.y;
+    if (!natW || !natH) return;
+    const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
+    m.scale.set(s);
+    m.x = (window.innerWidth - natW * s) / 2;
+    m.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+  }
+
+  let lastTime = performance.now();
+  function startRenderLoop() {
+    if (state.rafId) cancelAnimationFrame(state.rafId);
+    lastTime = performance.now();
+    const tick = (now) => {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      if (state.production && state.handle) {
+        state.swayTime += dt;
+        state.handle.setRotation(Math.sin(state.swayTime * 0.9) * 0.012);
+        state.handle.update(dt);
+        if (state.host) state.host.render();
+      }
+      state.rafId = requestAnimationFrame(tick);
+    };
+    state.rafId = requestAnimationFrame(tick);
+  }
+
+  async function teardownCurrentModel() {
+    if (state.production && state.handle) {
+      if (state.host) {
+        try { state.host.remove(state.handle); } catch (e) {}
+      }
+      try { state.handle.destroy(); } catch (e) {}
+      state.handle = null;
+    } else if (state.model) {
       try {
-        const r = await fetch(API + "/api/models");
-        const d = await r.json();
-        const first = (d.models || [])[0];
-        if (first) {
-          const rp = await fetch(API + "/api/model/path?name=" + encodeURIComponent(first));
-          const dp = await rp.json();
-          path = dp.path;
-        }
+        if (state.app && state.app.stage) state.app.stage.removeChild(state.model);
+        state.model.destroy({ children: true, texture: true, baseTexture: true });
       } catch (e) {}
     }
-    if (!path) { document.getElementById("status").textContent = t("petWindow.noModel"); return; }
-    // registerTicker adalah static di Live2DModel, bukan di namespace live2d —
-    // memanggilnya lewat PIXI.live2d melempar TypeError dan boot() berhenti
-    // sebelum canvas dibuat, jadi jendela pet tampil kosong.
-    PIXI.live2d.Live2DModel.registerTicker(PIXI.Ticker);
-    const app = new PIXI.Application({
-      view: document.getElementById("live2d-canvas"),
-      width: window.innerWidth, height: window.innerHeight,
-      backgroundAlpha: 0, autoDensity: true, resolution: Math.min(devicePixelRatio || 1, 2),
-    });
-    state.app = app;
-    const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
-    state.model = model;
-    app.stage.addChild(model);
-    // Skala pas jendela lalu pusatkan. Bounds HARUS dibaca ulang setelah
-    // scale.set(): rumus lama memakai objek bounds pra-skala, sehingga
-    // model.x dihitung dari lebar natural (bisa ribuan px) dan karakter
-    // terdorong jauh ke luar canvas — jendela pet tampak kosong.
-    const nat = model.getBounds();
-    const natW = nat.width / model.scale.x;
-    const natH = nat.height / model.scale.y;
-    const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
-    model.scale.set(s);
-    model.x = (window.innerWidth - natW * s) / 2;
-    model.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+    state.model = null;
+    state.roleLink = null;
+    state.arbiter = null;
+    state.activeModelPath = null;
+  }
+
+  async function teardown() {
+    if (state.rafId) {
+      cancelAnimationFrame(state.rafId);
+      state.rafId = null;
+    }
+    if (state.idleTimer) {
+      clearInterval(state.idleTimer);
+      state.idleTimer = null;
+    }
+    if (state.legacySwayTimer) {
+      clearInterval(state.legacySwayTimer);
+      state.legacySwayTimer = null;
+    }
+    if (state.bubbleTimer) {
+      clearTimeout(state.bubbleTimer);
+      state.bubbleTimer = null;
+    }
+    await teardownCurrentModel();
+    if (state.production && state.host) {
+      try { state.host.destroy(); } catch (e) {}
+      state.host = null;
+    } else if (state.app) {
+      try { state.app.destroy(true, { children: true, texture: true, baseTexture: true }); } catch (e) {}
+      state.app = null;
+    }
+  }
+
+  async function loadModel(path) {
+    if (!path) {
+      document.getElementById("status").textContent = t("petWindow.noModel");
+      return;
+    }
+    document.getElementById("status").textContent = t("petWindow.loadingModel");
+    await teardownCurrentModel();
+
+    if (state.production) {
+      await window.__compositor8Ready;
+      let stageCanvas = document.getElementById("live2d-canvas");
+      if (!stageCanvas) {
+        stageCanvas = document.createElement("canvas");
+        stageCanvas.id = "live2d-canvas";
+        const stageEl = document.getElementById("stage") || document.body;
+        stageEl.appendChild(stageCanvas);
+      }
+      const W = window.innerWidth, H = window.innerHeight;
+      stageCanvas.style.width = W + "px";
+      stageCanvas.style.height = H + "px";
+      stageCanvas.style.position = "absolute";
+      stageCanvas.style.inset = "0";
+
+      if (!state.host) {
+        state.host = window.__live2dApi.createHost({
+          canvas: stageCanvas,
+          width: W,
+          height: H,
+          backgroundAlpha: 0,
+          resolution: Math.min(window.devicePixelRatio || 1, 2),
+          composite: "canvas-texture",
+        });
+      } else {
+        state.host.resize(W, H);
+      }
+
+      const handle = await window.__live2dApi.loadModel(state.host, { kind: "path", path });
+      state.handle = handle;
+      handle.setAnchor(0, 0); // konvensi posisi: origin sudut kiri-atas
+      state.host.add(handle);
+      const model = createCompatModel(handle);
+      state.model = model;
+      state.activeModelPath = path;
+
+      // Wire roleLink Phase 10 di atas handle
+      if (window.__engineRoleLink && window.__roleMapping) {
+        try {
+          state.roleLink = window.__engineRoleLink.attachHandle(handle, () => {
+            const allParams = handle.getParameters().map((p) => p.id);
+            const blinkIds = handle.getEyeBlinkParameters();
+            const lipIds = handle.getLipSyncParameters();
+            return window.__roleMapping.mapRoles(new Set(allParams), {
+              eyeBlinkIds: blinkIds,
+              lipSyncIds: lipIds,
+            });
+          });
+        } catch (e) {
+          console.warn("[pet] roleLink attach failed:", e);
+        }
+      }
+
+      // Wire ParameterArbiter Phase 13
+      if (window.__l2dArbiter) {
+        try {
+          state.arbiter = window.__l2dArbiter.createArbiter({
+            writeRole: (role, v) => (state.roleLink ? !!state.roleLink.bridge.writeRef(role, v) : false),
+            writeRoleNorm: (role, t) => (state.roleLink ? !!state.roleLink.bridge.writeNorm(role, t) : false),
+            writeParam: (id, v) => (state.roleLink ? !!state.roleLink.writeActual(id, v) : false),
+          });
+        } catch (e) {
+          console.warn("[pet] arbiter init failed:", e);
+        }
+      }
+
+      handle.onBeforeModelUpdate(() => {
+        if (state.arbiter) state.arbiter.commit();
+      });
+
+      frameModel();
+      startRenderLoop();
+    } else {
+      // Jalur fallback Pixi6 legacy untuk A/B comparison (?renderer=legacy)
+      PIXI.live2d.Live2DModel.registerTicker(PIXI.Ticker);
+      if (!state.app) {
+        state.app = new PIXI.Application({
+          view: document.getElementById("live2d-canvas"),
+          width: window.innerWidth,
+          height: window.innerHeight,
+          backgroundAlpha: 0,
+          autoDensity: true,
+          resolution: Math.min(window.devicePixelRatio || 1, 2),
+        });
+      }
+      const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
+      state.model = model;
+      state.activeModelPath = path;
+      state.app.stage.addChild(model);
+      frameModel();
+    }
+
     document.getElementById("status").textContent = t("petWindow.active");
     startIdleLife();
   }
 
-  // ── "hidup" sebagai pet: goyang pelan + tatapan acak + sapa berkala ──
+  async function resolveDefaultModelPath() {
+    let path = qs.get("model");
+    if (path) return path;
+    try {
+      const r = await fetch(API + "/api/models");
+      const d = await r.json();
+      const first = (d.models || [])[0];
+      if (first) {
+        const rp = await fetch(API + "/api/model/path?name=" + encodeURIComponent(first));
+        const dp = await rp.json();
+        return dp.path || null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function boot() {
+    const path = await resolveDefaultModelPath();
+    await loadModel(path);
+  }
+
   function startIdleLife() {
-    let t = 0;
-    setInterval(() => {
-      const m = state.model;
-      if (!m) return;
-      t += 0.016;
-      // goyang halus seperti bernapas
-      const sway = Math.sin(t * 1.2) * 4;
-      m.position.x = m.position.x; // anchor tetap
-      m.rotation = Math.sin(t * 0.9) * 0.012;
-      // tatapan ke arah kursor
-    }, 16);
-    window.addEventListener("mousemove", (e) => {
-      const m = state.model;
-      if (!m || !m.internalModel) return;
-      try {
-        const core = m.internalModel.coreModel;
-        const set = (id, v) => { try { core.setParameterValueById(id, v); } catch {} };
-        const rect = { w: window.innerWidth, h: window.innerHeight };
-        const nx = (e.clientX / rect.w) * 2 - 1;
-        const ny = (e.clientY / rect.h) * 2 - 1;
-        set("ParamAngleX", nx * 18); set("ParamAngleY", -ny * 14);
-        set("ParamEyeBallX", nx); set("ParamEyeBallY", -ny);
-      } catch (err) {}
-    });
-    // sapa berkala kecil
+    if (state.idleTimer) clearInterval(state.idleTimer);
+    if (!state.production) {
+      if (state.legacySwayTimer) clearInterval(state.legacySwayTimer);
+      let tSway = 0;
+      state.legacySwayTimer = setInterval(() => {
+        const m = state.model;
+        if (!m) return;
+        tSway += 0.016;
+        m.rotation = Math.sin(tSway * 0.9) * 0.012;
+      }, 16);
+    }
+
     const lines = [
       t("petWindow.idle1"), t("petWindow.idle2"),
       t("petWindow.idle3"), t("petWindow.idle4"),
@@ -156,12 +396,72 @@
     }, 90000);
   }
 
+  // Interaksi kursor (tatapan / eye-tracking)
+  window.addEventListener("mousemove", (e) => {
+    const rect = { w: window.innerWidth, h: window.innerHeight };
+    const nx = (e.clientX / rect.w) * 2 - 1;
+    const ny = (e.clientY / rect.h) * 2 - 1;
+
+    if (state.production && state.arbiter) {
+      state.arbiter.submit({
+        channel: "mouseGaze",
+        priority: 10,
+        domain: "role",
+        values: {
+          angleX: nx * 18,
+          angleY: -ny * 14,
+          eyeBallX: nx,
+          eyeBallY: -ny,
+        },
+      });
+    } else if (state.model && state.model.internalModel) {
+      try {
+        const core = state.model.internalModel.coreModel;
+        const set = (id, v) => { try { core.setParameterValueById(id, v); } catch {} };
+        set("ParamAngleX", nx * 18); set("ParamAngleY", -ny * 14);
+        set("ParamEyeBallX", nx); set("ParamEyeBallY", -ny);
+      } catch (err) {}
+    }
+  });
+
+  // Penanganan resize & perubahan DPR
+  window.addEventListener("resize", () => {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const stageCanvas = document.getElementById("live2d-canvas");
+    if (stageCanvas) {
+      stageCanvas.style.width = W + "px";
+      stageCanvas.style.height = H + "px";
+    }
+    if (state.production && state.host) {
+      state.host.resize(W, H);
+      frameModel();
+    } else if (state.app && state.app.renderer) {
+      state.app.renderer.resize(W, H);
+      frameModel();
+    }
+  });
+
   function motionOrExpression(kind) {
     const m = state.model;
     if (!m) return;
     try {
-      if (kind === "wave" && m.motion) m.motion("TapBody", Math.floor(Math.random() * 2));
-    } catch (e) {}
+      if (kind === "wave") {
+        if (state.production && state.handle) {
+          const groups = state.handle.motionGroups();
+          if (groups.includes("TapBody")) {
+            state.handle.playNativeMotion("TapBody", -1, 3);
+          } else if (groups.length > 0) {
+            const pick = groups.find((g) => g !== "Idle" && g !== "idle") || groups[0];
+            state.handle.playNativeMotion(pick, -1, 3);
+          }
+        } else if (m.motion) {
+          m.motion("TapBody", Math.floor(Math.random() * 2));
+        }
+      }
+    } catch (e) {
+      console.warn("[pet] motion error:", e);
+    }
   }
 
   document.getElementById("b-wave").addEventListener("click", () => {
@@ -174,9 +474,6 @@
   });
 
   // ── Integrasi cangkang Tauri (window transparan + klik-tembus) ──────
-  // window.__TAURI__ hanya ada di shell Tauri (withGlobalTauri); di Chrome
-  // --app undefined, jadi semua fitur di bawah di-feature-detect dan halaman
-  // yang sama tetap jalan di kedua cangkang.
   const inTauri = () => typeof window.__TAURI__ !== "undefined";
   const tauriWin = () => inTauri() ? window.__TAURI__.window.getCurrentWindow() : null;
 
@@ -190,9 +487,6 @@
     }
   }
 
-  // Tombol di bar hanya untuk MEMATIKAN klik-tembus yang tertinggal — saat
-  // menyala, klik pada jendela menembus ke desktop sehingga tombol tak
-  // terjangkau; pemicu utamanya panel app utama lewat /api/pet/clickthrough.
   const bThrough = document.getElementById("b-through");
   if (bThrough) {
     bThrough.addEventListener("click", async () => {
@@ -205,12 +499,9 @@
         applyClickThrough(!!d.clickThrough);
       } catch (e) {}
     });
-    if (!inTauri()) bThrough.hidden = true; // tak berarti di Chrome --app
+    if (!inTauri()) bThrough.hidden = true;
   }
 
-  // Poll state server: sumber kebenaran klik-tembus ada di server agar bisa
-  // dimatikan dari panel app utama (jendela yang tembus klik tidak bisa
-  // diklik, jadi tombol di dalamnya saja tidak cukup sebagai jalan keluar).
   setInterval(async () => {
     if (!inTauri()) return;
     try {
@@ -221,21 +512,26 @@
   }, 1500);
 
   document.getElementById("b-close").addEventListener("click", async () => {
+    await teardown();
     try { await fetch(API + "/api/pet/close", { method: "POST" }); } catch (e) {}
-    // Di Tauri, window.close() hanya menutup konten webview, bukan jendela
-    // OS — tutup jendelanya secara eksplisit. Dua-duanya dipanggil karena
-    // server juga ikut mematikan proses lewat /api/pet/close.
     const w = tauriWin();
     if (w) { try { await w.destroy(); } catch (e) {} }
     window.close();
   });
 
-  // Jendela frameless tidak punya tombol X — Esc sebagai jalan keluar cepat.
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") document.getElementById("b-close").click();
   });
 
-  boot().catch((e) => { document.getElementById("status").textContent = t("sys.errGeneric", { msg: e.message }); })();
+  // Ekspos state untuk kebutuhan pengujian harness/smoke
+  window.__petState = state;
+  window.__petLoadModel = loadModel;
+  window.__petTeardown = teardown;
+  window.__petFrameModel = frameModel;
+
+  boot().catch((e) => {
+    document.getElementById("status").textContent = t("sys.errGeneric", { msg: e.message });
+  });
 })();
 </script>
 </body>

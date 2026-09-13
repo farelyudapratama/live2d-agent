@@ -107,15 +107,7 @@ function runCompatModel(handle: ReturnType<typeof makeHandle>) {
   const sandbox = {
     // stageSize() → { w, h } — compositor canvas CSS size
     stageSize: () => ({ w: 1280, h: 720 }),
-    // PIXI.Point — dibutuhkan toGlobal/toLocal
-    PIXI: {
-      Point: class Point {
-        constructor(
-          public x: number,
-          public y: number,
-        ) {}
-      },
-    },
+    // R8-1: createCompatModel mandiri — TIDAK lagi membutuhkan PIXI/PIXI.Point
     __handle: handle,
     Number,
     Math,
@@ -257,5 +249,37 @@ describe("compat model scale facade (R7-2 regression guard)", () => {
     m.x = 300;
     expect(h.calls.setPosition).toHaveLength(1);
     expect(h.calls.setPosition![0][0]).toBeCloseTo(300 - 640, 0);
+  });
+
+  test("R8-1 toGlobal(p) mengembalikan POJO {x, y} tanpa ketergantungan PIXI", () => {
+    const h = makeHandle(5200, 7000, 0.1);
+    const m = runCompatModel(h);
+    const g = m.toGlobal({ x: 100, y: 200 });
+    // stage: w=1280, h=720; r.x=0, r.y=0; L=640, T=360; sc=0.1
+    // g.x = 640 + 100 * 0.1 = 650; g.y = 360 + 200 * 0.1 = 380
+    expect(g).toBeTypeOf("object");
+    expect(g.x).toBeCloseTo(650, 4);
+    expect(g.y).toBeCloseTo(380, 4);
+    expect(g.constructor.name).toBe("Object");
+  });
+
+  test("R8-1 toLocal(p) mengembalikan POJO {x, y} tanpa ketergantungan PIXI", () => {
+    const h = makeHandle(5200, 7000, 0.1);
+    const m = runCompatModel(h);
+    const l = m.toLocal({ x: 650, y: 380 });
+    expect(l).toBeTypeOf("object");
+    expect(l.x).toBeCloseTo(100, 4);
+    expect(l.y).toBeCloseTo(200, 4);
+    expect(l.constructor.name).toBe("Object");
+  });
+
+  test("R8-1 toGlobal dan toLocal adalah inversi satu sama lain", () => {
+    const h = makeHandle(5200, 7000, 0.125);
+    const m = runCompatModel(h);
+    const initial = { x: 345.6, y: 789.1 };
+    const globalPt = m.toGlobal(initial);
+    const roundTrip = m.toLocal(globalPt);
+    expect(roundTrip.x).toBeCloseTo(initial.x, 4);
+    expect(roundTrip.y).toBeCloseTo(initial.y, 4);
   });
 });

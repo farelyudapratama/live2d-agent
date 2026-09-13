@@ -4,6 +4,38 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-14 (36) — R8-1: DECOUPLE ACCIDENTAL LEGACY DEPENDENCIES IN ENGINE MAIN
+
+R8-1 selesai diverifikasi dengan status **R8-1 VERIFIED**.
+Ketergantungan legacy yang menyusup ke jalur produksi ENGINE MAIN telah didekopel secara bersih tanpa merusak fallback legacy (`?renderer=legacy`) dan tanpa menghapus file vendor.
+
+### Ringkasan Perubahan R8-1
+
+1. **Dekopel `PIXI.Point`:**
+   - `createCompatModel` method `toGlobal(p)` dan `toLocal(p)` kini mengembalikan POJO mandiri `{ x, y }`.
+   - Call site di `mousemove` eye-tracking (L1517) dan `setScaleAroundPoint` zoom (L1574) memanggil `toGlobal`/`toLocal` menggunakan POJO `{ x, y }`.
+   - `PIXI.Point` di `static/js/app.js` kini **0 (ZERO)**.
+2. **Perbaikan Lifecycle Delete Model Aktif:**
+   - Handler delete model di drawer (`app.js:3865`) kini memiliki percabangan produksi yang benar: memanggil `state.host.remove(state.handle)`, `state.handle.destroy()`, mengosongkan handle, arbiter, dan state terkait.
+   - Tidak lagi memanggil `app.stage.removeChild` atau mengandalkan Proxy throw di jalur produksi. Cabang legacy tetap memanggil `app.stage.removeChild(state.model)` dan `state.model.destroy(...)`.
+3. **Pembersihan Background Color Coupling:**
+   - `applyStageBackground` (`app.js:8317`) mencabangkan `if (state.production)` sebelum menyentuh `app.renderer`.
+   - Warna latar diatur langsung ke `#stage.style.backgroundColor`, dan gambar latar/dim didelegasikan ke `L2DSceneLayers` DOM. `app.renderer._backgroundColor` tidak lagi dicemari di jalur produksi.
+4. **Regression & Guard Coverage:**
+   - `test/compat-model-scale.test.ts`: sandbox tidak lagi memerlukan mock `PIXI.Point` (18 pass).
+   - `test/r8-1-decouple.test.ts`: suite baru memverifikasi sweep statis 0 `PIXI.Point`, lifecycle delete model produksi & legacy, serta isolasi background (5 pass).
+
+### Quality Gate Baseline R8-1
+
+| Check | Result |
+|---|---|
+| `bun run test:unit` | **674 pass / 0 fail** (4430 expect, 50 file) |
+| `bun run test:guards` | **464 pass / 0 fail** (10 suite) |
+| `bunx tsc --noEmit` | bersih (exit 0) |
+| `bun run build` | bersih (exit 0) |
+
+---
+
 ## UPDATE 2026-09-13 (35) — R7-2 FINAL VERIFICATION: READY WITH ENVIRONMENT GAP
 
 Seluruh 14 task R7-2 final verification selesai diverifikasi (13 task

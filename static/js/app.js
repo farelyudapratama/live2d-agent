@@ -688,13 +688,13 @@
         const r = rect();
         const sc = handle.getScale();
         const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
-        return new PIXI.Point(L + p.x * sc, T + p.y * sc);
+        return { x: L + p.x * sc, y: T + p.y * sc };
       },
       toLocal(p) {
         const r = rect();
         const sc = handle.getScale();
         const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
-        return new PIXI.Point((p.x - L) / sc, (p.y - T) / sc);
+        return { x: (p.x - L) / sc, y: (p.y - T) / sc };
       },
       texture: null,
     };
@@ -1514,7 +1514,7 @@
 
       const eyeLocalX = state.lookFrame.eyeX || m.width / m.scale.x / 2;
       const eyeLocalY = state.lookFrame.eyeY || (m.height / m.scale.y) * 0.22;
-      const eye = m.toGlobal(new PIXI.Point(eyeLocalX, eyeLocalY));
+      const eye = m.toGlobal({ x: eyeLocalX, y: eyeLocalY });
       const W = app.screen.width,
         H = app.screen.height;
 
@@ -1571,7 +1571,7 @@
       const wy = cursor ? cursor.y : m.y + curH / 2;
       let local =
         cursor && m.toLocal
-          ? m.toLocal(new PIXI.Point(cursor.x, cursor.y))
+          ? m.toLocal({ x: cursor.x, y: cursor.y })
           : null;
 
       if (
@@ -3865,13 +3865,24 @@
               const auto = await resolveAnyModelPath();
               if (auto) await loadModel(auto);
               else {
-                try {
-                  app.stage.removeChild(state.model);
-                  // Destroy penuh — alasan sama dengan loadModel().
-                  state.model.destroy({ children: true, texture: true, baseTexture: true });
-                } catch (e) {}
+                if (state.production && state.handle) {
+                  try { if (state.host) state.host.remove(state.handle); } catch (e) {}
+                  try { state.handle.destroy(); } catch (e) {}
+                  state.handle = null;
+                } else if (state.model) {
+                  try {
+                    app.stage.removeChild(state.model);
+                    // Destroy penuh — alasan sama dengan loadModel().
+                    state.model.destroy({ children: true, texture: true, baseTexture: true });
+                  } catch (e) {}
+                }
                 state.model = null;
                 state.roleLink = null;
+                state.arbiter = null;
+                state.overrides = {};
+                state.rawDrive = null;
+                state.accessoryValues = {};
+                state.modelPath = null;
                 showNoModelState();
               }
             }
@@ -8306,6 +8317,25 @@
   function applyStageBackground(cfg) {
     if (!app || app.destroyed) return;
     const c = normalizeModelConfig(cfg);
+    const want = c.bgImage || "";
+
+    if (state.production) {
+      // R8-1 — produksi: warna latar stage di-set via CSS #stage langsung,
+      // gambar latar & dim via L2DSceneLayers DOM (di bawah kanvas transparan).
+      // Jangan pernah menyentuh app.renderer Pixi6 legacy di jalur produksi.
+      const stageEl = $("#stage");
+      if (stageEl) {
+        stageEl.style.backgroundColor = c.bgColor || "#16120c";
+      }
+      if (state.sceneLayers) {
+        state.sceneLayers.setBackground(want || null);
+        state.sceneLayers.setDim(c.bgDim || 0);
+        state._bgSprite = want ? { texture: { width: 1, height: 1 } } : null;
+        state._bgImageKey = want;
+      }
+      return;
+    }
+
     try {
       // Fallback saat bgColor kosong: hangat hangat gelap (nuansa amber
       // menyatu dengan aksen UI) — bukan hitam-biru dingin. Setelan user
@@ -8323,18 +8353,6 @@
       }
     } catch (e) {
       console.warn("[stage-bg] color invalid:", c.bgColor);
-    }
-
-    const want = c.bgImage || "";
-    if (state.production) {
-      // R7-2 — bg via scene-layers DOM (di bawah kanvas transparan); dim via setDim
-      if (state.sceneLayers) {
-        state.sceneLayers.setBackground(want || null);
-        state.sceneLayers.setDim(c.bgDim || 0);
-        state._bgSprite = want ? { texture: { width: 1, height: 1 } } : null;
-        state._bgImageKey = want;
-      }
-      return;
     }
     if (!want) {
       removeStageBgImage();

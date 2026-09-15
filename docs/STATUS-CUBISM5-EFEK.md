@@ -1,5 +1,92 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (48) — Phase 16: AGENT REQUEST LIFECYCLE RESILIENCE — VERIFIED
+
+Phase 16 selesai diimplementasi dan diverifikasi. Status: **PHASE 16 — VERIFIED**.
+
+Request LLM di `AgentBrain` tidak bisa lagi membuat agent macet permanen.
+
+### Failure mode yang ditutup (sebelum Phase 16):
+
+`fetch()` klien→server yang tidak pernah settle → `finally` tak pernah jalan →
+`busy` tetap `true` selamanya → semua `think()`/`reactEvent()` berikutnya
+di-block → agent diam total sampai reload.
+
+### Komponen yang diimplementasi (semua di `brain.ts`, nol dependensi baru):
+
+1. **SATU `AbortController` per request aktif** (`_reqCtrl`) — hanya ada
+   selama request hidup, dibersihkan di `finally`. think() dan reactEvent()
+   dijamin tidak pernah overlap oleh guard `busy` yang SUDAH ada, jadi satu
+   controller cukup; tidak ada state machine kedua.
+
+2. **Timeout bounded** (`LLM_REQUEST_TIMEOUT_MS = 90_000`, konstanta statis
+   yang bisa dioverride test): `setTimeout` + `clearTimeout` manual (BUKAN
+   `AbortSignal.timeout()`) — kompatibel penuh dengan target browser + Bun
+   repo ini dan tidak menambah dependensi runtime. Timer timer hanya menyalakan
+   `ctrl.abort()`. 90s sengaja longgar terhadap timeout idle server (60s di
+   `shared/llm-client.ts`) — ia hanya terpicu kalau klien→server yang menggantung.
+   Director request (`/api/animate-text`) ikut **signal controller induk**
+   (opsional param `signal`), jadi satu abort mematikan seluruh rantai; abort
+   dari lifecycle induk di-propagate naik supaya fallback tepat satu keluar di
+   induk, bukan di director.
+
+3. **Cleanup guarantee** — `_endRequest()` dipanggil PALING AWAL di blok
+   `finally` `think()` dan `reactEvent()` (sebelum `setThinking(false)` dan
+   `busy = false`), plus `invalidateCapabilityProfile()`. Di SEMUA jalur
+   terminal (sukses, HTTP error, network error, AbortError, timeout, exception)
+   busy lepas, thinking selesai, controller + timer nol.
+
+4. **Model-switch cancellation + proteksi basi** — `invalidateCapabilityProfile()`
+   kini meng-abort controller aktif DAN menaikkan generation counter `_reqGen`.
+   Setelah SETIAP await (`resp.json()`, director pass), hasil dibuang bila
+   generasi sudah naik / signal aborted — jadi provider/mock yang tetap resolve
+   setelah abort pun tidak bisa memainkan segmen model lama ke model baru
+   (dibuktikan test dengan fetch yang MENGABAIKAN signal). Pembatalan saat
+   switch model = silent (tanpa fallback); timeout = satu fallback.
+
+5. **Fallback semantics** — timeout/error memakai jalur yang SUDAH ada
+   ("Maaf, aku lagi gak bisa mikir sekarang…"), tepat SATU pesan, tidak lewat
+   parsing directive. Happy path tidak berubah.
+
+### Interaksi Phase 15 (tidak ada semantik P15 yang diubah):
+
+- P15.2 diversity hint: lifetime tetap hanya request proaktif; `finally` P16
+  tetap membersihkannya — termasuk saat timeout (test kunci).
+- P15.2 history: request timeout tidak mencatat apa pun.
+- P15.5 `_lastProactiveAction`: timeout/abort TIDAK mencatat aksi palsu;
+  reactEvent sukses tetap mencatat (test T13/T14).
+- P15.1/P15.3/P15.4: prompt/context tidak disentuh (regression T21–T24).
+- Cooldown `busy` tetap autoritatif; think(A)+think(B) tetap silent-drop (T20).
+
+### Yang TIDAK diubah:
+
+- ParameterArbiter, MotionRuntime, RoleBridge, renderer, Cubism,
+  ModelProfile/CapabilityProfile — tidak tersentuh (nol perubahan file di
+  luar `brain.ts` + test; dicek via diff sweep).
+- `loadProfile()` (`/api/config`) sengaja TIDAK diberi timeout — bukan request
+  LLM dan terjadi SEBELUM `busy` diset, jadi tidak bisa mewedge; dicatat,
+  bukan dilupakan.
+- Tidak ada sistem request-management generik, tidak ada memori/behavior
+  engine baru.
+
+### Tests: `test/request-lifecycle.test.ts` — 20 test (checklist T1–T25),
+semua pakai fetch yang benar-benar tidak settle (reject hanya via signal) —
+bukan simulasi throw instan. Termasuk recovery chain inti:
+timeout → cleanup → think() berikutnya → SUKSES.
+
+### Quality gates:
+- `bun run test:unit`: **1303 pass / 0 fail** (66 file; +20 dari 1283)
+- `bun run test:guards`: **411 pass / 0 fail** (7 suite)
+- `bunx tsc --noEmit`: bersih
+- `bun run build`: bersih
+- Phase 15 suites (diversity/bridge/director/classifier/phase14): hijau semua
+
+### Commit: `c677bd4` feat(ai): bound agent LLM request lifecycle
+### Verifikasi: audit statis diff — tidak ada referensi renderer/Cubism/Arbiter/
+MotionRuntime/RoleBridge/ModelProfile yang masuk; tidak ada import baru di brain.ts.
+
+---
+
 ## UPDATE 2026-09-15 (47) — Phase 15.5: POST-PROACTIVE CONTEXT BRIDGE — VERIFIED
 
 Phase 15.5 selesai diimplementasi dan diverifikasi. Status: **P15.5 VERIFIED**.

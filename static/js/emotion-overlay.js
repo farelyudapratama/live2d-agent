@@ -64,7 +64,7 @@
     ['shock',   ['kaget', 'shock', 'terkejut', 'gaspet']],
   ];
 
-  // MURNI — dipakai guard test (vm), tidak menyentuh DOM/PIXI.
+  // MURNI — dipakai guard test (vm), tidak menyentuh DOM.
   function resolveEmotionFx(name) {
     if (!name || typeof name !== 'string') return null;
     var n = String(name).toLowerCase().replace(/^user:/, '').trim();
@@ -79,7 +79,7 @@
   }
 
   // ── State ───────────────────────────────────────────────────────
-  var container = null;        // PIXI.Container di stage
+  var container = null;        // DOM overlay container (atau null bila tidak aktif)
   var particles = [];          // { obj, kind, born, dur, x, y, vx, vy, seed, emojiIdx }
   var current = null;          // { key, until, lastSpawn }
   var rafId = null;
@@ -92,11 +92,6 @@
     };
   };
 
-  function stage() {
-    var st = window.__l2dDebug && window.__l2dDebug.state;
-    var m = st && st.model;
-    return (m && m.parent) ? m.parent : null;
-  }
   function model() {
     var st = window.__l2dDebug && window.__l2dDebug.state;
     return (st && st.model) ? st.model : null;
@@ -109,8 +104,8 @@
   // cx = pusat massa piksel pada pita atas itu; tinggi konten terlihat
   // ── R7-2: jalur produksi ──────────────────────────────────────
   // renderer scene-graph legacy digantikan host.measureLitBounds()
-  // (readPixels) + partikel DOM (adapter ber-setter identik objek Pixi6,
-  // sehingga tick/spawn/clear tidak berubah).
+  // (readPixels) + partikel DOM. R9-6-4: pixi-live2d/Pixi6 dihapus —
+  // hanya jalur produksi yang tersisa.
   function isProd() {
     return !!(window.__live2dApi && !window.__live2dApi.isStub &&
               window.__l2dDebug && window.__l2dDebug.host);
@@ -164,64 +159,7 @@
   var _anchorCache = null;   // { cx, headY, h, w, at, path }
   function measureHead() {
     if (isProd()) return prodMeasureHead();
-    var st = window.__l2dDebug && window.__l2dDebug.state;
-    var m = st && st.model;
-    if (!m) return null;
-    // Prefer renderer utama aplikasi (diekspos via __l2dDebug.renderer);
-    // fallback __r2 (lab/uji) atau buat renderer kecil pada context canvas.
-    var renderer = (st && st.model && window.__l2dDebug && window.__l2dDebug.renderer) ||
-                   window.__r2 || null;
-    if (!renderer) {
-      var c = document.getElementById('live2d-canvas');
-      if (!c) return null;
-      var glc = c.getContext('webgl') || c.getContext('webgl2');
-      if (!glc || !window.PIXI || !PIXI.Renderer) return null;
-      renderer = window.__overlayRendererRef = new PIXI.Renderer({
-        view: c, context: glc, width: c.width, height: c.height, backgroundColor: 0,
-      });
-    }
-    var W = Math.min(renderer.width, 857), H = Math.min(renderer.height, 691);
-    var rt = PIXI.RenderTexture.create({ width: W, height: H });
-    renderer.render(m, { renderTexture: rt });
-    var cv = renderer.plugins.extract.canvas(rt);
-    var d = cv.getContext('2d').getImageData(0, 0, W, H).data;
-      var top = -1, bottom = -1, minX = W, maxX = -1;
-      for (var y = 0; y < H && top < 0; y++) {
-        for (var x = 0; x < W; x += 2) {
-          if (d[(y * W + x) * 4 + 3] > 10) { top = y; break; }
-        }
-      }
-      if (top < 0) { rt.destroy(true); return null; }
-      for (var y2 = H - 1; y2 > top && bottom < 0; y2--) {
-        for (var x2 = 0; x2 < W; x2 += 2) {
-          if (d[(y2 * W + x2) * 4 + 3] > 10) { bottom = y2; break; }
-        }
-      }
-      // lebar model = rentang x piksel yang tergambar (bukan lebar canvas!)
-      for (var y3 = top; y3 <= bottom; y3 += 3) {
-        for (var x3 = 0; x3 < W; x3 += 2) {
-          if (d[(y3 * W + x3) * 4 + 3] > 10) {
-            if (x3 < minX) minX = x3;
-            if (x3 > maxX) maxX = x3;
-          }
-        }
-      }
-      // pusat massa pita atas (puncak kepala + sedikit ke bawah)
-      var band = Math.max(2, Math.round((bottom - top) * 0.06));
-      var sx = 0, sn = 0;
-      for (var yy = top; yy < Math.min(H, top + band); yy++) {
-        for (var xx = 0; xx < W; xx += 2) {
-          if (d[(yy * W + xx) * 4 + 3] > 10) { sx += xx; sn++; }
-        }
-      }
-      rt.destroy(true);
-      if (!sn || maxX <= minX) return null;
-      // koordinat canvas == koordinat stage di aplikasi ini (stage di 0,0)
-      return {
-        cx: sx / sn, headY: top,
-        h: Math.max(64, bottom - top),
-        w: Math.max(64, maxX - minX),
-      };
+    return null;
   }
   function headAnchor() {
     try {
@@ -245,45 +183,23 @@
 
   function makeSprite(kind, i, cfgv, a) {
     var def = EFFECTS[kind];
-    if (isProd()) {
-      var el;
-      if (def.emoji) {
-        var idx2 = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
-        el = document.createElement('span');
-        el.textContent = def.emoji[idx2];
-        el.style.cssText = 'position:absolute;font-size:' +
-          Math.max(18, Math.round(a.w * 0.05 * cfgv.size)) + 'px;user-select:none;';
-      } else {
-        var r = Math.max(8, a.w * 0.032 * cfgv.size);
-        el = document.createElement('div');
-        el.style.cssText = 'position:absolute;width:' + (r * 2.7).toFixed(0) +
-          'px;height:' + (r * 1.5).toFixed(0) + 'px;background:rgba(255,158,194,0.55);' +
-          'border-radius:50%;';
-      }
-      el.style.opacity = '0';
-      prodGetOverlay() && prodGetOverlay().appendChild(el);
-      return domSprite(el);
-    }
-    var obj;
+    var el;
     if (def.emoji) {
-      var idx = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
-      obj = new PIXI.Text(def.emoji[idx], {
-        fontSize: Math.max(18, Math.round(a.w * 0.05 * cfgv.size)),
-        fill: 0xffffff,
-      });
+      var idx2 = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
+      el = document.createElement('span');
+      el.textContent = def.emoji[idx2];
+      el.style.cssText = 'position:absolute;font-size:' +
+        Math.max(18, Math.round(a.w * 0.05 * cfgv.size)) + 'px;user-select:none;';
     } else {
-      obj = new PIXI.Graphics();
-      var pink = 0xff9ec2;
-      if (kind === 'blush') {
-        var r = Math.max(8, a.w * 0.032 * cfgv.size);
-        obj.beginFill(pink, 0.55);
-        obj.drawEllipse(0, 0, r * 1.35, r * 0.75);
-        obj.endFill();
-      }
+      var r = Math.max(8, a.w * 0.032 * cfgv.size);
+      el = document.createElement('div');
+      el.style.cssText = 'position:absolute;width:' + (r * 2.7).toFixed(0) +
+        'px;height:' + (r * 1.5).toFixed(0) + 'px;background:rgba(255,158,194,0.55);' +
+        'border-radius:50%;';
     }
-    obj.alpha = 0;
-    container.addChild(obj);
-    return obj;
+    el.style.opacity = '0';
+    prodGetOverlay() && prodGetOverlay().appendChild(el);
+    return domSprite(el);
   }
 
   function spawnParticle(kind, i, cfgv) {
@@ -410,13 +326,7 @@
       };
       return container;
     }
-    var s = stage();
-    if (!s || container) return container;
-    if (typeof PIXI === 'undefined' || !PIXI.Container) return null;
-    container = new PIXI.Container();
-    container.zIndex = 100;              // di atas model (model zIndex 0)
-    s.addChild(container);
-    return container;
+    return null;
   }
 
   // ── API publik ──────────────────────────────────────────────────

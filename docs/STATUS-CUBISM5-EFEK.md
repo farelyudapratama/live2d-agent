@@ -1,5 +1,107 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (50) — Phase 18: AGENT PLAYBACK OWNERSHIP & INTERRUPTION — VERIFIED
+
+Phase 18 selesai diimplementasi dan diverifikasi. Status: **PHASE 18 — VERIFIED**.
+
+### Failure mode yang ditutup (exact, dari audit Phase 18)
+
+`playSegments()` hanya MENGINISIASI segmen 1 secara sinkron; segmen
+berikutnya jalan lewat callback `speak` engine (detik–menit). `finally`
+`think()/reactEvent()` melepas `busy` begitu REQUEST selesai — sehingga
+request kedua bisa mulai saat rantai pertama masih bicara. Dua rantai
+berebut satu elemen audio (`state.ttsAudio`): swap src menelan `onended`
+rantai lama → rantai lama TIDAK mati, hanya tertunda, lalu timer guard
+engine (45–60 dtk) fire → **zombie utterance** menyela pembicaraan baru.
+`lockAI/unlockAI` boolean tanpa refcount → rantai yang selesai lebih dulu
+membuka lock padahal rantai lain masih bicara.
+
+### Desain ownership (kecil, AgentBrain-lokal — BUKAN behavior engine)
+
+- `_chainGen` (monoton, tak pernah reset) + `_chainOwner` (token rantai
+  aktif; null = tidak ada yang bicara) + `_chainTimer` (jeda 180ms).
+- **SETIAP kontinuaasi async membawa token**: callback `speak` onDone,
+  gap timer, dan jalur completion — semua di-guard
+  `if (this._chainOwner !== my) return;` terlebih dahulu. Token basi →
+  no-op total (tidak bicara, tidak lanjut segmen, tidak menyentuh lock).
+- `busy` TETAP level request (semantik Phase 16 tidak diubah); ownership
+  playback adalah keadaan TERPISAH. `_reactiveState()` kini mengekspos
+  `utteranceActive`/`utteranceChain` untuk QA.
+
+### Kebijakan preemption (S2 — diuji, bukan diklaim)
+
+1. think() user: **membatalkan rantai aktif di ENTRI** (stop speech +
+   unlock sekali + token basi) — sebelum request jalan; balasan berikutnya
+   meng-claim ulang lewat `playSegments(segments, true)`.
+2. reactEvent() proaktif: `playSegments(segments, false)` — bila sudah ada
+   rantai aktif, **tidak** mulai rantai kedua, dan P15.2/P15.5 TIDAK
+   mencatat (semantik "catat hanya yang dieksekusi" dipertahankan). Tidak
+   ada antrean; tidak ada audio kedua; tidak ada klaim lock kedua.
+3. `playSegments` mengembalikan `boolean` (rantai dimulai?) — satu-satunya
+   jembatan keputusan record proaktif.
+
+### Cancellation bridge (S4)
+
+`window.__live2dAgent.stopSpeech()` (app.js): pause `state.ttsAudio` +
+`speechSynthesis.cancel()` — keduanya guard `try`, **idempoten**, aman
+tanpa audio/model. Timer cleanup milik engine (fallbackTimer/guard
+`doRemoteTTS`) tetap jalan sendiri → `markDone` final tetap terjadi;
+callback brain yang datang telat di-guard token, jadi stop tidak pernah
+menghidupkan rantai basi. Nol subsistem audio kedua (`new Audio` tetap 1).
+
+### aiLock balance (S5 — dibuktikan lewat penghitung test)
+
+claim = tepat 1 `lockAI`; tiap terminal path = tepat 1 `unlockAI`:
+selesai normal (T1/T4), preempt (T5/T14), model switch (T16). Callback
+basi tidak pernah melepas lock rantai baru (T15) dan `maxConcurrentLocks`
+terkunci = 1 (T11). Token = otoritas kepemilikan — tanpa refcount global.
+
+### Model switch (S6)
+
+`invalidateCapabilityProfile()` kini: abort request (Phase 16, tak diubah)
+→ `_reqGen++` → `_endRequest()` → **`_cancelActiveUtterance()`** →
+clear diversity state. Rantai model lama stop + unlock sekali; callback
+speak model lama yang tiba setelah switch diabaikan (T17).
+
+### Yang TIDAK diubah
+
+- ParameterArbiter, MotionRuntime, RoleBridge, ProductionHandle/Cubism/
+  renderer, MotionRegistry/Taxonomy/ModelProfile/CapabilityProfile,
+  semantik request Phase 16 (timeout/abort/fallback), semantik P15.1–
+  P15.5, protokol directive — nol perubahan (diff: brain.ts + app.js
+  bridge + test + docs; sapuan statis bersih).
+- Jujur dicatat: `speechSynthesis.cancel()` memotong audio yang SEDANG
+  jalan di tengah kata (kebijakan "user menang"), dan pembatalan audio
+  remote bergantung guard timer engine untuk cleanup penuh — keduanya
+  perilaku existing yang dipakai, bukan baru.
+
+### Tests: `test/utterance-ownership.test.ts` — 9 test / 63 assertion
+memetakan skenario T1–T24, SEMUA lewat lifecycle async nyata (fake speak
+menyimpan onDone dan TIDAK memanggilnya — persis kondisi audio di-swap;
+zombie direproduksi dengan memanggil onDone basi lalu menunggu). Termasuk
+regresi eksplisit failure lama: rantai A multi-segmen dipreempt → onDone
+A telat fire → **segmen A kedua tidak pernah revive**, tidak pernah
+addChat, tidak menyentuh lock rantai B. Test quality check: 3 asersi
+perlu diperbaiki saat penulisan (kumulatifitas action parser + onDone
+segmen terakhir) — keduanya perilaku existing yang benar, bukan bug.
+P15/P16/P17 suite penuh tetap hijau tanpa satu guard dilonggarkan.
+
+### Quality gates (final, satu rangkaian):
+- `bun run test:unit`: **1324 pass / 0 fail** (68 file; +9 dari 1315)
+- `bun run test:guards`: **411 pass / 0 fail** (7 suite)
+- `bunx tsc --noEmit`: bersih; `bun run build`: bersih
+- Browser smoke TIDAK dijalankan: bridge yang disentuh (`stopSpeech`) hanya
+  termuat di halaman engine utama (app.js); suite smoke ada di pet/vtuber/
+  compositor yang tidak memuat app.js — tidak ada smoke relevan.
+
+### Klaim yang DITEPASKAN (tidak melebih): yang dijamin adalah ownership
+rantai utterance di level AgentBrain (≤1 rantai aktif, callback basi
+no-op, lock seimbang) — bukan klaim "race-free" global di luar itu.
+
+### Commit: `ec5d164` fix(ai): own utterance playback lifecycle
+
+---
+
 ## UPDATE 2026-09-16 (49) — Phase 17: CAPABILITY RE-SYNC INTEGRITY — VERIFIED
 
 Phase 17 selesai diimplementasi dan diverifikasi. Status: **PHASE 17 — VERIFIED**.

@@ -34,7 +34,7 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 336 unit test (bun test) + 512 guard (11 suite)
+bun run test           # SEMUA: 1283 unit test (bun test) + 411 guard (7 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
@@ -139,7 +139,7 @@ static/js/mode-runtime.js    switcher mode — panel assistant tinggal bridge
                              window.__agentPanel
 static/js/{voice-input,emotion-overlay,motion-editor,camera-presence}.js
 test/                        bun test (unit) — termasuk server-parity & integration
-test/legacy/                 guard legacy — 512 assertion, 11 suite
+test/legacy/                 guard legacy — 411 assertion, 7 suite
 data/                        data user — TIDAK di-commit
 ```
 

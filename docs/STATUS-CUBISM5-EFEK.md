@@ -135,7 +135,7 @@ Mekanisme diversity ditambahkan ke `AgentBrain` untuk mencegah pemilihan behavio
 1. **Diversity history** (`_diversityHistory`): Map<eventType, string[]> — sliding window max 3 entry per event type. Mencatat emotion+gesture pair (misal `senang+nod`) yang dipilih LLM.
 2. **Diversity hint** (`diversityHint()`): Membaca history + kandidat (preferences ∪ emotions). Menghasilkan prompt `=== VARIASI PERILAKU ===` yang menyarankan variasi berbeda. Kandidat model-aware — tidak hardcode nama model atau motion ID.
 3. **Recording** (`_recordProactiveBehavior()`): Dijalankan setelah `playSegments()` di `reactEvent()`. Mencatat emotion+gesture pair ke sliding window.
-4. **Prompt injection**: Diversity hint disuntikkan ke `buildSystemPrompt()` hanya saat `_diversityHint` terisi (reactEvent), bukan saat `think()`.
+4. **Prompt injection**: Diversity hint di-set saat `reactEvent()` mulai, dipakai `buildSystemPrompt()` untuk request proaktif itu, lalu di-*clear* di blok `finally` `reactEvent()` setelah request selesai — sehingga tidak pernah bocor ke `think()` user berikutnya.
 5. **Model switch isolation** (`_clearDiversityState()`): Dipanggil dari `invalidateCapabilityProfile()`. History model A tidak bocor ke model B.
 6. **QA/debug exposure**: `diversityHistory` diekspos di `_reactiveState()`.
 
@@ -160,7 +160,7 @@ Phase 15.1 selesai diimplementasi dan diverifikasi. Status: **P15.1 VERIFIED**.
 - Durasi sesi (human-readable: `5m`, `1h 05m`)
 - Jumlah interaksi (pesan user di history)
 
-Maks 200 karakter. Tidak mengekspos parameter Cubism, range, atau state engine.
+Blok ini sendiri <=200 karakter; setelah P15.5 menambahkan baris "Aksi proaktif terakhir", total blok konteks perilaku <=300 karakter. Tidak mengekspos parameter Cubism, range, atau state engine.
 
 ### Commit: `2bc82e9` feat(ai): add structured behavior context to speaker prompt
 ### Tests: 19 baru (total 1058 unit + 411 guard)

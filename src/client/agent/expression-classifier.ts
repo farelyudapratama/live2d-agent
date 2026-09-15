@@ -9,7 +9,8 @@
  *   - Nama opaque (exp_01, exp_02) → UNKNOWN.
  *   - Nama prop/karakter tanpa bukti emosi → UNKNOWN.
  *   - CJK hanya bila arti emosi tidak ambigu.
- *   - Confidence rendah → tetap UNKNOWN (lebih baik miss daripada salah).
+ *   - Confidence adalah metadata informasional, BUKAN gate: token yang cocok
+ *     di peta tetap diklasifikasi walau confidence-nya rendah.
  *
  * Output digunakan sebagai metadata informasional pada expression catalog
  * yang sudah ada — TIDAK mengganti selection, reorder, atau disable expression.

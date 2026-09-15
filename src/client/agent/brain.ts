@@ -27,6 +27,7 @@ import {
   segmentTextFallback,
   EMOTION_GESTURE_FALLBACK,
 } from "./directive-parser";
+import { expressionHint } from "./expression-classifier";
 import { scaleRoleFraction } from "./param-range";
 import type {
   ChatMessage,
@@ -298,7 +299,7 @@ ${cap.emotions?.length ? cap.emotions.join(", ") : "tidak ada preset emosi"}
 Format: [EMOTION:nama]
 
 === DAFTAR EXPRESSION / PROPERTI BAWAAN ===
-${cap.nativeExpressions?.length ? cap.nativeExpressions.join(", ") : "tidak ada"}
+${cap.nativeExpressions?.length ? cap.nativeExpressions.map((e: string) => expressionHint(e)).join(", ") : "tidak ada"}
 Format: [EXPR:nama] atau [PROP:nama]
 ${cap.properties?.length ? "Properti (preset user, bisa kamu aktifkan otomatis): " + cap.properties.join(", ") + "\nGunakan [PROP:nama] untuk menyalakannya." : ""}
 

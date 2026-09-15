@@ -1,5 +1,55 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (46) — Phase 15.4: EXPRESSION HEURISTIC CLASSIFIER — VERIFIED
+
+Phase 15.4 selesai diimplementasi dan diverifikasi. Status: **P15.4 VERIFIED**.
+
+Classifier heuristic berbasis nama token ditambahkan untuk memberikan petunjuk semantik pada expression catalog yang sudah ada.
+
+### Komponen yang diimplementasi:
+
+1. **`expression-classifier.ts`** (module baru): Pure function `classifyExpressionName(name)` yang mengklasifikasikan nama expression berdasarkan token nama saja. Output: `{ emotion, confidence, evidence }`.
+
+2. **Token mapping**: Peta token nama → emosi kanonik (Indonesia). Hanya token yang JELAS masuk:
+   - happy/joy/smile → senang/tersenyum
+   - sad/tear/cry → sedih
+   - angry/rage/mad → kesal
+   - surprised/shock → kaget
+   - shy/blush → malu
+   - confuse/dizzy → bingung
+   - neutral/normal/default → normal
+   - CJK: 怒→kesal, 泣→sedih, 悲→sedih, 驚→kaget (hanya arti unambiguous)
+
+3. **`expressionHint(name)`**: Format compact untuk LLM prompt: `"exp_angry — emotion: kesal"` atau hanya nama bila UNKNOWN.
+
+4. **Speaker prompt integration**: `buildSystemPrompt()` di brain.ts menggunakan `expressionHint()` untuk memformat setiap expression. Opaque names tetap tanpa annotation.
+
+### Klasifikasi konservatif:
+- **Semantic names** (exp_angry, exp_sad, exp_blush) → klasifikasikan
+- **Opaque names** (exp_01, exp_02, exp_03) → UNKNOWN
+- **Prop/costume names** (collar_blue, X_change, 呆猫, 拍照, 眼镜) → UNKNOWN
+- **Ambiguous names** (exp_heart, exp_sparkling, exp_sweat) → UNKNOWN
+- Token boundary mencegah false positive (shirt≠shy, danger≠angry)
+- Negative tokens (unhappy) → UNKNOWN
+
+### Real model verification:
+- ren: exp_01..exp_05 → semua UNKNOWN ✓
+- lumine: exp_angry→kesal, exp_sad→sedih, exp_tear→sedih, exp_blush→malu, exp_dizzy→bingung ✓
+- lumine: collar_*, X_change, exp_heart, exp_sparkling → semua UNKNOWN ✓
+- 神宮白子: 呆猫, 拍照, 眼镜, 围裙 → semua UNKNOWN ✓
+
+### Apa yang TIDAK diubah:
+- Expression selection, reorder, disable — tidak tersentuh
+- ParameterArbiter, MotionRuntime, renderer — tidak tersentuh
+- P15.1/P15.2/P15.3 — tetap utuh
+- Director prompt — tidak mendapat expression info (konsisten sebelumnya)
+- Opaque expressions tetap selectable by original name
+
+### Commit: (belum commit)
+### Tests: 89 baru (total 1223 unit + 411 guard)
+
+---
+
 ## UPDATE 2026-09-15 (45) — Phase 15.3: DIRECTOR MOOD AWARENESS — VERIFIED
 
 Phase 15.3 selesai diimplementasi dan diverifikasi. Status: **P15.3 VERIFIED**.

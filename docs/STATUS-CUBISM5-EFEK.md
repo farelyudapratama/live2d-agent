@@ -1,5 +1,76 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (52) — TARGETED CORRECTNESS FIX: CLEAR-CHAT SHARED ARRAY + ATOMIC REQUEST CLAIM — VERIFIED
+
+Bukan fase baru. Dua bug correctness temuan audit policy pasca-Phase 18.
+Kebijakan pesan-konkuren (queue/interrupt/merge/feedback) SENGAJA TIDAK
+disentuh — behavior REQUEST-BUSY tetap silent-drop seperti sebelumnya.
+
+### Bug 1 — Clear chat tidak pernah benar-benar mengosongkan history
+
+Akar: handler app.js melakukan `window.__agent.history = []` — facade
+`history` adalah REFERENSI SHARED ke array hidup `brain.history` (kontrak
+"Array HIDUP", brain.ts:146/1401). Reassign hanya menambat ulang properti
+facade; array brain tetap terisi → setelah Clear Chat, UI kosong tapi
+SEMUA percakapan lama tetap terkirim ke LLM.
+
+Fix (in-place, satu-satunya operasi yang menjaga invariant):
+`window.__agent.history.length = 0` (guard `Array.isArray`). Tidak ada
+store history kedua, tidak ada semantik baru.
+
+### Bug 2 — Race klaim awal: dua request paralel + timer tercuri
+
+Akar: `think()`/`reactEvent()` men-set `busy` SETELAH `await loadProfile()`
+(kanan ketika `capProfile` masih null — awal sesi / pasca model switch).
+Dua panggilan beruntun sama-sama lolos `if (this.busy)` sebelum salah satu
+mengklaim → dua request LLM paralel; `_beginRequest()` kedua (defensif)
+men-null-kan `_reqCtrl/_reqTimer` milik request pertama → request 1 berjalan
+TANPA timeout dan tanpa controller — pelanggaran semantik Phase 16.
+
+Fix: `this.busy = true` + snapshot `const genAtClaim = this._reqGen` dipindah
+SEBELUM await pertama (cek-klaim jadi satu satuan atomik JS — tidak ada await
+di antaranya), plus outer `try/finally` safety-net (idempoten terhadap finally
+dalam) agar klaim tak pernah jadi kunci abadi. Setelah await profil: bila
+`_reqGen` naik (model switch SELAMA loadProfile) → dibuang SEBELUM request
+mulai, dengan pesan user tetap masuk history (identik semantik abort in-flight
+Phase 16 — memakai mekanisme yang SUDAH ADA, bukan generasi kedua).
+Payload/timeout/fallback/abort-nya Phase 16 dan kepemilikan playback Phase 18
+tidak diubah.
+
+### Temuan yang DILAPORKAN, tidak diperbaiki di sini (disiplin scope)
+
+`nextSegment` dipanggil dari timer jeda 180 ms TANPA pembungkus error: bila
+`applyActions` melempar di tengah rantai, exception lolos ke timer dan rantai
+tetap memegang `_chainOwner` + `aiLock` selamanya (tidak ada jalur pelepas).
+Produksi saat ini tidak punya pelempar yang diketahui di jalur itu, jadi ini
+harden-opsional, bukan bug aktif — kandidat penguatan kecil bila nextSegment
+disentuh, BUKAN bagian dari dua fix ini.
+
+### Tests: `test/history-clear-and-claim.test.ts` — 10 test
+
+Fix-1: statement handler ASLI dari app.js diekstrak + dijalankan di vm
+(mengosongkan array hidup brain, referensi facade tetap identik), guard
+sumber anti-rebind, end-to-end: setelah clear, payload /api/chat berikutnya
+hanya berisi pesan baru.
+Fix-2 (deferred promise, urutan deterministik — bukan sleep-as-proof):
+B1 dua think() beruntun → tepat 1 `_beginRequest` + 1 `/api/chat` + payload
+hanya pesan pertama; B2 think+reactEvent beruntun → 1 request; B3 timeout
+milik request AKTIF (bukan tercuri) + cleanup bersih; B4 provider-error
+first-request → 1 fallback pulih penuh; B5 model-switch saat loadProfile →
+request tidak pernah mulai, pesan tercatat, model baru bisa jawab; B6
+late/stale continuation (provider abai signal) → nol playback; B7 happy-path
+sekuensial utuh.
+
+### Quality gates (satu rangkaian):
+- unit **1341 pass / 0 fail / 0 errors** (70 file; +10) · guards **411 / 0** (7 suite)
+- `tsc` bersih · `build` bersih
+- `smoke-engine-utterance.ts` **31/31** DI BAWAH fix (think()/reactEvent()
+  yang berubah justru jalur inti smoke) · suite P15/P16/P17/P18 penuh hijau
+
+### Commit: `117c52d` fix(agent): atomic request claim and in-place clear-chat
+
+---
+
 ## UPDATE 2026-09-16 (51) — TARGETED CORRECTNESS FIX: loadModel GENERATION GUARD — VERIFIED
 
 Bukan fase baru. Perbaikan tertarget dari temuan audit perilaku pasca-Phase 18.

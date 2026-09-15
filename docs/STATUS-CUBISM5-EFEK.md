@@ -1,5 +1,66 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (51) — TARGETED CORRECTNESS FIX: loadModel GENERATION GUARD — VERIFIED
+
+Bukan fase baru. Perbaikan tertarget dari temuan audit perilaku pasca-Phase 18.
+
+### Race exact yang ditutup
+
+`loadModel()` re-entrant tanpa guard: dua load yang tumpang tindih (boot
+auto-load vs klik user, atau dua klik beruntun) menentukan model akhir dari
+URUTAN PENYELESAIAN async, bukan urutan permintaan. Bukti runtime audit:
+klik tesmodel → lumine berjarak 250ms berakhir di REN (permintaan terakhir
+kalah); boot-load menimpa klik awal; continuation lama sempat men-destroy
+model current-nya user.
+
+### Mekanisme
+
+`let _loadGen = 0` di samping `loadModel`; token `my = ++_loadGen` di
+ENTRI (sebelum await pertama). Pola sama dengan `_reqGen` brain (P16),
+`_taxonomyGen`/`_resyncGen` (P17). Setiap kontinuaasi setelah 4 titik await
+(`resolveAnyModelPath`, `buildModelSettings`, `__compositor8Ready`,
+adapter `loadModel`) memverifikasi token; bukan current → NO-OP:
+
+- G1 (path request): tidak set modelPath, tidak destroy model pilihan user,
+  tidak sentuh UI/teardown.
+- G2/G3: berhenti SEBELUM menyentuh host/binding/adapter.
+- G5 (hasil adapter telat): bersihkan handle MILIK SENDIRI saja —
+  `host.remove(handle)` identity-safe + `handle.destroy()` idempoten —
+  model current tidak tersentuh, lalu no-op.
+- catch: error dari load basi TIDAK menampilkan pesan loader/empty state;
+  load current yang gagal tetap memakai semantik error lama.
+
+`loadModel` kini mengembalikan boolean (true = masih pemilik state saat
+selesai, termasuk jalur error-current; false = diambil-alih).
+`loadUserModel` menghormati false: load basi tidak `hideLoader` dan tidak
+`refreshModels` — pemenang yang pegang UI. Pemanggil lain mengabaikan
+return value (kompatibel).
+
+### Batas klaim (jujur)
+
+Guarantee: **lanjutan load basi tidak dapat mutasi state model current**.
+Ini BUKAN pembatalan — fetch/network load lama tetap menyelesaikan
+diri sendiri dan handle yatim-nya dibersihkan setelah selesai. Tidak ada
+perubahan Brain/Phase 16, Arbiter, MotionRuntime, registry, atau renderer.
+
+### Tests: `test/loadgen-guard.test.ts` — 7 test perilaku via vm-extraction
+fungsi ASLI app.js dengan deferred promise (urutan penyelesaian dikontrol
+penuh, tanpa sleep-as-proof): T1 B-menang-A-no-op, T2 boot vs user (B tidak
+ter-destroy), T3 error basi diam, T4+G5 clean-up handle yatim identity-safe,
+T5/T6 caps+registry hanya dari pemenang, T7 ren→lumine→ren sekuensial
+(teardown normal sebelumnya selamat), T8 A→B→C resolve acak → C menang,
+T9 wrapper loadUserModel tidak merampas loader. Tanpa guard, T1/T2 gagal
+deterministik (destroyB / hang).
+
+### Quality gates (satu rangkaian):
+- unit **1331 pass / 0 fail** (69 file; +7) · guards **411 / 0** · tsc bersih · build bersih
+- Suite Phase 16/17/18 (48 test) hijau · `smoke-engine-utterance.ts` **31/31**
+  di bawah guard (S5 model switch = bukti browser nyata area perubahan)
+
+### Commit: `5f123b4` fix(app): guard model load against stale continuations
+
+---
+
 ## UPDATE 2026-09-16 (50) — Phase 18: AGENT PLAYBACK OWNERSHIP & INTERRUPTION — VERIFIED
 
 Phase 18 selesai diimplementasi dan diverifikasi. Status: **PHASE 18 — VERIFIED**.

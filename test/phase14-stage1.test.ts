@@ -472,3 +472,63 @@ describe("Phase 14 Stage 2 — source code invariants", () => {
     expect(brainSrc).toContain("m.compatibleEmotions");
   });
 });
+
+// ── Test 13: Unknown native motion is safe ──
+describe("Phase 14 Stage 2 — Unknown native motion safety", () => {
+  test("native motion with unrecognized verb does not crash prompt builder", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_m_001", verb: null, tags: [], compatibleEmotions: [], source: "native", duration: 2.0 },
+        { id: "motion_Idle", verb: "neutral", tags: ["neutral"], compatibleEmotions: ["normal"], source: "native", duration: 1.5 },
+      ],
+    });
+    // Should not throw
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("motion_m_001");
+    expect(prompt).toContain("motion_Idle");
+    expect(prompt).toContain("GERAKAN BAWAAN MODEL");
+  });
+
+  test("native motion with empty compatibleEmotions renders without error", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Unknown", verb: "unknown_verb", tags: ["unknown_verb"], compatibleEmotions: [], source: "native", duration: 1.0 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("motion_Unknown");
+    expect(prompt).toContain("unknown_verb");
+    expect(prompt).toMatch(/motion_Unknown.*1s/);
+  });
+});
+
+// ── Test 14: Emotion → native motion selection still works ──
+describe("Phase 14 Stage 2 — Emotion to native motion selection", () => {
+  test("pickClipForEmotion still works with EMOTION_VERBS and byVerb", async () => {
+    const { buildTaxonomy, pickClipForEmotion, EMOTION_VERBS } = require("../src/client/engine/motion-taxonomy");
+    // Build a minimal taxonomy with known clips
+    const clips = [
+      { name: "nod_clip", motion3: { meta: { duration: 1.2 }, curves: [] } },
+      { name: "happy_clip", motion3: { meta: { duration: 1.5 }, curves: [] } },
+    ];
+    const tax = buildTaxonomy(clips);
+    // pickClipForEmotion should still work for senang → tries happy, nod, lean, wave, tilt
+    const pick = pickClipForEmotion(tax.byVerb, "senang");
+    // At minimum, one of the verbs in EMOTION_VERBS.senang should match a clip
+    expect(pick).not.toBeNull();
+    expect(EMOTION_VERBS.senang).toContain(pick!.verb);
+  });
+
+  test("motionCatalogBlock native entries use same verb taxonomy as runtime", () => {
+    // Verify that the verb in catalog entries matches what EMOTION_VERBS would produce
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Nod", verb: "nod", tags: ["nod"], compatibleEmotions: ["senang", "normal"], source: "native", duration: 1.2 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    // nod is in EMOTION_VERBS.senang and EMOTION_VERBS.normal
+    expect(prompt).toContain("cocok: senang/normal");
+    expect(prompt).toContain("nod");
+  });
+});

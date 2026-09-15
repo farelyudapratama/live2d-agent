@@ -656,10 +656,27 @@
     };
   }
 
+  // TARGETED FIX — loadModel generation guard (pola sama dengan _reqGen brain
+  // Phase 16, _taxonomyGen/_resyncGen Phase 17): load yang diminta TERAKHIR
+  // yang memiliki state akhir. Setiap kontinuaasi async memverifikasi
+  // tokennya masih current; token basi → continuation jadi no-op: TIDAK
+  // menyentuh path/model/handle/roleLink/arbiter/caps/UI, tidak destroy apa
+  // pun yang sekarang aktif. Catatan jujur: ini BUKAN pembatalan fetch —
+  // load lama tetap bisa menyelesaikan network-nya, hanya saja hasilnya
+  // tidak boleh lagi mutasi state model current. Return value: true = masih
+  // pemilik state saat selesai (termasuk jalur error); false = jadi basi.
+  let _loadGen = 0;
   async function loadModel(modelPath) {
+    const my = ++_loadGen;
     try {
       if (typeof modelPath !== "string" || !modelPath) {
         modelPath = await resolveAnyModelPath();
+        // G1: boot-load yang lebih tua tidak boleh lagi men-set path,
+        // men-destroy model pilihan user, atau men-trigger empty state.
+        if (my !== _loadGen) {
+          console.log("[load] model load basi (path request) — diabaikan");
+          return false;
+        }
         if (!modelPath)
           throw new Error(
             "Belum ada model terpasang. Upload model lewat tab Model.",
@@ -732,9 +749,19 @@
       } catch (e) {}
 
       const settings = await buildModelSettings(modelPath);
+      // G2: ada load lebih baru → continuation ini mati sebelum menyentuh
+      // host/handle apa pun.
+      if (my !== _loadGen) {
+        console.log("[load] model load basi (settings) — diabaikan:", modelPath);
+        return false;
+      }
 
       // ══ R7-2 / R9-3 — JALUR PRODUKSI TUNGGAL ══
       await window.__compositor8Ready;
+      if (my !== _loadGen) {
+        console.log("[load] model load basi (compositor) — diabaikan:", modelPath);
+        return false;
+      }
       const szp = stageSize();
       if (!state.host) {
         state.host = window.__live2dApi.createHost({
@@ -760,6 +787,16 @@
           ? { kind: "settings", settings }
           : { kind: "path", path: modelPath },
       );
+      // G5: handle kita selesai belakangan tapi load kita sudah basi →
+      // bersihkan handle YANPA kita sendiri (host.remove identity-safe,
+      // destroy milik handle itu — model current tidak tersentuh sama sekali),
+      // lalu lepaskan claim GL-nya dan jadi no-op.
+      if (my !== _loadGen) {
+        console.log("[load] hasil model load basi dibuang (handle own-clean):", modelPath);
+        try { state.host.remove(handle); } catch (e) {}
+        try { handle.destroy(); } catch (e) {}
+        return false;
+      }
       state.handle = handle;
       handle.setAnchor(0, 0); // konvensi legacy: posisi = top-left rect
       state.host.add(handle);
@@ -855,13 +892,21 @@
         console.warn("[sheet] UI refresh failed:", e.message);
       }
       // legacy guard reference: installOverrideGuard(state.model.internalModel);
+      return true;
     } catch (err) {
+      // Error dari load yang sudah basi: BUKAN kegagalan model current —
+      // diam-diam, tanpa pesan error ke UI, tanpa empty state, tanpa teardown.
+      if (my !== _loadGen) {
+        console.log("[load] error dari load basi diabaikan:", (err && err.message) || err);
+        return false;
+      }
       console.error("[Live2D] Failed to load model:", err);
       const p = $("#loader p");
       if (p) p.textContent = __t("sys.errLoadModel", { msg: err.message });
 
       if (String((err && err.message) || "").includes("Belum ada model"))
         showNoModelState();
+      return true; // current (walau gagal) → pemanggil tetap mengurus loader-nya sendiri
     }
   }
 
@@ -3531,6 +3576,7 @@
 
     async function loadUserModel(name) {
       showLoader("Memuat model: " + name + "...");
+      let stale = false;
       try {
         const path = await resolveModel3(name);
         if (!path) throw new Error("tidak ada *.model3.json");
@@ -3538,13 +3584,16 @@
           hideLoader();
           return;
         }
-        await loadModel(path);
+        // loadModel return false = load ini diambil-alih oleh permintaan yang
+        // lebih baru → JANGAN refresh/hideLoader (load pemenang yang pegang UI).
+        stale = !(await loadModel(path));
+        if (stale) return;
         refreshModels();
       } catch (e) {
         console.error("[model] load", e);
         alert(__t("sys.errLoadModel", { msg: e.message }));
       } finally {
-        hideLoader();
+        if (!stale) hideLoader();
       }
     }
 

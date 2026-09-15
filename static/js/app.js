@@ -709,6 +709,9 @@
 
         state.roleEmotions = {};
         state.supportedEmotions = {};
+        // PHASE 17 S7 — ekspresi model lama tidak boleh terbaca sebelum
+        // detectModelCapabilities() model baru menyelesaikan profilnya.
+        state.modelExpressions = [];
         state.emoTarget = {};
         state.emoCur = {};
         state.paramRange = {};
@@ -3749,6 +3752,9 @@
             try {
               refreshSheetUI();
             } catch (e) {}
+            // PHASE 17 S2 — hasil re-scan adalah perubahan kapabilitas:
+            // taxonomy+registry+brain ikut converged TANPA reload halaman.
+            resyncCapabilities("rescan").catch(() => {});
             alert(
               `Character Sheet generated!\n\n` +
                 `${sheet.paramCount} parameter ditemukan\n` +
@@ -5814,6 +5820,9 @@
           hydrateCaps(sheet);
           draft = { values: {}, parts: {} };
           refreshSheetUI();
+          // PHASE 17 S2 — sheet dari server = kapabilitas bisa berubah →
+          // registry/brain ikut, bukan hanya UI.
+          resyncCapabilities("sheet-reload").catch(() => {});
           if (
             presetEditorPopup &&
             !presetEditorPopup.classList.contains("hidden")
@@ -6276,7 +6285,18 @@
 
   async function initMotionRegistry() {
     if (!haveMotionSystem || !state.model) return;
-    const groups = (state.caps && state.caps.motionGroups) || [];
+    // PHASE 17 S1 — live handle adalah SUMBER KEBENARAN grup native.
+    // state.caps.motionGroups hanya fallback (jalur non-produksi / handle
+    // belum ada): scan-cache sheet basi berisi motionGroups: [] tidak boleh
+    // menghapus grup yang dilaporkan handle hidup.
+    let groups = [];
+    try {
+      if (state.handle && typeof state.handle.motionGroups === "function")
+        groups = state.handle.motionGroups() || [];
+    } catch (e) {
+      groups = [];
+    }
+    if (!groups.length) groups = (state.caps && state.caps.motionGroups) || [];
     const meta = {};
     const T = state.motionTaxonomy;
     const EV = (typeof MotionTaxonomy !== "undefined" && MotionTaxonomy.EMOTION_VERBS) || {};
@@ -6330,6 +6350,39 @@
     } catch (e) {
       /* server mati / belum ada folder: registry tetap berisi builtin+native */
     }
+  }
+
+  // ── PHASE 17 S2 — SATU seam re-convergence kapabilitas dalam sesi ──
+  // Dipanggil HANYA saat data kapabilitas benar-benar berubah (re-scan,
+  // klasifikasi AI selesai, reload sheet dari editor) — BUKAN untuk
+  // metadata lain (preset/catatan → invalidate brain sudah ada di
+  // persistSheet). Urutan identik rantai loadModel: taxonomy → registry →
+  // invalidate brain, sehingga think()/reactEvent() berikutnya membangun
+  // ulang CapabilityProfile dari registry + handle terkini.
+  // _resyncGen: generasi terakhir menang — rantai yang lebih tua dibatalkan
+  // di setiap titik await, tidak bisa menimpa hasil yang lebih baru.
+  let _resyncGen = 0;
+  async function resyncCapabilities(reason) {
+    const my = ++_resyncGen;
+    try {
+      await loadMotionTaxonomy();
+    } catch (e) {}
+    if (my !== _resyncGen) {
+      console.log("[resync] rantai lebih tua dibatalkan (" + reason + ")");
+      return;
+    }
+    try {
+      await initMotionRegistry();
+    } catch (e) {
+      console.warn("[resync] registry init gagal:", (e && e.message) || e);
+    }
+    if (my !== _resyncGen) return;
+    try {
+      window.__agent &&
+        typeof window.__agent.invalidateCapabilityProfile === "function" &&
+        window.__agent.invalidateCapabilityProfile();
+    } catch (e) {}
+    console.log("[resync] kapabilitas re-converged (" + reason + ")");
   }
 
   const PRESET_MOTION_PREFIX = "preset_";
@@ -8254,6 +8307,9 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ modelName: sheet.modelName, sheet }),
         }).catch(() => {});
+        // PHASE 17 S2 — klasifikasi mengubah data kapabilitas (roleIds/
+        // accessories → memengaruhi profile AI) → seam yang sama.
+        resyncCapabilities("ai-classify").catch(() => {});
       }
       return { count: items.length, changed };
     } catch (e) {
@@ -8596,7 +8652,12 @@
     };
   }
 
+  // PHASE 17 S3 — generasi taksonomi: hanya hasil load TERAKHIR yang boleh
+  // menulis state.motionTaxonomy. fetch lebih tua yang selesai belakangan
+  // (mis. dua resync overlap) dibuang, tidak menimpa yang lebih baru.
+  let _taxonomyGen = 0;
   async function loadMotionTaxonomy() {
+    const myGen = ++_taxonomyGen;
     state.motionTaxonomy = null;
 
     const parts = String(state.modelPath || "").split("/");
@@ -8616,11 +8677,15 @@
           folder,
           "— trying sheet names",
         );
-        return buildTaxonomyFromNames();
+        return buildTaxonomyFromNames(myGen);
       }
 
       const clipMeta = {};
       for (const c of data.clips || []) clipMeta[c.name] = c;
+      if (myGen !== _taxonomyGen) {
+        console.log("[taxonomy] hasil basi dibuang (gen " + myGen + ")");
+        return state.motionTaxonomy;
+      }
       state.motionTaxonomy = {
         byVerb: data.byVerb,
         clipMeta,
@@ -8641,11 +8706,11 @@
         e.message,
       );
 
-      return buildTaxonomyFromNames();
+      return buildTaxonomyFromNames(myGen);
     }
   }
 
-  function buildTaxonomyFromNames() {
+  function buildTaxonomyFromNames(myGen) {
     const groups = (state.caps && state.caps.motionGroups) || [];
     if (!groups.length || typeof MotionTaxonomy === "undefined") return null;
     const built = MotionTaxonomy.buildTaxonomy(
@@ -8659,6 +8724,12 @@
         group: c.name,
         index: -1,
       };
+    // myGen di-pass dari loadMotionTaxonomy → hanya generasi terakhir boleh
+    // menulis. Tanpa arg (debug/jalur lain) → tulis langsung, perilaku lama.
+    if (myGen !== undefined && myGen !== _taxonomyGen) {
+      console.log("[taxonomy] fallback name-only basi dibuang (gen " + myGen + ")");
+      return state.motionTaxonomy;
+    }
     state.motionTaxonomy = {
       byVerb: built.byVerb,
       clipMeta,

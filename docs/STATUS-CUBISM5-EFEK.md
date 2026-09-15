@@ -35,7 +35,7 @@ Perilaku proaktif terakhir yang dieksekusi kini di-bridge ke konteks Speaker LLM
 - Expression/motion selection — tidak berubah
 - User-driven chat behavior — tidak terpengaruh
 
-### Commit: (belum commit)
+### Commit: `cc1c5a6` feat(ai): bridge proactive behavior into conversation context
 ### Tests: 36 baru (total 1259 unit + 411 guard)
 
 ---

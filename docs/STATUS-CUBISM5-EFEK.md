@@ -1,5 +1,93 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (49) — Phase 17: CAPABILITY RE-SYNC INTEGRITY — VERIFIED
+
+Phase 17 selesai diimplementasi dan diverifikasi. Status: **PHASE 17 — VERIFIED**.
+**Phase 17 juga menutup temuan audit P16 "native motion registry race" (SISA Phase 11/12).**
+
+### Bug yang ditutup (exact stale-clobber)
+
+Sebelum: `initMotionRegistry()` membaca `state.caps.motionGroups` — dan
+`hydrateCaps()` (dipanggil `getCapabilityProfile()`, reload editor, AI
+classify) menimpa `caps.motionGroups` dari **scan-cache sheet di disk**.
+Sheet v1-era (`motionGroups: []`, flag `_stale` hanya peringatan) yang
+mendarat di antara `detectModelCapabilities()` (sinkron dari handle) dan
+rantai async `loadMotionTaxonomy().then(initMotionRegistry)` menghasilkan
+**registry native kosong sampai reload berikutnya** — padahal handle hidup
+melaporkan grup. Ditambah: re-scan / classify / reload sheet dalam sesi tidak
+pernah menyentuh registry sama sekali (harus reload halaman).
+
+### Komponen
+
+1. **S1 — live handle = sumber kebenaran grup native.** `initMotionRegistry()`
+   kini mengambil `state.handle.motionGroups()` bila ada (handle throw →
+   fallback aman); `state.caps` hanya fallback saat handle absen (jalur
+   non-produksi). Sheet `[]` tidak BISA lagi menghapus grup handle hidup.
+   Klasifikasi taksonomi + `emotionCompatibility` + `clearNativeMotions()`
+   tidak berubah. Tidak ada registry kedua; MotionRuntime tidak disentuh.
+
+2. **S2 — SATU seam `resyncCapabilities(reason)`** (dekat `initMotionRegistry`
+   di app.js): urutan identik rantai loadModel — `loadMotionTaxonomy()` →
+   `initMotionRegistry()` → `window.__agent.invalidateCapabilityProfile()`.
+   Dipasang HANYA di jalur pengubah kapabilitas: re-scan (`#btn-inspect`),
+   AI-classify selesai (hanya saat `changed`), reload sheet dari editor.
+   `persistSheet()` TETAP invalidate-saja — preset/catatan adalah data brain,
+   tidak menyentuh taxonomy/registry (dipisah sadar; dicek guard).
+
+3. **S3 — generation guard, bukan state machine baru.** `let _taxonomyGen` —
+   hanya generasi terakhir yang boleh menulis `state.motionTaxonomy`
+   (termasuk jalur fallback name-only; `buildTaxonomyFromNames(myGen)`;
+   pemanggil debug tanpa arg = perilaku lama). `let _resyncGen` — rantai
+   resync yang lebih tua berhenti di setiap titik await, tidak bisa
+   menimpa rantai yang lebih baru. Dibuktikan lewat fetch overlap sungguhan
+   (A lambat + B cepat → akhir = B; A dibatalkan sebelum registry/brain).
+
+4. **S6 — persistensi re-scan:** diaudit ulang — `inspectModel()` SUDAH
+   POST `/api/sheet` (localStorage saja tidak; klaim audit lama "hanya
+   localStorage" salah — POST ada di ekornya). Mekanisme persistensi tetap
+   SATU; tidak ada endpoint kedua.
+
+5. **S7 — `state.modelExpressions = []`** kini ikut di-reset di teardown
+   `loadModel` (sebelumnya di-overwrite di detect tanpa reset eksplisit).
+
+6. **Brain convergence:** seam memanggil `invalidateCapabilityProfile()` →
+   Phase 16 guard (`_reqGen`) otomatis membatalkan request in-flight;
+   `think()` berikutnya lazy-reload `getCapabilityProfile()` → katalog native
+   = registry terkini. Dibuktikan end-to-end lewat AgentBrain nyata + profil
+   berganti versi (test S5).
+
+### Yang TIDAK diubah
+
+- ParameterArbiter, MotionRuntime, RoleBridge, ProductionHandle/renderer,
+  MotionTaxonomy internal, MotionRegistry API, protokol `[ACC:]`, prompt
+  P14/P15, lifecycle Phase 16 — nol perubahan (diff = app.js +75/−4 + test
+  baru; sapuan statis dikonfirmasi).
+- Jendela kecil tetap ada dan jujur dicatat: native model LAMA masih bisa
+  berada di registry antara destroy handle dan `initMotionRegistry()` model
+  baru (perilaku Phase 11 — konvergensi dijamin rantai loadModel; bukan
+  diklaim "race-free", yang diklaim adalah generasi terakhir menang untuk
+  taxonomy/resync dan stale-clobber sheet tidak mungkin lagi).
+
+### Tests: `test/capability-resync.test.ts` — 12 test, PERILAKU NYATA lewat
+ekstraksi-sumber app.js + vm (pola `arbiter-stage3`), bukan string-match:
+stale sheet vs handle hidup, fallback tanpa handle, handle melempar,
+regresi emotionCompatibility, ren→lumine→ren tanpa kebocoran native,
+user motion server-list selamat, taksonomi overlap A-lambat/B-cepat,
+resync overlap + invalidate terpanggil, brain convergence penuh, guard
+wiring + teardown.
+
+### Quality gates (final, satu rangkaian):
+- `bun run test:unit`: **1315 pass / 0 fail** (67 file)
+- `bun run test:guards`: **411 pass / 0 fail** (7 suite)
+- `bunx tsc --noEmit`: bersih; `bun run build`: bersih
+- Regression P15/P16 suites: hijau (tidak ada yang dilonggarkan)
+- Browser smoke tidak relevan untuk jalur ini (perubahan di jalur app.js UI;
+  pet/vtuber smoke tidak memuat app.js) — tidak dijalankan.
+
+### Commit: `ce30978` feat(live2d): harden capability resync
+
+---
+
 ## UPDATE 2026-09-15 (48) — Phase 16: AGENT REQUEST LIFECYCLE RESILIENCE — VERIFIED
 
 Phase 16 selesai diimplementasi dan diverifikasi. Status: **PHASE 16 — VERIFIED**.

@@ -11,6 +11,7 @@
  *   T3  single-candidate behavior tetap diizinkan
  *   T4  cooldown/blokir behavior tetap berjalan persis seperti sebelumnya
  *   T5  diversity tidak mempengaruhi normal user-driven actions (think)
+ *       (termasuk regresi F1: lifecycle reactEvent → think)
  *   T6  model switch mengosongkan/isolasi diversity state
  *   T7  empty candidate list aman
  *   T8  unknown candidate aman
@@ -284,6 +285,12 @@ describe("P15.2 T4 — cooldown still blocks behavior exactly as before", () => 
 
 // ═══════════════════════════════════════════════════════════════════════
 // T5: Diversity tidak mempengaruhi normal user-driven actions (think).
+//
+// REGRESI F1: hint diversity di-set di reactEvent() dan dipakai untuk
+// request proaktif itu. Ia HARUS dibersihkan setelah request selesai —
+// kalau tidak, ia bocor ke prompt think() user berikutnya. Test lifecycle
+// di bawah menjalankan urutan nyata: reactEvent → hint dipakai →
+// reactEvent selesai → think() user.
 // ═══════════════════════════════════════════════════════════════════════
 describe("P15.2 T5 — diversity does not affect normal user-driven actions", () => {
   test("diversity hint tidak muncul di system prompt saat _diversityHint kosong", () => {
@@ -312,6 +319,63 @@ describe("P15.2 T5 — diversity does not affect normal user-driven actions", ()
     // Keduanya tidak saling mempengaruhi
     expect(brain.history.length).toBe(1);
     expect(brain._diversityHistory.get("idle")?.length).toBe(1);
+  });
+
+  test("REGRESI F1 — reactEvent memakai hint, think() berikutnya tidak menerimanya", async () => {
+    const { agent } = makeAgent();
+    const origDoc = (globalThis as any).document;
+    const origFetch = (globalThis as any).fetch;
+    // speak tanpa memanggil callback → hanya segmen 0 diproses (deterministik,
+    // tanpa timer lanjutan yang bisa bocor ke test lain).
+    withAgent({ ...agent, speak: () => {}, lockAI: () => {}, unlockAI: () => {} });
+    (globalThis as any).window.__appEvents = { idleSpeak: true, quietMs: 0 };
+    (globalThis as any).document = { getElementById: () => null };
+
+    const brain: any = new AgentBrain();
+    setCapProfile(brain, DEFAULT_PROFILE);
+    // Isi history supaya diversityHint("idle") benar-benar menghasilkan hint.
+    fillHistory(brain, "idle", ["senang+nod"]);
+
+    const seen: { url: string; system: string }[] = [];
+    (globalThis as any).fetch = async (url: string, init?: any) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      seen.push({ url: String(url), system: String(body.system || "") });
+      if (String(url).includes("/api/animate-text")) {
+        return { ok: true, status: 200, json: async () => ({ segments: [] }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          reply: "[EMOTION:senang][GESTURE:nod] Halo! [EMOTION:malu][GESTURE:look_away_shy] Eh.",
+        }),
+      };
+    };
+
+    try {
+      // 1) Request proaktif HARUS menerima hint.
+      await brain.reactEvent("idle");
+      const proactiveCall = seen.find((c) => c.url.includes("/api/chat"));
+      expect(proactiveCall).toBeTruthy();
+      expect(proactiveCall!.system).toContain("VARIASI PERILAKU");
+
+      // 2) Setelah reactEvent selesai, hint bersih dan tidak ikut prompt berikutnya.
+      expect(brain._diversityHint).toBe("");
+      expect(brain.buildSystemPrompt("")).not.toContain("VARIASI PERILAKU");
+
+      // 3) think() user berikutnya juga tidak menerima hint.
+      seen.length = 0;
+      await brain.think("halo");
+      const thinkCall = seen.find((c) => c.url.includes("/api/chat"));
+      expect(thinkCall).toBeTruthy();
+      expect(thinkCall!.system).not.toContain("VARIASI PERILAKU");
+
+      // 4) Mekanisme P15.2 sendiri tetap utuh (history tercatat).
+      expect(brain._diversityHistory.size).toBeGreaterThan(0);
+    } finally {
+      (globalThis as any).fetch = origFetch;
+      (globalThis as any).document = origDoc;
+    }
   });
 });
 

@@ -163,7 +163,6 @@ export class AgentBrain {
   private _diversityHint = "";
   private _diversityHistory: Map<string, string[]> = new Map();
   static _DIVERSITY_WINDOW = 3;
-  static _DIVERSITY_STALE_MS = 30 * 60 * 1000;
 
   // ── P15.5: Post-proactive context bridge ──
   // Mencatat perilaku proaktif terakhir yang benar-benar dieksekusi agar
@@ -653,6 +652,9 @@ Contoh pendek:
     } finally {
       setThinking(false);
       this.busy = false;
+      // P15.2: Hint diversity hanya milik prompt reactEvent ini. Bersihkan
+      // setelah request selesai supaya tidak bocor ke think() user berikutnya.
+      this._diversityHint = "";
     }
   }
 
@@ -1125,8 +1127,6 @@ Contoh pendek:
         this._pushHistory(eventType, ges);
       }
     }
-    // Bersihkan history lama (> 30 menit)
-    this._cleanStaleHistory();
   }
 
   private _pushHistory(eventType: string, value: string): void {
@@ -1141,14 +1141,6 @@ Contoh pendek:
 
   private _getProactiveHistory(eventType: string): string[] {
     return this._diversityHistory.get(eventType) || [];
-  }
-
-  private _cleanStaleHistory(): void {
-    // Bersihkan jika history terlalu tua (> 30 menit sejak entri terakhir)
-    // Dalam implementasi sederhana, kita bersihkan semua entry lama.
-    // Karena sliding window hanya menyimpan 3 entry, dampaknya minimal.
-    // Yang penting: model switch (invalidateCapabilityProfile) akan
-    // mengosongkan seluruh history via _clearDiversityState().
   }
 
   /** Bersihkan seluruh diversity + proactive state — dipanggil saat model berubah. */

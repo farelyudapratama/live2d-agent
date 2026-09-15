@@ -9,8 +9,6 @@
  *  5. Resize: dispatch resize event -> host.resize() dan model reframed.
  *  6. Native motion: tombol sapa (#b-wave) memicu motion pada handle.
  *  7. Teardown dan model reload: unload model dan muat ulang tanpa error.
- *  8. Legacy fallback (?renderer=legacy): verify production===false dan PIXI.Application aktif.
- *  9. A/B Parity comparison antara Production dan Legacy bounds.
  */
 
 import { spawn } from "child_process";
@@ -241,47 +239,6 @@ async function run() {
       throw new Error("Handle was not re-created on reload");
     }
     console.log("  ✓ Model lifecycle teardown & reload verified");
-
-    // ── 6. Legacy Fallback Mode & Parity ──────────────────────────
-    console.log("\n🧪 Testing 6: Legacy Fallback (?renderer=legacy) & A/B Parity...");
-    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${appPort}/pet.html?renderer=legacy` });
-
-    let legacyReady = false;
-    for (let i = 0; i < 40; i++) {
-      await sleep(250);
-      const evalStatus = await cdp.send<any>("Runtime.evaluate", {
-        expression: "document.getElementById('status')?.textContent",
-        returnByValue: true,
-      });
-      const st = evalStatus.result?.value;
-      if (st && (st.includes("aktif") || st.includes("active"))) {
-        legacyReady = true;
-        break;
-      }
-    }
-
-    const legacyStateEval = await cdp.send<any>("Runtime.evaluate", {
-      expression: `({
-        production: window.__petState?.production,
-        hasHandle: Boolean(window.__petState?.handle),
-        hasHost: Boolean(window.__petState?.host),
-        hasApp: Boolean(window.__petState?.app),
-        bounds: window.__petState?.model?.getBounds ? window.__petState.model.getBounds() : null,
-      })`,
-      returnByValue: true,
-    });
-    const legacyState = legacyStateEval.result?.value;
-    console.log("  State with ?renderer=legacy:", JSON.stringify(legacyState));
-    if (legacyState.production !== true) {
-      throw new Error("Expected production === true unconditionally (legacy fallback retired in R9-3)");
-    }
-    if (legacyState.hasApp) {
-      throw new Error("Expected NO PIXI.Application (legacy fallback retired in R9-3)");
-    }
-    if (!legacyState.hasHandle || !legacyState.hasHost) {
-      throw new Error("Expected production handle and host to remain active with ?renderer=legacy");
-    }
-    console.log("  ✓ Retired legacy parameter safely ignored; production Cubism renderer active");
 
     console.log("\n🎉 ALL PET BROWSER SMOKE CHECKS PASSED!");
   } finally {

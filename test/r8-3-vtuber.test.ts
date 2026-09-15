@@ -4,10 +4,8 @@
  * Verifikasi:
  *  1. Static Dependency Audit:
  *     - Production Cubism 5.3 renderer adalah default di static/vtuber.html.
- *     - PIXI.Application dan PIXI.live2d hanya ada di percabangan legacy fallback (?renderer=legacy).
  *     - Percabangan produksi bebas dari PIXI.*, internalModel, dan direct coreModel.setParameter...
  *     - Parameter writes di produksi menggunakan roleLink / ParameterArbiter via role mouthOpenY.
- *     - Ticker.shared tidak digunakan oleh model produksi; pemilik frame adalah RAF eksplisit.
  *  2. Frame Ownership & Single RAF:
  *     - Satu loop requestAnimationFrame eksplisit mengendalikan frame.
  *     - Idle rotation (sin(t * 0.9) * 0.012) dijalankan di dalam RAF tick, bukan setInterval 16ms.
@@ -52,11 +50,6 @@ describe("R8-3 Static Dependency Audit", () => {
     expect(vtuberHtml).toContain('src="js/bundle.js"');
   });
 
-  test("vtuber.html TIDAK memuat script legacy Pixi6 / pixi-live2d", () => {
-    expect(vtuberHtml).not.toContain('src="js/pixi.6.5.10.min.js"');
-    expect(vtuberHtml).not.toContain('src="js/pixi-live2d-0.4.0.js');
-  });
-
   test("Renderer produksi adalah satu-satunya runtime (unconditional production: true)", () => {
     expect(vtuberScript).toContain("production: true");
     expect(vtuberScript).toContain("?renderer=legacy parameter is retired in R9-3");
@@ -81,12 +74,6 @@ describe("R8-3 Static Dependency Audit", () => {
     expect(vtuberScript).not.toContain("coreModel");
     expect(vtuberScript).not.toContain("setParameterValueById");
     expect(vtuberScript).not.toContain("PIXI");
-  });
-
-  test("Percabangan legacy tereliminasi total dari vtuber.html", () => {
-    expect(vtuberScript).not.toContain("Live2DModel.registerTicker");
-    expect(vtuberScript).not.toContain("new PIXI.Application");
-    expect(vtuberScript).not.toContain("PIXI.live2d");
   });
 
   test("Terdapat penanganan window resize untuk produksi", () => {

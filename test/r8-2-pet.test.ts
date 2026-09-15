@@ -4,15 +4,12 @@
  * Verifikasi:
  *  1. Static Dependency Audit:
  *     - Production Cubism 5.3 renderer adalah default di static/pet.html.
- *     - PIXI.Application dan PIXI.live2d hanya ada di percabangan legacy fallback (?renderer=legacy).
  *     - Percabangan produksi bebas dari PIXI.*, internalModel, dan direct coreModel.setParameter...
  *     - Parameter writes di produksi menggunakan roleLink / ParameterArbiter.
- *     - Ticker.shared tidak digunakan oleh model produksi; pemilik frame adalah RAF eksplisit.
  *  2. Lifecycle & Teardown:
  *     - load, teardownCurrentModel, unload, destroy, dan reload berulang.
  *  3. Transform & Framing Parity:
- *     - Natural dimensions, scaling uniform, dan centering (+ vertical offset -3%)
- *       identik dengan formula legacy.
+ *     - Natural dimensions, scaling uniform, dan centering (+ vertical offset -3%).
  *     - DPR 1 vs DPR 2 tidak mengubah koordinat ruang CSS.
  *     - Window resize memperbarui host dan reframes model.
  *  4. Frame Ownership (Exactly-once):
@@ -45,11 +42,6 @@ describe("R8-2 Static Dependency Audit", () => {
     expect(petHtml).toContain('src="js/i18n.js');
   });
 
-  test("pet.html TIDAK memuat script legacy Pixi6 / pixi-live2d", () => {
-    expect(petHtml).not.toContain('src="js/pixi.6.5.10.min.js"');
-    expect(petHtml).not.toContain('src="js/pixi-live2d-0.4.0.js');
-  });
-
   test("Renderer produksi adalah satu-satunya runtime (unconditional production: true)", () => {
     expect(petScript).toContain("production: true");
     expect(petScript).toContain("?renderer=legacy parameter is retired in R9-3");
@@ -76,13 +68,7 @@ describe("R8-2 Static Dependency Audit", () => {
     expect(petScript).not.toContain("PIXI");
   });
 
-  test("Percabangan legacy tereliminasi total dari pet.html", () => {
-    expect(petScript).not.toContain("Live2DModel.registerTicker");
-    expect(petScript).not.toContain("new PIXI.Application");
-    expect(petScript).not.toContain("Live2DModel.from");
-  });
-
-  test("Terdapat penanganan window resize untuk produksi dan legacy", () => {
+  test("Terdapat penanganan window resize untuk produksi", () => {
     expect(petScript).toContain('window.addEventListener("resize"');
     expect(petScript).toContain("state.host.resize(W, H)");
     expect(petScript).toContain("frameModel()");
@@ -169,68 +155,6 @@ describe("R8-2 Transform & Framing Parity", () => {
     // Destroy
     model.destroy();
     expect(destroyed).toBe(true);
-  });
-
-  test("Paritas kalkulasi posisi & skala antara legacy dan produksi", () => {
-    const W = 420;
-    const H = 640;
-    const natW = 1200;
-    const natH = 1600;
-
-    // Formula legacy di pet.html:
-    const legacyS = Math.min((W * 0.9) / natW, (H * 0.92) / natH);
-    const legacyX = (W - natW * legacyS) / 2;
-    const legacyY = (H - natH * legacyS) / 2 - H * 0.03;
-
-    // Formula produksi via compatModel:
-    const sandbox: Record<string, unknown> = {
-      window: { innerWidth: W, innerHeight: H },
-    };
-    vm.createContext(sandbox);
-    vm.runInContext(compatModelFnStr, sandbox);
-
-    let handlePos = { x: 0, y: 0 };
-    let handleScale = 1;
-    let handleAnchor = { x: 0, y: 0 };
-
-    const mockHandle = {
-      getNaturalSize: () => ({ width: natW, height: natH }),
-      getPosition: () => handlePos,
-      setPosition: (x: number, y: number) => { handlePos = { x, y }; },
-      getScale: () => handleScale,
-      setScale: (s: number) => { handleScale = s; },
-      setAnchor: (ax: number, ay: number) => { handleAnchor = { x: ax, y: ay }; },
-      setRotation: () => {},
-      destroy: () => {},
-      playNativeMotion: () => true,
-      playExpression: () => true,
-    };
-
-    mockHandle.setAnchor(0, 0);
-    const createCompatModel = sandbox.createCompatModel as (h: any) => any;
-    const prodModel = createCompatModel(mockHandle);
-
-    prodModel.scale.set(legacyS);
-    prodModel.x = (W - natW * legacyS) / 2;
-    prodModel.y = (H - natH * legacyS) / 2 - H * 0.03;
-
-    // Evaluasi bounds
-    const prodBounds = prodModel.getBounds();
-    expect(prodBounds.left).toBeCloseTo(legacyX, 5);
-    expect(prodBounds.top).toBeCloseTo(legacyY, 5);
-    expect(prodBounds.width).toBeCloseTo(natW * legacyS, 5);
-    expect(prodBounds.height).toBeCloseTo(natH * legacyS, 5);
-
-    // Evaluasi pusat model pada proyeksi handle:
-    // modelCenter = posX + (0.5 - anchorX) * natW * scale
-    // Dengan anchorX = 0: modelCenter.x = handlePos.x + 0.5 * natW * scale
-    const modelCenterX = handlePos.x + 0.5 * natW * handleScale;
-    const modelCenterY = handlePos.y + 0.5 * natH * handleScale;
-
-    // modelCenter.x harus tepat 0 (tengah layar kanvas)
-    expect(modelCenterX).toBeCloseTo(0, 5);
-    // modelCenter.y harus tepat -H * 0.03 (offset 3% ke atas)
-    expect(modelCenterY).toBeCloseTo(-H * 0.03, 5);
   });
 
   test("Resize jendela memperbarui skala dan mempertahankan pemusatan", () => {

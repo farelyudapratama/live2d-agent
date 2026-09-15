@@ -10,8 +10,8 @@
  *    handle/adapter — tanpa internalModel/coreModel/settings/__moc.
  *  - INTERACTION: invarian zoom-around-cursor (algoritma app.js) memakai
  *    transform handle (CPU-side) — titik di bawah kursor tetap di tempat.
- *  - GAP-2 measureLitBounds: butuh WebGL → dibuktikan di browser (r7-compat.html).
- *  - GAP-1 scene layers: DOM/CSS — dibuktikan di browser (r7-compat.html).
+ *  - GAP-2 measureLitBounds: dibuktikan di browser (sandbox historis R7, dihapus R9-6-4).
+ *  - GAP-1 scene layers: DOM/CSS — dibuktikan di browser (sandbox historis R7, dihapus R9-6-4).
  */
 import { describe, test, expect, beforeAll } from "bun:test";
 import { readFileSync, existsSync, readdirSync } from "node:fs";

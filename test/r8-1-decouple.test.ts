@@ -6,8 +6,7 @@
  *  2. toGlobal / toLocal menghasilkan POJO {x, y} tanpa global PIXI.
  *  3. Lifecycle delete active model di jalur produksi: host.remove() + handle.destroy(),
  *     bukan app.stage.removeChild().
- *  4. Lifecycle delete active model di jalur legacy tetap memanggil app.stage.removeChild().
- *  5. applyStageBackground di jalur produksi tidak mencemari app.renderer Pixi6.
+ *  4. applyStageBackground di jalur produksi tidak mencemari app.renderer.
  */
 import { describe, test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -109,48 +108,6 @@ describe("R8-1 Production Active Model Delete Lifecycle", () => {
     expect(state.arbiter).toBeNull();
     expect(state.modelPath).toBeNull();
     expect(stageEmptyShown).toBe(true);
-  });
-
-  test("del handler in legacy fallback retains app.stage.removeChild", () => {
-    let hostRemoved = false;
-    let stageChildRemoved = false;
-    let modelDestroyed = false;
-
-    const fakeStage = {
-      removeChild(m: any) {
-        stageChildRemoved = true;
-      },
-    };
-    const fakeModel = {
-      destroy() {
-        modelDestroyed = true;
-      },
-    };
-
-    const state: any = {
-      production: false,
-      handle: null,
-      host: null,
-      model: fakeModel,
-      roleLink: null,
-      arbiter: null,
-    };
-
-    if (state.production && state.handle) {
-      if (state.host) state.host.remove(state.handle);
-      state.handle.destroy();
-    } else if (state.model) {
-      try {
-        fakeStage.removeChild(state.model);
-        state.model.destroy();
-      } catch (e) {}
-    }
-    state.model = null;
-
-    expect(hostRemoved).toBe(false);
-    expect(stageChildRemoved).toBe(true);
-    expect(modelDestroyed).toBe(true);
-    expect(state.model).toBeNull();
   });
 });
 

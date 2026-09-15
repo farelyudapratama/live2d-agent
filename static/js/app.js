@@ -7013,6 +7013,23 @@
     speak,
     setExpression: applyExpression,
 
+    // PHASE 18 S4 — hentikan utterance berjalan untuk kepemilikan rantai
+    // brain (preempt / model switch). Idempoten dan aman tanpa audio
+    // (pause atas elemen yang sudah pause = no-op; speechSynthesis optional).
+    // Timer cleanup MILIK ENGINE (speak fallbackTimer / doRemoteTTS guard)
+    // tetap jalan sendiri → markDone final tetap terjadi; callback brain
+    // yang datang dari stop ini sudah di-guard token rantai, jadi stop
+    // tidak pernah bisa menghidupkan rantai basi. Tidak ada subsistem
+    // audio kedua.
+    stopSpeech: () => {
+      try {
+        if (state.ttsAudio) state.ttsAudio.pause();
+      } catch (e) {}
+      try {
+        if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+      } catch (e) {}
+    },
+
     setAccessory: (paramIdOrName, val) => {
       const preset = findPreset(paramIdOrName, 'aksesoris');
       if (preset) return applyPreset(preset);

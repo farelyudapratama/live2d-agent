@@ -181,6 +181,22 @@ export class AgentBrain {
   // nilai ini hanya terpicu kalau klien→server sendiri yang menggantung.
   static LLM_REQUEST_TIMEOUT_MS = 90_000;
 
+  // ── Phase 18: OWNERSHIP rantai utterance (level playback) ──
+  // `busy` tetap level REQUEST (Phase 16) — rantai utterance hidup lebih
+  // lama dari request: segmen berikutnya jalan lewat callback speak engine
+  // (detik s/d menit). Tanpa kepemilikan, dua rantai bisa bergantian
+  // merebut satu elemen audio dan rantai lama bisa "hidup lagi" lewat timer
+  // guard engine 45–60 detik (zombie utterance).
+  // _chainGen: counter monotonik, tidak pernah di-reset.
+  // _chainOwner: token rantai yang sedang aktif (null = tidak ada yang
+  // bicara). SETIAP kontinuaasi async (onDone speak, jeda 180ms) membawa
+  // tokennya; callback bertoken basi tidak pernah melakukan apa pun.
+  // Invarian: pemilik _chainOwner adalah satu-satunya pemegang lockAI —
+  // claim = 1× lockAI, terminal (selesai/preempt/switch) = 1× unlockAI.
+  private _chainGen = 0;
+  private _chainOwner: number | null = null;
+  private _chainTimer: ReturnType<typeof setTimeout> | null = null;
+
   // ── P15.5: Post-proactive context bridge ──
   // Mencatat perilaku proaktif terakhir yang benar-benar dieksekusi agar
   // percakapan user berikutnya (think()) memiliki konteks behavioral.
@@ -516,6 +532,47 @@ Contoh pendek:
     return gen === this._reqGen;
   }
 
+  // ── Phase 18: mekanisme ownership utterance ───────────────────────
+
+  /** Ambil hak bicara. preempt=true (user input SELALU menang): rantai
+   *  aktif dibatalkan dulu — stop speech + lepas lock + token basi.
+   *  preempt=false (proaktif): null bila sudah ada yang bicara — proaktif
+   *  tidak pernah memotong dan tidak membuat rantai kedua. */
+  private _claimUtterance(preempt: boolean): number | null {
+    if (this._chainOwner !== null) {
+      if (!preempt) return null;
+      this._cancelActiveUtterance();
+    }
+    const token = ++this._chainGen;
+    this._chainOwner = token;
+    l2d()?.lockAI?.(); // claim = tepat satu lockAI
+    return token;
+  }
+
+  /** Rantai selesai normal. Lepas hanya bila masih pemilik — callback basi
+   *  tidak pernah melepas lock milik rantai baru. */
+  private _releaseUtterance(token: number): void {
+    if (this._chainOwner !== token) return;
+    this._chainOwner = null;
+    l2d()?.unlockAI?.(); // terminal = tepat satu unlockAI
+  }
+
+  /** Batalkan rantai aktif (preempt user / model switch). Idempoten: tanpa
+   *  rantai aktif = no-op, stopSpeech tidak dipanggil. */
+  private _cancelActiveUtterance(): void {
+    if (this._chainOwner === null) return;
+    this._chainOwner = null; // token basi dulu — semua kontinuaasi jadi no-op
+    if (this._chainTimer !== null) {
+      clearTimeout(this._chainTimer);
+      this._chainTimer = null;
+    }
+    const L = l2d();
+    try {
+      L?.stopSpeech?.(); // bridge idempoten; aman tanpa audio/model
+    } catch (e) {}
+    L?.unlockAI?.(); // lock yang DIPEGANG rantai ini dilepas tepat sekali
+  }
+
   private async animateTextViaDirector(
     text: string,
     profile: CapabilityProfile | null,
@@ -607,6 +664,11 @@ Contoh pendek:
     this.history.push({ role: "user", content: userText });
     if (this.history.length > HISTORY_LIMIT * 2)
       this.history.splice(0, this.history.length - HISTORY_LIMIT * 2);
+    // Phase 18 S2: input pengguna SELALU menang atas playback aktif —
+    // rantai (proaktif atau balasan lama) dibatalkan SEKARANG, bukan saat
+    // balasan tiba (request bisa hitung detik-belasan detik). Lock lama
+    // dilepas di sini, playSegments() meng-claim kembali nanti.
+    this._cancelActiveUtterance();
     setThinking(true);
     // Fase mikir: alih pandang ke atas-samping (intent "think"); balik
     // menghadap user otomatis saat mulai bicara (lockAI) atau lewat timer.
@@ -649,7 +711,7 @@ Contoh pendek:
           return;
         }
         console.log("[agent] speaking reply with", segments.length, "animation segments");
-        this.playSegments(segments);
+        this.playSegments(segments, true);
       } else {
         const msg = "Hmm, aku bingung jawabnya...";
         l2d()?.speak?.(msg);
@@ -739,7 +801,16 @@ Contoh pendek:
           console.warn("[agent] reactEvent segments basi setelah director — tidak dimainkan");
           return;
         }
-        this.playSegments(segments);
+        // Phase 18 S7: proaktif TIDAK pernah memotong utterance aktif.
+        // playSegments(false) menolak claim saat ada rantai hidup →
+        // TIDAK ada aksi dijalankan → tidak boleh dicatat (semantik P15.5
+        // "catat hanya yang dieksekusi" dipertahankan; konteks mood event
+        // sudah di-update upstream, tidak ada antrean kedua).
+        const started = this.playSegments(segments, false);
+        if (!started) {
+          console.log("[agent] reactEvent skipped playback — utterance lain aktif");
+          return;
+        }
         // P15.2: Catat apa yang benar-benar diputuskan LLM supaya
         // diversity hint di event berikutnya bisa menghindari pengulangan.
         this._recordProactiveBehavior(type, segments);
@@ -771,18 +842,24 @@ Contoh pendek:
   }
 
   // ── Speak segments sequentially with ACTUAL TTS callback timing (kompat legacy) ──
-  private playSegments(segments: ParsedSegment[]): void {
+  // Phase 18: rantai membawa TOKEN kepemilikan. `preempt` = kebijakan S2:
+  // user think() selalu merebut (true), proactive reactEvent tidak pernah
+  // memotong (false → skip total bila sudah ada yang bicara).
+  // Return true = rantai benar-benar dimulai (aksi boleh dicatat P15.x).
+  private playSegments(segments: ParsedSegment[], preempt: boolean): boolean {
     const L = l2d();
-    if (!L || !segments.length) return;
-
-    // Lock: AI takes control — freezes fidget clock, pauses user interaction.
-    L.lockAI?.();
+    if (!L || !segments.length) return false;
+    const my = this._claimUtterance(preempt);
+    if (my === null) return false;
 
     let i = 0;
     const nextSegment = () => {
+      // Fase 18: penjaga pertama di SEMUA kontinuaasi async. Token basi
+      // (rantai dipreempt / model diganti) → no-op total: tidak bicara,
+      // tidak lanjut segmen, tidak menyentuh lock rantai baru.
+      if (this._chainOwner !== my) return;
       if (i >= segments.length) {
-        // All done — release lock
-        L.unlockAI?.();
+        this._releaseUtterance(my); // selesai — unlock tepat sekali
         console.log("[agent] all", segments.length, "segments done, AI lock released");
         return;
       }
@@ -802,11 +879,15 @@ Contoh pendek:
 
       // Speak with callback — next segment starts when THIS one finishes
       L.speak(seg.text, () => {
-        // Small pause between segments for natural rhythm
-        setTimeout(nextSegment, 180);
+        if (this._chainOwner !== my) return; // engine guard 45–60s yang telat
+        this._chainTimer = setTimeout(() => {
+          this._chainTimer = null;
+          nextSegment();
+        }, 180);
       });
     };
     nextSegment();
+    return true;
   }
 
   // ── Apply actions to the model (AI-driven, EASED) ──
@@ -1094,6 +1175,10 @@ Contoh pendek:
     if (this._reqCtrl) this._reqCtrl.abort();
     this._reqGen++;
     this._endRequest();
+    // Phase 18 S6: kepemilikan playback juga ikut mati — rantai model lama
+    // dibatalkan (stop speech + unlock sekali + timer bersih) sehingga
+    // model baru mulai dari nol dan callback speak basi tidak bisa revive.
+    this._cancelActiveUtterance();
     // P15.2: Bersihkan diversity history agar model baru tidak terpengaruh
     // behavior dari model sebelumnya.
     this._clearDiversityState();
@@ -1177,6 +1262,9 @@ Contoh pendek:
       // Phase 16: expose lifecycle request untuk QA/debug (readonly snapshot)
       activeRequest: this._reqCtrl !== null,
       requestGeneration: this._reqGen,
+      // Phase 18: expose ownership utterance untuk QA/debug
+      utteranceActive: this._chainOwner !== null,
+      utteranceChain: this._chainOwner,
     };
   }
   _pickSupportedEmotion(p: string[]) {

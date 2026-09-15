@@ -45,7 +45,7 @@ Classifier heuristic berbasis nama token ditambahkan untuk memberikan petunjuk s
 - Director prompt — tidak mendapat expression info (konsisten sebelumnya)
 - Opaque expressions tetap selectable by original name
 
-### Commit: (belum commit)
+### Commit: `25e5b61` feat(ai): add conservative expression semantics
 ### Tests: 89 baru (total 1223 unit + 411 guard)
 
 ---

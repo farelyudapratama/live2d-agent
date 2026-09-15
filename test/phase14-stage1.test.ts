@@ -1,13 +1,23 @@
 /**
- * phase14-stage1.test.ts — Phase 14 Stage 1: Model identity & control axes.
+ * phase14-stage1.test.ts — Phase 14 Stage 1+2: Model identity, control axes,
+ * native motion AI catalog.
  *
- * Mengunci:
+ * Stage 1 mengunci:
  *   - modelName muncul di system prompt (bila tersedia).
- *   - controlAxes muncul di system prompt: axis yang ada = terdaftar,
- *     axis yang tidak ada = tidak disebut + peringatan.
- *   - Format lama (emosi, gesture, directive, expression, aksesoris) tetap utuh.
- *   - Tidak ada raw parameter ID atau range yang bocor ke Speaker LLM context.
- *   - Model switch → profil baru → prompt berubah (tidak stale).
+ *   - controlAxes muncul di system prompt.
+ *   - Format lama (emosi, gesture, directive, expression) tetap utuh.
+ *   - Tidak ada raw parameter ID/range yang bocor.
+ *   - Model switch rebuilds prompt.
+ *
+ * Stage 2 mengunci:
+ *   - Native motion catalog berisi entries source:"native".
+ *   - Native entries punya verb, compatibleEmotions, duration.
+ *   - User motion entries tetap utuh.
+ *   - Speaker prompt punya section NATIVE MOTIONS.
+ *   - Speaker prompt TIDAK punya raw Cubism parameter IDs.
+ *   - Motion Director menerima native catalog.
+ *   - Model switch → catalog berubah.
+ *   - summaryForLLM mengembalikan verb.
  *   - animateTextViaDirector mengirim controlAxes + modelName ke server.
  */
 import { describe, test, expect, beforeEach } from "bun:test";
@@ -284,5 +294,181 @@ describe("Phase 14 Stage 1 — source code invariants", () => {
     );
     expect(fetchBlock).toContain("controlAxes");
     expect(fetchBlock).toContain("modelName");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// PHASE 14 STAGE 2 — Native Motion AI Catalog
+// ════════════════════════════════════════════════════════════════════
+
+describe("Phase 14 Stage 2 — Native motion catalog in profile", () => {
+  test("native motions appear in motionCatalog", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Idle", description: "Motion bawaan model: Idle", verb: "neutral", tags: ["neutral"], compatibleEmotions: ["normal"], source: "native", duration: 2.0 },
+        { id: "motion_Nod", description: "Motion bawaan model: Nod", verb: "nod", tags: ["nod"], compatibleEmotions: ["senang", "normal"], source: "native", duration: 1.2 },
+        { id: "my_wave", description: "User wave", verb: null, tags: ["custom"], compatibleEmotions: ["senang"], source: "user", duration: 1.5 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    // Native motions should be in the prompt
+    expect(prompt).toContain("motion_Idle");
+    expect(prompt).toContain("motion_Nod");
+    // User motion should also be present
+    expect(prompt).toContain("my_wave");
+  });
+
+  test("native motion section label is present", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Idle", verb: "neutral", tags: ["neutral"], compatibleEmotions: [], source: "native", duration: 2.0 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("GERAKAN BAWAAN MODEL");
+  });
+
+  test("user motion section label is present", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "my_dance", description: "Dance move", verb: null, tags: [], compatibleEmotions: [], source: "user", duration: 3.0 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("GERAKAN BUATAN USER");
+  });
+
+  test("native entries show verb in prompt", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Happy", verb: "happy", tags: ["happy"], compatibleEmotions: ["senang"], source: "native", duration: 1.5 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("happy");
+  });
+
+  test("native entries show compatibleEmotions in prompt", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Nod", verb: "nod", tags: ["nod"], compatibleEmotions: ["senang", "normal"], source: "native", duration: 1.0 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("senang");
+    expect(prompt).toContain("normal");
+  });
+
+  test("native entries show duration in prompt", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Idle", verb: "neutral", tags: ["neutral"], compatibleEmotions: [], source: "native", duration: 2.5 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("2.5s");
+  });
+
+  test("no raw Cubism parameter IDs in native motion section", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Nod", verb: "nod", tags: ["nod"], compatibleEmotions: ["senang"], source: "native", duration: 1.0 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).not.toContain("ParamAngleX");
+    expect(prompt).not.toContain("ParamMouthOpenY");
+    expect(prompt).not.toContain("ParamEyeLOpen");
+  });
+});
+
+describe("Phase 14 Stage 2 — User motions preserved", () => {
+  test("user motion with description appears correctly", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "my_custom_wave", description: "Custom wave gesture", verb: null, tags: ["custom"], compatibleEmotions: ["senang"], source: "user", duration: 1.5 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("my_custom_wave");
+    expect(prompt).toContain("Custom wave gesture");
+    expect(prompt).toContain("Motion Studio");
+  });
+
+  test("mixed native + user motions both appear", () => {
+    const profile = fakeProfile({
+      motionCatalog: [
+        { id: "motion_Nod", verb: "nod", tags: ["nod"], compatibleEmotions: [], source: "native", duration: 1.0 },
+        { id: "my_dance", description: "Dance", verb: null, tags: [], compatibleEmotions: [], source: "user", duration: 2.0 },
+      ],
+    });
+    const prompt = buildPrompt(profile);
+    expect(prompt).toContain("motion_Nod");
+    expect(prompt).toContain("my_dance");
+    expect(prompt).toContain("GERAKAN BAWAAN MODEL");
+    expect(prompt).toContain("GERAKAN BUATAN USER");
+  });
+});
+
+describe("Phase 14 Stage 2 — Model switching native catalog", () => {
+  test("different models produce different native catalogs", () => {
+    const promptA = buildPrompt(fakeProfile({
+      motionCatalog: [
+        { id: "motion_Nod", verb: "nod", tags: ["nod"], compatibleEmotions: ["senang"], source: "native", duration: 1.0 },
+        { id: "motion_Wave", verb: "wave", tags: ["wave"], compatibleEmotions: ["senang"], source: "native", duration: 1.5 },
+      ],
+    }));
+    const promptB = buildPrompt(fakeProfile({
+      motionCatalog: [
+        { id: "motion_Bow", verb: "neutral", tags: ["neutral"], compatibleEmotions: ["normal"], source: "native", duration: 2.0 },
+        { id: "motion_Dance", verb: "happy", tags: ["happy"], compatibleEmotions: ["senang"], source: "native", duration: 3.0 },
+      ],
+    }));
+    expect(promptA).toContain("motion_Nod");
+    expect(promptA).toContain("motion_Wave");
+    expect(promptA).not.toContain("motion_Bow");
+    expect(promptB).toContain("motion_Bow");
+    expect(promptB).toContain("motion_Dance");
+    expect(promptB).not.toContain("motion_Nod");
+  });
+
+  test("empty catalog after switch → no native section", () => {
+    const prompt = buildPrompt(fakeProfile({ motionCatalog: [] }));
+    expect(prompt).not.toContain("GERAKAN BAWAAN MODEL");
+  });
+});
+
+describe("Phase 14 Stage 2 — source code invariants", () => {
+  test("app.js initMotionRegistry computes emotionCompatibility", () => {
+    const appSrc = readFileSync(join(ROOT, "static/js/app.js"), "utf8");
+    expect(appSrc).toContain("verbToEmotions");
+    expect(appSrc).toContain("emotionCompatibility: emoCompat");
+  });
+
+  test("app.js getCapabilityProfile includes native in motionCatalog filter", () => {
+    const appSrc = readFileSync(join(ROOT, "static/js/app.js"), "utf8");
+    // The filter should include both "user" and "native"
+    expect(appSrc).toContain('a.source === "user" || a.source === "native"');
+  });
+
+  test("motion-dsl.ts summaryForLLM includes verb field", () => {
+    const dslSrc = readFileSync(join(ROOT, "src/client/animation/motion-dsl.ts"), "utf8");
+    expect(dslSrc).toContain("const verb = tags.length");
+    expect(dslSrc).toContain("verb,");
+  });
+
+  test("server animate-text splits native vs user motions", () => {
+    const serverSrc = readFileSync(join(ROOT, "src/server/index.ts"), "utf8");
+    expect(serverSrc).toContain("nativeMotions");
+    expect(serverSrc).toContain("userMotions");
+    expect(serverSrc).toContain('m.source==="native"');
+    expect(serverSrc).toContain("Gerakan bawaan model (native)");
+  });
+
+  test("brain.ts motionCatalogBlock handles native and user sections", () => {
+    expect(brainSrc).toContain("GERAKAN BAWAAN MODEL");
+    expect(brainSrc).toContain("source === \"native\"");
+    expect(brainSrc).toContain("m.verb");
+    expect(brainSrc).toContain("m.compatibleEmotions");
   });
 });

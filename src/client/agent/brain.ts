@@ -161,19 +161,42 @@ export class AgentBrain {
         ? (profile as any).motionCatalog
         : [];
     if (!cat.length) return "";
-    let s =
-      "\n=== GERAKAN BUATAN USER (Motion Studio) ===\nFormat: [MOTION:id] — PAKAI PERSIS id di bawah, jangan mengarang.\n";
-    for (const m of cat.slice(0, 24)) {
-      s += `- ${m.id}: ${m.description || m.id}`;
-      if (m.tags?.length) s += ` [tag: ${m.tags.join(", ")}]`;
-      if ((m as any).compatibleEmotions?.length)
-        s += ` (cocok saat: ${(m as any).compatibleEmotions.join(", ")})`;
-      s += "\n";
+    const native = cat.filter((m: any) => m.source === "native");
+    const user = cat.filter((m: any) => m.source !== "native");
+    let s = "";
+
+    // Native motions — compact semantic catalog
+    if (native.length) {
+      s += "\n=== GERAKAN BAWAAN MODEL (Native Motion) ===\n";
+      s += "Model ini punya gerakan native berikut. Pilih berdasarkan verb & emosi:\n";
+      for (const m of native.slice(0, 30)) {
+        const parts = [m.id];
+        if (m.verb) parts.push(m.verb);
+        if (m.compatibleEmotions?.length)
+          parts.push(`cocok: ${m.compatibleEmotions.join("/")}`);
+        if (m.duration) parts.push(`${m.duration}s`);
+        s += `- ${parts.join(", ")}\n`;
+      }
+      s += "Gunakan [GESTURE:nama] untuk gesture bawaan. Native motion diputar otomatis\n" +
+        "oleh runtime saat emosi sesuai — tidak perlu direquest manual.\n";
     }
-    s +=
-      "Gerakan ini dirancang user sendiri, jadi UTAMAKAN dipakai kalau maknanya pas.\n" +
-      "Jangan pakai kalau bertabrakan dengan emosi segmen itu. Boleh tambah\n" +
-      "[INTENSITY:0.3-1.0] untuk mengatur seberapa kuat gerakannya.\n";
+
+    // User motions — existing format
+    if (user.length) {
+      s +=
+        "\n=== GERAKAN BUATAN USER (Motion Studio) ===\nFormat: [MOTION:id] — PAKAI PERSIS id di bawah, jangan mengarang.\n";
+      for (const m of user.slice(0, 24)) {
+        s += `- ${m.id}: ${m.description || m.id}`;
+        if (m.tags?.length) s += ` [tag: ${m.tags.join(", ")}]`;
+        if ((m as any).compatibleEmotions?.length)
+          s += ` (cocok saat: ${(m as any).compatibleEmotions.join(", ")})`;
+        s += "\n";
+      }
+      s +=
+        "Gerakan ini dirancang user sendiri, jadi UTAMAKAN dipakai kalau maknanya pas.\n" +
+        "Jangan pakai kalau bertabrakan dengan emosi segmen itu. Boleh tambah\n" +
+        "[INTENSITY:0.3-1.0] untuk mengatur seberapa kuat gerakannya.\n";
+    }
     return s;
   }
 

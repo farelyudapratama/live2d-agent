@@ -1279,7 +1279,9 @@ async function handleAnimateText(req:Request):Promise<Response>{
   const text=(body.text||"").trim(); const caps=body.capabilities||{};
   const emotions=(caps.emotions&&caps.emotions.length)?caps.emotions:["senang","sedih","malu","kaget","normal"];
   const gestures=(caps.gestures&&caps.gestures.length)?caps.gestures:["nod","shake","tilt_curious","lean_excited","recoil_surprised","look_away_shy","laugh_bounce","think","wave_hi"];
-  const motions=Array.isArray(caps.motions)? caps.motions.filter((m:any)=>m&&m.id):[];
+  const allMotions=Array.isArray(caps.motions)? caps.motions.filter((m:any)=>m&&m.id):[];
+  const nativeMotions=allMotions.filter((m:any)=>m.source==="native");
+  const userMotions=allMotions.filter((m:any)=>m.source!=="native");
   // Penjelasan parameter tulisan USER (dari character sheet, dikirim brain).
   // Otoritatif: director harus menghormati makna ini, bukan menebak dari nama id.
   const noteLines=formatParamNotes(body.paramNotes);
@@ -1300,7 +1302,8 @@ ${charName ? "\nKarakter: " + charName + (modelName ? " (model: " + modelName + 
 ${axesList ? "\nAxis kontrol model: " + axesList + " — SUGGESTI harus konsisten dengan axis yang tersedia.\n" : ""}
 Daftar Emosi yang didukung model: [${emotions.join(", ")}]
 Daftar Gesture yang tersedia: [${gestures.join(", ")}]
-${motions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+motions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}
+${nativeMotions.length? "Gerakan bawaan model (native) — model ini punya gerakan berikut:\n"+nativeMotions.slice(0,30).map((m:any)=>"- "+m.id+(m.verb? " ("+m.verb+")":"")+(m.compatibleEmotions&&m.compatibleEmotions.length? " cocok: "+m.compatibleEmotions.join("/"):"")+(m.duration? " "+m.duration+"s":"")).join("\n")+"\nNative motion diputar otomatis oleh runtime saat emosi sesuai — tidak perlu dipilih manual.\n":""}
+${userMotions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+userMotions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}
 ${noteLines ? "\nPENJELASAN PARAMETER DARI USER (otoritatif — hormati makna ini):\n"+noteLines+"\n" : ""}
 ${personaLines ? "\nKEPRIBADIAN KARAKTER (ditulis user — pilih emosi, gesture, dan intensity yang konsisten dengan kepribadian ini, jangan generik):\n"+personaLines+"\n" : ""}
 TUGAS:
@@ -1309,7 +1312,7 @@ TUGAS:
 3. Untuk setiap segment, tentukan:
    - "text": teks klausa/kalimat tersebut (harus sama persis dengan teks asli bila digabung kembali)
    - "emotion": emosi yang SANGAT SESUAI dengan makna klausa tersebut (dari daftar emosi di atas). Emosi WAJIB berubah mengikuti pergeseran nada teks — jangan pakai emosi yang sama untuk semua segment kecuali teksnya memang konsisten satu nada dari awal sampai akhir.
-   - "gesture": nama gesture yang pas (atau null jika netral)${motions.length? '\n   - "motion": id gerakan user bila ada yang sangat pas (atau null)':""}
+   - "gesture": nama gesture yang pas (atau null jika netral)${allMotions.length? '\n   - "motion": id gerakan bila ada yang sangat pas (atau null)':""}
    - "intensity": angka 0.3 s/d 1.0 (seberapa kuat ekspresinya, 0.4=halus, 0.8=ekspresif) — sesuaikan naik-turun sesuai kekuatan emosi tiap segment, jangan pakai angka yang sama terus-menerus.
 
 ATURAN PENTING:
@@ -1327,7 +1330,7 @@ Skema (bukan contoh isi — hanya struktur):
   try{
     const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:directorPrompt}]);
     let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
-    const okEmotion=new Set(emotions); const okGesture=new Set(gestures); const okMotion=new Set(motions.map((m:any)=>m.id));
+    const okEmotion=new Set(emotions); const okGesture=new Set(gestures); const okMotion=new Set(allMotions.map((m:any)=>m.id));
     const segments=(Array.isArray(parsed)?parsed:[]).reduce((acc:any[],s:any)=>{
       if(!s||typeof s!=="object") return acc; const t=typeof s.text==="string"? s.text:""; if(!t.trim()) return acc;
       let inten=Number(s.intensity); if(!Number.isFinite(inten)) inten=0.7;

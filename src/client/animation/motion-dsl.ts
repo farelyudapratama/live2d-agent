@@ -307,7 +307,9 @@ export function rolesToParamTracks(asset: MotionAsset, roleMap: Record<string, s
 
 export function summaryForLLM(asset: MotionAsset): any {
   const compatible = Object.entries((asset as any).emotionCompatibility || {}).filter(([, v]: any) => v >= 0.5).map(([k]) => k);
-  return { id: (asset as any).id, description: (asset as any).description || (asset as any).name, tags: (asset as any).tags || [], compatibleEmotions: compatible, source: (asset as any).source, duration: (asset as any).duration };
+  const tags = (asset as any).tags || [];
+  const verb = tags.length && typeof tags[0] === "string" ? tags[0] : null;
+  return { id: (asset as any).id, description: (asset as any).description || (asset as any).name, verb, tags, compatibleEmotions: compatible, source: (asset as any).source, duration: (asset as any).duration };
 }
 
 export function validateMotion(asset: MotionAsset): string[] {

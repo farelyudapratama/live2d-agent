@@ -6279,12 +6279,26 @@
     const groups = (state.caps && state.caps.motionGroups) || [];
     const meta = {};
     const T = state.motionTaxonomy;
+    const EV = (typeof MotionTaxonomy !== "undefined" && MotionTaxonomy.EMOTION_VERBS) || {};
+    // Inversi EMOTION_VERBS: verb → emosi yang mengizinkan verb itu.
+    const verbToEmotions = {};
+    for (const [emo, verbs] of Object.entries(EV)) {
+      for (const v of verbs) {
+        if (!verbToEmotions[v]) verbToEmotions[v] = [];
+        verbToEmotions[v].push(emo);
+      }
+    }
     if (T && T.clipMeta) {
       for (const c of Object.values(T.clipMeta)) {
         if (!c || !c.group || meta[c.group]) continue;
+        const emoCompat = {};
+        if (c.verb && verbToEmotions[c.verb]) {
+          for (const emo of verbToEmotions[c.verb]) emoCompat[emo] = 0.7;
+        }
         meta[c.group] = {
           duration: c.duration && c.duration > 0 ? c.duration : 2,
           tags: c.verb ? [c.verb] : [],
+          emotionCompatibility: emoCompat,
         };
       }
     }
@@ -8558,7 +8572,7 @@
             .list()
             .filter(
               (a) =>
-                a.source === "user" &&
+                (a.source === "user" || a.source === "native") &&
                 a.aiEnabled !== false &&
                 (a.description || a.tags.length),
             )

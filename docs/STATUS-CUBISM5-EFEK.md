@@ -1,5 +1,45 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (47) — Phase 15.5: POST-PROACTIVE CONTEXT BRIDGE — VERIFIED
+
+Phase 15.5 selesai diimplementasi dan diverifikasi. Status: **P15.5 VERIFIED**.
+**Phase 15 SELESAI (P15.1–P15.5 semua VERIFIED).**
+
+Perilaku proaktif terakhir yang dieksekusi kini di-bridge ke konteks Speaker LLM berikutnya.
+
+### Komponen yang diimplementasi:
+
+1. **`_lastProactiveAction`** (brain.ts): Field `string | null` — menyimpan format semantic `"emotion + gesture"` dari segmen proaktif pertama yang benar-benar dieksekusi. Bounded: hanya 1 string.
+
+2. **`_recordLastProactiveAction(segments)`**: Dipanggil SETELAH `playSegments()` di `reactEvent()` — hanya perilaku yang sampai di execution path yang dicatat. Extracts emotion + gesture dari segmen pertama.
+
+3. **`contextBlock()` bridge**: Baris `Aksi proaktif terakhir: <action>` ditambahkan ke P15.1 behavioral context bila ada. Context tetap bounded (<=300 char gabungan).
+
+4. **Model switch**: `_lastProactiveAction` di-clear di `_clearDiversityState()` (dipanggil `invalidateCapabilityProfile()`). Model baru tidak mewarisi perilaku model lama.
+
+### Sumber kebenaran:
+- `_lastProactiveAction`: direkam dari `segments[0].actions` SETELAH `playSegments()` — reliable execution boundary
+- `contextBlock()`: reuse mekanisme P15.1, tambah 1 baris
+- `directorContextBlock()` (P15.3): TIDAK terpengaruh — Director tetap tanpa proactive context
+
+### Privacy boundary:
+- Hanya semantic info: `"emotion + gesture"` (misal `"sedih + look_away_shy"`)
+- Tidak mengekspos: raw Cubism param, parameter range, motion/exp file paths, renderer, ParameterArbiter, MotionRuntime
+
+### Apa yang TIDAK diubah:
+- P15.1 Speaker context — tetap utuh + bridge
+- P15.2 proactive diversity — tetap independen, tidak di-expose ke Speaker
+- P15.3 Director context — tidak terpengaruh
+- P15.4 expression hints — tetap utuh
+- ParameterArbiter, MotionRuntime, renderer, Cubism — tidak tersentuh
+- Expression/motion selection — tidak berubah
+- User-driven chat behavior — tidak terpengaruh
+
+### Commit: (belum commit)
+### Tests: 36 baru (total 1259 unit + 411 guard)
+
+---
+
 ## UPDATE 2026-09-15 (46) — Phase 15.4: EXPRESSION HEURISTIC CLASSIFIER — VERIFIED
 
 Phase 15.4 selesai diimplementasi dan diverifikasi. Status: **P15.4 VERIFIED**.

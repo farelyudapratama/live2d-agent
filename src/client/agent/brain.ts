@@ -165,6 +165,12 @@ export class AgentBrain {
   static _DIVERSITY_WINDOW = 3;
   static _DIVERSITY_STALE_MS = 30 * 60 * 1000;
 
+  // ── P15.5: Post-proactive context bridge ──
+  // Mencatat perilaku proaktif terakhir yang benar-benar dieksekusi agar
+  // percakapan user berikutnya (think()) memiliki konteks behavioral.
+  // Bounded: hanya 1 string; dihapus saat model switch.
+  private _lastProactiveAction: string | null = null;
+
   /**
    * Blok konteks perilaku singkat — menyuntikkan state sesi saat ini ke prompt
    * pembicara agar LLM bisa membuat keputusan behavior yang kontekstual.
@@ -191,6 +197,11 @@ export class AgentBrain {
       (m) => m.role === "user" && typeof m.content === "string" && m.content.trim(),
     ).length;
     if (interactions > 0) parts.push(`Interaksi: ${interactions}`);
+    // P15.5: Bridge perilaku proaktif terakhir ke Speaker.
+    // Hanya muncul bila ada perilaku yang benar-benar dieksekusi.
+    if (this._lastProactiveAction) {
+      parts.push(`Aksi proaktif terakhir: ${this._lastProactiveAction}`);
+    }
     if (!parts.length) return "";
     return "\n=== KONTEKS PERILAKU ===\n" + parts.join(", ") + "\n";
   }
@@ -632,6 +643,10 @@ Contoh pendek:
         // P15.2: Catat apa yang benar-benar diputuskan LLM supaya
         // diversity hint di event berikutnya bisa menghindari pengulangan.
         this._recordProactiveBehavior(type, segments);
+        // P15.5: Bridge perilaku proaktif terakhir ke konteks percakapan.
+        // Record SETELAH playSegments() — hanya perilaku yang benar-benar
+        // sampai di execution path yang dicatat.
+        this._recordLastProactiveAction(segments);
       }
     } catch (err) {
       console.error("[agent] reactEvent", type, err);
@@ -1037,6 +1052,8 @@ Contoh pendek:
       events: this.getEvents(),
       // P15.2: expose diversity history untuk QA/debug
       diversityHistory: Object.fromEntries(this._diversityHistory),
+      // P15.5: expose last proactive action untuk QA/debug
+      lastProactiveAction: this._lastProactiveAction,
     };
   }
   _pickSupportedEmotion(p: string[]) {
@@ -1134,10 +1151,34 @@ Contoh pendek:
     // mengosongkan seluruh history via _clearDiversityState().
   }
 
-  /** Bersihkan seluruh diversity state — dipanggil saat model berubah. */
+  /** Bersihkan seluruh diversity + proactive state — dipanggil saat model berubah. */
   private _clearDiversityState(): void {
     this._diversityHistory.clear();
     this._diversityHint = "";
+    // P15.5: Hapus bridge konteks proaktif agar model baru tidak
+    // mewarisi perilaku dari model sebelumnya.
+    this._lastProactiveAction = null;
+  }
+
+  // ── P15.5: Post-proactive context bridge ─────────────────────────
+  // Mencatat perilaku proaktif terakhir (emotion + gesture) dari
+  // segmen yang benar-benar dieksekusi. Hanya segmen pertama yang
+  // dicatat — cukup untuk konteks ringkas.
+
+  private _recordLastProactiveAction(segments: ParsedSegment[]): void {
+    if (!segments?.length) return;
+    const first = segments[0];
+    const act = first?.actions;
+    if (!act) return;
+    const emo = act.emotion || null;
+    const ges = act.gesture || null;
+    if (!emo && !ges) return;
+    this._lastProactiveAction = this._formatProactiveAction(emo, ges);
+  }
+
+  private _formatProactiveAction(emo: string | null, ges: string | null): string {
+    if (emo && ges) return `${emo} + ${ges}`;
+    return emo || ges || "";
   }
 
   // Exposed so the legacy engine's quick-phrase mood guess can still work.

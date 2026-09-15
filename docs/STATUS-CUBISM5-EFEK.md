@@ -1,5 +1,32 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (44) — Phase 15.2: PROACTIVE EVENT DIVERSITY — VERIFIED
+
+Phase 15.2 selesai diimplementasi dan diverifikasi. Status: **P15.2 VERIFIED**.
+
+Mekanisme diversity ditambahkan ke `AgentBrain` untuk mencegah pemilihan behavior/emosi yang sama berulang kali pada proactive events.
+
+### Komponen yang diimplementasi:
+
+1. **Diversity history** (`_diversityHistory`): Map<eventType, string[]> — sliding window max 3 entry per event type. Mencatat emotion+gesture pair (misal `senang+nod`) yang dipilih LLM.
+2. **Diversity hint** (`diversityHint()`): Membaca history + kandidat (preferences ∪ emotions). Menghasilkan prompt `=== VARIASI PERILAKU ===` yang menyarankan variasi berbeda. Kandidat model-aware — tidak hardcode nama model atau motion ID.
+3. **Recording** (`_recordProactiveBehavior()`): Dijalankan setelah `playSegments()` di `reactEvent()`. Mencatat emotion+gesture pair ke sliding window.
+4. **Prompt injection**: Diversity hint disuntikkan ke `buildSystemPrompt()` hanya saat `_diversityHint` terisi (reactEvent), bukan saat `think()`.
+5. **Model switch isolation** (`_clearDiversityState()`): Dipanggil dari `invalidateCapabilityProfile()`. History model A tidak bocor ke model B.
+6. **QA/debug exposure**: `diversityHistory` diekspos di `_reactiveState()`.
+
+### Apa yang TIDAK diubah:
+- ParameterArbiter, MotionRuntime, Live2D renderer/adapter — tidak tersentuh
+- P15.1 structured context — tetap utuh
+- User-driven chat/thinking (`think()`) — tidak terpengaruh
+- Existing cooldown (busy, quietPeriod, idleSpeak, awaySpeak, returnSpeak) — tetap autoritatif
+- Native motion catalog, emotion/gesture behavior — tetap utuh
+
+### Commit: `948132d` feat(ai): diversify proactive behavior selection
+### Tests: 38 baru (total 1096 unit + 411 guard)
+
+---
+
 ## UPDATE 2026-09-15 (43) — Phase 15.1: STRUCTURED BEHAVIOR CONTEXT — VERIFIED
 
 Phase 15.1 selesai diimplementasi dan diverifikasi. Status: **P15.1 VERIFIED**.

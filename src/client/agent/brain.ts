@@ -155,6 +155,36 @@ export class AgentBrain {
   // jeda acak; dibatalkan kalau dia balik duluan (lihat setPresence).
   private awaySpeakTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Blok konteks perilaku singkat — menyuntikkan state sesi saat ini ke prompt
+   * pembicara agar LLM bisa membuat keputusan behavior yang kontekstual.
+   * Maks 200 karakter; mood "normal" di-skip untuk hemat token.
+   */
+  private contextBlock(): string {
+    const parts: string[] = [];
+    // Mood
+    if (this.userMood && this.userMood !== "normal") {
+      parts.push(`Mood user: ${this.userMood}`);
+    }
+    // Durasi sesi — human-readable
+    const ms = Math.max(0, Date.now() - (this.agentStart || Date.now()));
+    const totalMin = Math.floor(ms / 60000);
+    if (totalMin >= 60) {
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      parts.push(`Sesi: ${h}h ${String(m).padStart(2, "0")}m`);
+    } else {
+      parts.push(`Sesi: ${totalMin}m`);
+    }
+    // Interaksi — hitung pesan user di history
+    const interactions = this.history.filter(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.trim(),
+    ).length;
+    if (interactions > 0) parts.push(`Interaksi: ${interactions}`);
+    if (!parts.length) return "";
+    return "\n=== KONTEKS PERILAKU ===\n" + parts.join(", ") + "\n";
+  }
+
   private motionCatalogBlock(profile: CapabilityProfile | null): string {
     const cat =
       profile && Array.isArray((profile as any).motionCatalog)
@@ -235,6 +265,8 @@ ${note}
 `
       : "";
 
+    const ctxBlock = this.contextBlock();
+
     const nm = this.characterName();
     const ax = cap.controlAxes || {};
     const axesAvailable = [ax.head, ax.eyes, ax.mouth, ax.body, ax.brow].some(Boolean);
@@ -251,7 +283,7 @@ ${note}
 
 Kamu memainkan karakter anime LIVE2D${nm ? ` bernama ${nm}` : ""}${cap.modelName ? ` (model: ${cap.modelName})` : ""}. KAMU bisa menggerakkan karakter ini secara real-time!
 Semua gerakan dikirim sebagai directive tersembunyi dalam balasanmu.${axesBlock}
-${noteBlock}
+${noteBlock}${ctxBlock}
 === DAFTAR EMOSI ===
 ${cap.emotions?.length ? cap.emotions.join(", ") : "tidak ada preset emosi"}
 Format: [EMOTION:nama]

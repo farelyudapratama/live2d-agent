@@ -532,3 +532,215 @@ describe("Phase 14 Stage 2 — Emotion to native motion selection", () => {
     expect(prompt).toContain("nod");
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// PHASE 15.1 — Structured Behavior Context
+// ════════════════════════════════════════════════════════════════════
+
+describe("Phase 15.1 — Structured behavior context", () => {
+  function brainWith(overrides: Record<string, any> = {}): any {
+    const { AgentBrain } = require("../src/client/agent/brain");
+    const brain: any = new AgentBrain();
+    brain.capProfile = fakeProfile(overrides.profile || {});
+    if (overrides.userMood) brain.userMood = overrides.userMood;
+    if (overrides.agentStart) brain.agentStart = overrides.agentStart;
+    if (overrides.history) brain.history = overrides.history;
+    return brain;
+  }
+
+  // T1: context includes non-normal mood
+  test("context includes non-normal mood", () => {
+    const brain = brainWith({ userMood: "sedih" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).toContain("Mood user: sedih");
+    expect(prompt).toContain("KONTEKS PERILAKU");
+  });
+
+  // T2: context omits normal mood
+  test("context omits normal mood", () => {
+    const brain = brainWith({ userMood: "normal" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).not.toContain("Mood user:");
+  });
+
+  // T3: context includes session duration
+  test("context includes session duration", () => {
+    const brain = brainWith({ agentStart: Date.now() - 5 * 60000 });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).toMatch(/Sesi: \d+m/);
+  });
+
+  // T4: context includes interaction count
+  test("context includes interaction count", () => {
+    const brain = brainWith({
+      history: [
+        { role: "user", content: "hai" },
+        { role: "assistant", content: "halo" },
+        { role: "user", content: "apa kabar" },
+      ],
+    });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).toContain("Interaksi: 2");
+  });
+
+  // T5: context <= 200 characters
+  test("context block does not exceed 200 characters", () => {
+    const brain = brainWith({
+      userMood: "senang",
+      agentStart: Date.now() - 90 * 60000,
+      history: Array.from({ length: 50 }, (_, i) => ({
+        role: "user",
+        content: "msg " + i,
+      })),
+    });
+    const prompt: string = brain.buildSystemPrompt("");
+    const match = prompt.match(/=== KONTEKS PERILAKU ===\n([^\n]+)/);
+    expect(match).toBeTruthy();
+    // The context line (after header) should be <= 200 chars
+    expect(match![1].length).toBeLessThanOrEqual(200);
+  });
+
+  // T6: no raw Cubism parameter IDs
+  test("context contains no raw Cubism parameter IDs", () => {
+    const brain = brainWith({ userMood: "kaget" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).not.toMatch(/ParamAngleX/);
+    expect(prompt).not.toMatch(/ParamMouthOpenY/);
+    expect(prompt).not.toMatch(/ParamEyeLOpen/);
+  });
+
+  // T7: no parameter ranges in context
+  test("context contains no parameter ranges", () => {
+    const brain = brainWith({ userMood: "kesal" });
+    const prompt: string = brain.buildSystemPrompt("");
+    const ctxMatch = prompt.match(/=== KONTEKS PERILAKU ===\n([^\n]+)/);
+    if (ctxMatch) {
+      expect(ctxMatch[1]).not.toMatch(/-?\d+\.\.-?\d+/);
+      expect(ctxMatch[1]).not.toMatch(/min:\s*-?\d/);
+      expect(ctxMatch[1]).not.toMatch(/max:\s*-?\d/);
+    }
+  });
+
+  // T8: missing/invalid values produce safe output
+  test("missing or invalid values do not produce undefined/null/NaN/Infinity", () => {
+    const brain = brainWith({
+      userMood: undefined,
+      agentStart: NaN,
+      history: null,
+    });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).not.toContain("undefined");
+    expect(prompt).not.toContain("NaN");
+    expect(prompt).not.toContain("Infinity");
+    // null as mood is treated as empty — should not crash
+    expect(prompt).toContain("DAFTAR EMOSI");
+  });
+
+  // T9: buildSystemPrompt contains the context block
+  test("buildSystemPrompt includes KONTEKS PERILAKU section when mood is non-normal", () => {
+    const brain = brainWith({ userMood: "senang" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).toContain("=== KONTEKS PERILAKU ===");
+  });
+
+  // T10: model identity remains present
+  test("model identity remains present with context block", () => {
+    const brain = brainWith({ userMood: "malu" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).toContain("model: Ren");
+    expect(prompt).toContain("TestChan");
+  });
+
+  // T11: native motion catalog remains present
+  test("native motion catalog remains present with context block", () => {
+    const brain = brainWith({
+      userMood: "sedih",
+      profile: {
+        motionCatalog: [
+          { id: "motion_Nod", verb: "nod", tags: ["nod"], compatibleEmotions: ["senang"], source: "native", duration: 1.0 },
+        ],
+      },
+    });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).toContain("GERAKAN BAWAAN MODEL");
+    expect(prompt).toContain("motion_Nod");
+  });
+
+  // T12: existing prompt privacy tests remain green (no raw param IDs in full prompt)
+  test("full prompt has no raw parameter IDs", () => {
+    const brain = brainWith({ userMood: "bingung" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt).not.toContain("ParamAngleX");
+    expect(prompt).not.toContain("ParamAngleY");
+    expect(prompt).not.toContain("ParamMouthOpenY");
+    expect(prompt).not.toContain("ParamEyeLOpen");
+    expect(prompt).not.toContain("ParamBodyAngleX");
+  });
+
+  // T13: prompt size constraint (existing test from llm-roles, verified here too)
+  test("prompt remains under 4000 characters", () => {
+    const brain = brainWith({ userMood: "senang" });
+    const prompt: string = brain.buildSystemPrompt("");
+    expect(prompt.length).toBeLessThan(4000);
+  });
+});
+
+describe("Phase 15.1 — contextBlock edge cases", () => {
+  function getCtx(overrides: Record<string, any> = {}): string {
+    const { AgentBrain } = require("../src/client/agent/brain");
+    const brain: any = new AgentBrain();
+    brain.capProfile = fakeProfile();
+    if (overrides.userMood !== undefined) brain.userMood = overrides.userMood;
+    if (overrides.agentStart !== undefined) brain.agentStart = overrides.agentStart;
+    if (overrides.history !== undefined) brain.history = overrides.history;
+    return brain.contextBlock();
+  }
+
+  test("empty history → no interaction line", () => {
+    const ctx = getCtx({ history: [] });
+    expect(ctx).not.toContain("Interaksi:");
+  });
+
+  test("history with only assistant messages → no interaction line", () => {
+    const ctx = getCtx({
+      history: [{ role: "assistant", content: "hai" }],
+    });
+    expect(ctx).not.toContain("Interaksi:");
+  });
+
+  test("empty content strings are not counted as interactions", () => {
+    const ctx = getCtx({
+      history: [
+        { role: "user", content: "  " },
+        { role: "user", content: "" },
+        { role: "user", content: "real message" },
+      ],
+    });
+    expect(ctx).toContain("Interaksi: 1");
+  });
+
+  test("session duration formats correctly for hours", () => {
+    const ctx = getCtx({ agentStart: Date.now() - 65 * 60000 });
+    expect(ctx).toMatch(/Sesi: 1h 05m/);
+  });
+
+  test("session duration 0m for brand new session", () => {
+    const ctx = getCtx({ agentStart: Date.now() });
+    expect(ctx).toContain("Sesi: 0m");
+  });
+
+  test("all fields present with maximum context", () => {
+    const ctx = getCtx({
+      userMood: "kaget",
+      agentStart: Date.now() - 125 * 60000,
+      history: [
+        { role: "user", content: "a" },
+        { role: "user", content: "b" },
+        { role: "user", content: "c" },
+      ],
+    });
+    expect(ctx).toContain("Mood user: kaget");
+    expect(ctx).toContain("Sesi: 2h 05m");
+    expect(ctx).toContain("Interaksi: 3");
+  });
+});

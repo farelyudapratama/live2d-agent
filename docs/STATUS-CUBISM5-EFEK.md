@@ -4,6 +4,175 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-15 (41) — R9-4: VENDOR DELETION, CORE-LOG-SHIM A/B & PIXI8 AUDIT
+
+Tahap implementasi R9-4 selesai dieksekusi dan diverifikasi secara menyeluruh dengan status **R9-4 VERIFIED**.
+Vendor legacy Pixi6 (`pixi.6.5.10.min.js`) + pixi-live2d (`pixi-live2d-0.4.0.js`) terhapus fisik dari `static/js/` (deletion dilakukan sesi sebelumnya, dibuktikan tidak mengubah perilaku produksi), `core-log-shim.js` terbukti tidak diperlukan lewat A/B browser verification nyata lalu **dihapus permanen**, dan `pixi8-namespace.js` teraudit sebagai **dependensi produksi aktif** (bukan dead machinery).
+
+### Ringkasan Pekerjaan R9-4:
+
+1. **A/B Browser Verification core-log-shim (WAJIB NYATA — bukan static analysis):**
+   - Harness baru `test/smoke-corelog-shim-ab.ts`: menjalankan 3 halaman produksi (index/pet/vtuber) × 2 model (ren=motions+expressions, lumine=physics-only 223 param) × 2 kondisi via CDP Chromium headless. Kondisi B menghapus tag shim lewat **interceptor server** (file fisik tak disentuh selama pengujian).
+   - Kapabilitas diverifikasi per halaman×model: page boot, Core 6.0.1 (`Version.csmGetVersion`), Framework 5.3 (`__l2dFrameworkStarted`), adapter init (host+handle), load ren, load lumine, parameter read/write, native motion, expression + efek param nyata, gate EyeBlink/Breath/Physics, Focus, destroy/reload.
+   - **Kondisi A (DENGAN shim): PASS semua, 0 console error.** **Kondisi B (TANPA shim): PASS semua, 0 console error.**
+   - Probe expression divulkan detail teknisnya: `exp_02` menulis `ParamEyeLSmile=1` dengan fade-in easing-sine — sampel timing bervariasi (0.02–0.97) tapi **konvergensi identik 1.0000** di kedua kondisi (dibuktikan `poll-stabil` terpisah). Urutan yang benar: `stopAllMotions()` dulu (Idle ren men-drive EyeLSmile via kurva motion) sebelum `playExpression`.
+   - **Putusan: shim TIDAK diperlukan** → `static/js/core-log-shim.js` dihapus permanen + seluruh referensi produksi (index/pet/vtuber) dan sandbox (r3–r7) dibersihkan. Alasan teknis: shim adalah first-writer-wins untuk slot log Core saat **DUA binding** (pixi-live2d era-4 + CubismFramework 5.3) memanggil `csmSetLogFunction`; setelah vendor Pixi6/pixi-live2d terhapus, hanya **satu** pemanggil tersisa (`CubismFramework.startUp`, sekali, ter-guard `__l2dFrameworkStarted`) — tak ada slot kedua yang bisa melempar "Unable to grow wasm table". Terbukti behavior di browser identik.
+
+2. **Test disesuaikan dengan keputusan shim:**
+   - `test/live2d-production.test.ts`: test "core-log-shim: first-writer-wins" diganti test penegakan **ketiadaan** shim di disk & HTML produksi; test urutan pemuatan `r3-coexist.html` diganti penegakan artefak historis (sandbox = bukan kontrak produk). 24/24 pass.
+
+3. **PIXI8-Namespace Audit (consumer graph nyata):**
+   - Simbol diekspor: `window.__compositor8` (PixiJS 8.20.1 terisolasi), `window.__compositor8Ready` (Promise), event `compositor8-ready`.
+   - Konsumen produksi: `src/live2d/production-env.ts` (`compositor: () => g.__compositor8 ?? null` — duck-type env) → `src/live2d/production-host.ts` `bindHandle` mode `canvas-texture` (**throw tanpa compositor**) → ketiga halaman produksi `await window.__compositor8Ready` sebelum `createHost` (semuanya `composite: "canvas-texture"`).
+   - **Kategori A: masih diperlukan produksi** — bagian integral jalur render (loader satu-satunya Pixi8). Mekanisme capture/restore `window.PIXI` kini sebagian over-engineered (tidak ada lagi Pixi6 untuk dipulihkan) tapi menghapusnya adalah refactor opsional, bukan scope R9-4. **Namespace dipertahankan.**
+
+4. **Dead Tests Vendor (verifikasi ulang & finalisasi):**
+   - `test/legacy/test-core6-compat.js` (guard PATCH 3 renderOrders pada `pixi-live2d-0.4.0.js` vendored) dan `test/legacy/test-multiply-color.js` (guard surgical patch multiplyColor pada lib yang sama) — keduanya membaca file vendor yang **sudah tidak ada di disk**, melindungi stack legacy yang sudah mati (produksi modern: CubismWebFramework 5.3 resmi menangani render order & multiplyColor native, tanpa patch). Tidak ada product invariant modern yang belum tercakup. **Tetap dihapus** (deletion sesi sebelumnya final). Guards turun 10→8 suite, 464→429 pass, semuanya hijau — selisih 35 = isi kedua test itu.
+
+5. **Full Reference Scan (klasifikasi, bukan "zero references"):**
+   - **Production runtime: ZERO dependensi vendor legacy.** `app.js` `coreModel()` = stub `return null`; `internalModel` hanya guard defensif yang selalu falsy di produksi; `src/client/engine/native-expressions.ts` = duck-type optional (safeRead); `coreModel` di `src/live2d/*` = nama konsep framework 5.3, bukan `internalModel.coreModel` Pixi6.
+   - **Tests**: `r8-2-pet.test.ts`/`r8-3-vtuber.test.ts` menegaskan *ketiadaan* tag vendor (guard proteksi, bukan dependensi).
+   - **Sandbox/readiness (historis)**: `r3-coexist`, `r4-frame`, `r5-motion`, `r6-parity`, `r7-compat`, `legacy-probe.html`, `pixi8.html`, `pixi8-official.html` — memuat referensi vendor yang fisiknya sudah terhapus (tidak bisa jalan; dipertahankan sebagai artefak sejarah/audit trail era transisi). `legacy-probe.html` = satu-satunya dead code murni (probe eksklusif Pixi6, tanpa consumer test) — diklasifikasikan, TIDAK dihapus di R9-4 (di luar scope).
+   - **Docs/history**: entri STATUS sebelumnya + komentar penjelas sejarah di `pixi8-namespace.js`/`pixi8.html`.
+
+6. **Quality Gates (final, satu rangkaian):**
+   - `bun run build`: bersih.
+   - `bunx tsc --noEmit`: 0 error.
+   - `bun test` (unit): **996 passed / 0 failed** (60 file, 5064 expect).
+   - `bun run test:guards`: **429 passed / 0 failed** (8 legacy suite — 2 suite vendor terhapus sesi lama).
+   - `bun test/smoke-pet-browser.ts`: **6/6 PASSED** (boot, state produksi, mouseGaze→Arbiter, resize, motion via #b-wave, teardown/reload, ?renderer=legacy aman diabaikan).
+   - `bun test/smoke-vtuber-browser.ts`: **7/7 PASSED** (termasuk resize OBS 1920×1080, transparansi body, lifecycle).
+   - `bun test/smoke-corelog-shim-ab.ts` (pasca-hapus, double-run): **PASS semua** di 6 kombinasi halaman×model — Engine Main browser smoke + bukti stabilitas run ganda.
+   - **BARU `test/smoke-compositor-dpr.ts`: 14/14 PASSED** — DPR1 & DPR2 (force-device-scale-factor): compositor v8 8.20.1 aktif, buffer fisik = CSS×DPR (942/1884), **transparansi terbukti via `gl.readPixels` pada kanvas GL host** (sudut alpha=0 murni — kebutuhan OBS; area model 19% piksel opaque dalam bbox — badan solid ter-render; `Page.captureScreenshot(omitBackground)` ternyata menghasilkan RGB opaque di headless, bukan bukti), paritas CSS bounds DPR1≈DPR2 **Δ 0.00px**.
+
+7. **Kepatuhan Hard Constraints:**
+   - Tidak ada commit/push/reset/checkout/git clean (semua perubahan dipertahankan di working tree).
+   - `data/` tak tersentuh; tidak ada test yang memanggil jaringan atau menulis `config.json`.
+   - Kapabilitas `Live2DModelHandle` utuh terbukti di browser pasca-semua-penghapusan: native motion (ren Idle), expression (exp_02 → EyeLSmile konvergen 1.0), EyeBlink/Breath/Physics gate, Focus, ParameterArbiter (mouseGaze pet), parameter read/write, destroy/reload, model switch ren→lumine.
+
+## UPDATE 2026-09-14 (40) — R9-3: RETIRE LEGACY RENDERER FALLBACK
+
+Tahap implementasi R9-3 selesai dieksekusi dan diverifikasi secara menyeluruh dengan status **R9-3 VERIFIED**.
+Percabangan kode fallback renderer legacy (Pixi6 + pixi-live2d) telah sepenuhnya dieliminasi dari seluruh permukaan produk (Engine Main, Desktop Pet, dan VTuber Overlay). Production Cubism 5.3 / Core 6.0.1 renderer kini menjadi **satu-satunya runtime renderer aktif** di seluruh repositori.
+
+### Ringkasan Pekerjaan R9-3:
+
+1. **Eliminasi Fallback di `static/index.html` & `static/js/app.js` (Engine Main):**
+   - Tag `<script>` legacy `pixi.6.5.10.min.js` dan `pixi-live2d-0.4.0.js` dihapus dari `static/index.html`.
+   - Percabangan fallback di `app.js` dibersihkan:
+     - `getOfficialGroups(m)`: langsung mengambil dari `state.handle.motionGroups()`.
+     - `resetEmotion()`: memanggil `state.handle.resetExpression()`.
+     - `detectModelCapabilities()`: seluruh probing legacy via `coreModel()` dan private properties dihapus, digantikan pembacaan resmi via `state.handle`.
+     - `freezeModelForEdit()` / `unfreezeModelForEdit()`: mengendalikan efek langsung via `state.handle.setEffectEnabled(...)`.
+     - `releasePresetPose()` & `applyPreset()`: pemulihan part opacity dan parameter default berjalan murni via `state.handle`.
+     - `readAny()` & `captureCurrentPose()`: pembacaan opacity part melalui `state.handle.getPartOpacity(id)`.
+     - `setPartOpacity()`: penulisan via `state.handle.setPartOpacity(id, v)`.
+     - `diagnostics()`: mengembalikan diagnostik produksi murni secara tak bersyarat.
+     - `applyStageBackground()`, `fitStageBgImage()`, `removeStageBgImage()`: beroperasi langsung pada DOM `#stage` dan `state.sceneLayers` (0 penggunaan PIXI.Sprite/Graphics).
+     - `inspectModel()`: enumerasi parameter dan grup motion murni via `state.handle`.
+     - `enumerateParts()` & `readParam()`: membaca langsung dari `state.handle`.
+     - `applyRawDrive()`, `setRawDrive()`, `clearRawDrive()`, `listModelParams()`: beroperasi via `state.roleLink` dan `state.handle`.
+     - `_rawDrive`: `hasCore: false`.
+
+2. **Eliminasi Fallback di `static/pet.html` (Desktop Pet):**
+   - Tag `<script>` legacy `pixi.6.5.10.min.js` dan `pixi-live2d-0.4.0.js` dihapus dari `static/pet.html`.
+   - Jalur runtime dibuat tanpa syarat produksi (`production: true`).
+   - Seluruh blok fallback `else` yang memanggil `new PIXI.Application`, `PIXI.live2d.Live2DModel.registerTicker`, dan `PIXI.live2d.Live2DModel.from` dihapus total.
+   - Parameter URL `?renderer=legacy` kini diabaikan secara aman dengan pesan informatif: `"[pet] ?renderer=legacy parameter is retired in R9-3; using production Cubism renderer unconditionally."`.
+   - Zero coupling ke `internalModel`, `coreModel`, atau `PIXI`.
+
+3. **Eliminasi Fallback di `static/vtuber.html` (VTuber Overlay):**
+   - Tag `<script>` legacy `pixi.6.5.10.min.js` dan `pixi-live2d-0.4.0.js` dihapus dari `static/vtuber.html`.
+   - Jalur runtime dibuat tanpa syarat produksi (`production: true`).
+   - Seluruh blok fallback `else` yang memanggil `new PIXI.Application`, `registerTicker`, dan `from` dieliminasi total.
+   - Parameter URL `?renderer=legacy` diabaikan secara aman dengan pesan informatif: `"[vtuber] ?renderer=legacy parameter is retired in R9-3; using production Cubism renderer unconditionally."`.
+   - Zero coupling ke `internalModel`, `coreModel`, atau `PIXI`.
+
+4. **Kepatuhan Hard Constraints & Invarian Masa Depan:**
+   - File vendor fisik `pixi.6.5.10.min.js` dan `pixi-live2d-0.4.0.js` **TIDAK dihapus** pada tahap ini (ditangguhkan hingga R9-4).
+   - `core-log-shim.js` dan `pixi8-namespace.js` **TIDAK diubah/disederhanakan** pada tahap ini.
+   - Seluruh kapabilitas masa depan `Live2DModelHandle` (native motions, motion groups, expressions, ParameterArbiter, lip sync role, focus/gaze) tetap utuh dan beroperasi sempurna.
+   - Tidak ada commit atau push yang dilakukan.
+
+5. **Hasil Pengujian & Quality Gate:**
+   - `bun run test:unit`: **996 passed / 0 failed** (60 files, 5064 expect calls).
+   - `bun run test:guards`: **464 passed / 0 failed** (10 legacy suites).
+   - `bunx tsc --noEmit`: Bersih (0 errors).
+   - `bun run build`: Bersih (bundle.js, i18n.js, live2d adapters ter-bundle sempurna).
+   - `bun test/smoke-pet-browser.ts`: 6/6 test Chromium headless **PASSED**.
+   - `bun test/smoke-vtuber-browser.ts`: 7/7 test Chromium headless **PASSED**.
+
+---
+
+## UPDATE 2026-09-14 (39) — R9-1 & R9-2: ACCIDENTAL COUPLING FIX & PRODUCTION GUARD TEST MIGRATION
+
+Tahap implementasi R9-1 dan R9-2 selesai dieksekusi dan diverifikasi dengan status **R9-1 + R9-2 VERIFIED**.
+
+### Ringkasan Pekerjaan R9-1 & R9-2:
+
+1. **R9-1: Perbaikan Accidental Production Coupling pada `releasePresetPose` (`static/js/app.js`):**
+   - Pada `releasePresetPose()` (sebelumnya bernama `releaseAllPresetPoses` pada prompt), baris awal `const cm = state.model.internalModel.coreModel;` menimbulkan coupling langsung ke `internalModel` Pixi6 di jalur produksi.
+   - Evaluasi diubah: percabangan `if (state.production && state.handle)` dievaluasi terlebih dahulu tanpa menyentuh properti `internalModel`. Parameter dibaca langsung via `state.handle.getParameters()` dan dituliskan kembali ke nilai default via `pokeActual(p.id, p.defaultValue)`.
+   - Percabangan legacy (`else`) tetap aman membaca `state.model && state.model.internalModel ? state.model.internalModel.coreModel : null`.
+   - Terbukti secara behavior melalui `test/r9-1-release-preset.test.ts` (4 pass, 22 assertions) dengan trap getter pada `internalModel` dan WASM real boot model `ren`.
+
+2. **R9-2: Migrasi 7 Suite Guard Produksi ke Bun Test:**
+   - 7 test guard yang menguji fungsionalitas produksi (bukan vendor legacy) dimigrasikan ke unit test TS modern:
+     1. `test/api-origin.test.ts` (dari `test/legacy/test-api-origin.js`): 6 pass / 23 assertions.
+     2. `test/auto-rescue.test.ts` (dari `test/legacy/test-auto-rescue.js`): 4 pass / 24 assertions.
+     3. `test/emotion-overlay.test.ts` (dari `test/legacy/test-emotion-overlay.js`): 5 pass / 36 assertions.
+     4. `test/exp3-adoption.test.ts` (dari `test/legacy/test-exp3-adoption.ts`): 13 pass / 74 assertions.
+     5. `test/sheet-schema.test.ts` (dari `test/legacy/test-fase1-sheet-schema.js`): 220 pass / 220 assertions (100% exact parity).
+     6. `test/overlay-gate.test.ts` (dari `test/legacy/test-overlay-gate.ts`): 5 pass / 28 assertions.
+     7. `test/param-notes-ui.test.ts` (dari `test/legacy/test-param-notes-ui.js`): 26 pass / 26 assertions.
+   - Paritas pengujian dipertahankan 100% tanpa ada assertion yang dibuang.
+   - File lama di `test/legacy/` tetap dipertahankan dan tetap lolos (`test:guards` 464/464 pass) sesuai instruksi koreksi pengguna.
+
+3. **Status Quality Gate:**
+   - `bun run test:unit`: **996 passed / 0 failed** (naik dari 713, 5069 expect calls).
+   - `bun run test:guards`: **464 passed / 0 failed** (10 legacy suites).
+   - `bunx tsc --noEmit`: Bersih (0 error).
+   - `bun run build`: Bersih (0 error).
+
+---
+
+## UPDATE 2026-09-14 (38) — R8-3: MIGRATE STATIC/VTUBER.HTML TO PRODUCTION CUBISM RENDERER
+
+Tahap R8-3 selesai dieksekusi dan diverifikasi secara menyeluruh dengan status **R8-3 VERIFIED**.
+`static/vtuber.html` (overlay OBS Browser Source) kini menggunakan Production Cubism 5.3/Core 6.0.1 renderer sebagai default stack (`Live2DApi` → `Live2DHost` → `Live2DModelHandle` → `CubismWebFramework 5.3` → `Cubism Core 6.0.1` → `Pixi8 compositor` via `canvas-texture`). Percabangan fallback `?renderer=legacy` tetap dipertahankan terisolasi untuk perbandingan A/B. Seluruh kapabilitas masa depan (motion native, ekspresi, gesture, parameter arbiter, lip-sync audio, focus) tetap terbuka dan teruji.
+
+### Ringkasan Perubahan R8-3
+
+1. **Arsitektur Produksi di `static/vtuber.html`:**
+   - Memuat stack resmi: `live2dcubismcore.min.js`, `core-log-shim.js`, `cubism-framework.js`, `live2d-adapter.js`, `scene-layers.js`, `pixi8-namespace.js`, dan `bundle.js`.
+   - Script legacy (`pixi.6.5.10.min.js` dan `pixi-live2d-0.4.0.js`) diisolasi hanya untuk percabangan fallback `?renderer=legacy`.
+   - Menghapus kepemilikan frame tersembunyi `PIXI.Ticker.shared` dan menggantinya dengan render loop tunggal `requestAnimationFrame` eksplisit: tepat 1 `handle.update(dt)` dan 1 `host.render()` per frame.
+   - Rotasi idle `Math.sin(state.swayTime * 0.9) * 0.012` dipindahkan ke dalam loop RAF, menghilangkan timer 16ms terpisah.
+2. **Model-Agnostic Lip-Sync & Parameter Control:**
+   - Menghilangkan direct write `core.setParameterValueById("ParamMouthOpenY", ...)`.
+   - Kontrol bibir dialihkan melalui `ParameterArbiter` via semantic role `mouthOpenY` (prioritas 15), dikomit pada callback `handle.onBeforeModelUpdate` via `RoleBridge`.
+   - Mendukung browser TTS pulse dan remote `AudioLipSync.sample()` yang disampel langsung di loop RAF.
+3. **Kesiapan Kapabilitas Masa Depan (Future Capability Readiness):**
+   - Tidak membatasi fitur hanya pada kebutuhan overlay hari ini.
+   - `Live2DModelHandle` tetap mengekspos `motionGroups()`, `playNativeMotion(group, no, priority)`, `isMotionFinished()`, `stopAllMotions()`, `playExpression(name)`, `setFocus(x, y)`, dan `setParameter(id, val)`.
+   - Telah dibuktikan di Chromium melalui model `ren.model3.json`: `playNativeMotion("Idle", 0)` dan `playExpression("exp_02")` terbukti menghasilkan deformasi parameter visual nyata (`ParamEyeLSmile > 0`). Pemanggilan grup/ekspresi asing terbukti fail-safe tanpa melempar error.
+4. **Transform, Bounds, dan Resize Parity:**
+   - Implementasi `createCompatModel(handle)` POJO murni bebas dari `PIXI.Point`.
+   - Paritas geometri terbukti di Chromium headless: selisih bounds legacy vs produksi hanya Δwidth=0.10px, Δheight=0.06px, Δx=0.10px, Δy=0.00px (< 0.15px).
+   - Penanganan `window.addEventListener("resize")` ditambahkan untuk memperbarui ukuran host (`host.resize(W, H)`) dan reframes model tanpa distorsi pada berbagai resolusi OBS (1080p, 720p, portrait) serta DPR 1 dan DPR 2.
+5. **Transparansi OBS & Siklus Hidup:**
+   - Transparansi WebGL canvas (`backgroundAlpha: 0`) terbukti menghasilkan latar belakang transparan murni untuk OBS Browser Source.
+   - Implementasi `teardownCurrentModel()` dan `teardown()` membersihkan host, handle, RAF, dan timer tanpa kebocoran.
+6. **Quality Gates & Pengujian:**
+   - `test/r8-3-vtuber.test.ts`: 22 unit test baru (audit dependensi, kepemilikan frame exactly-once, lip-sync role mapping, paritas transform, lifecycle, dan kesiapan kapabilitas masa depan).
+   - `test/smoke-vtuber-browser.ts`: 7 uji smoke test Chromium headless via CDP memverifikasi boot produksi, idle sway, lip-sync arbiter, deformasi motion/ekspresi nyata, resize OBS 1080p, teardown/reload, dan komparasi A/B.
+   - `bun run test:unit`: **713 passed / 0 failed** (naik dari 691).
+   - `bun run test:guards`: **464 passed / 0 failed** (10 legacy suites).
+   - `bunx tsc --noEmit`: Bersih (0 error).
+   - `bun run build`: Bersih (0 error).
+
+---
+
 ## UPDATE 2026-09-14 (37) — R8-2: MIGRATE STATIC/PET.HTML TO PRODUCTION CUBISM RENDERER
 
 Tahap R8-2 selesai dieksekusi dan diverifikasi secara menyeluruh dengan status **R8-2 VERIFIED**.

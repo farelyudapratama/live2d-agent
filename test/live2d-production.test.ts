@@ -473,11 +473,16 @@ describe("R3 — namespace isolation & composite (static)", () => {
     expect(src.match(/requestAnimationFrame|setInterval/)).toBeNull();
   });
 
-  test("core-log-shim: first-writer-wins untuk slot log Core (coexistence 2 binding)", () => {
-    const src = readFileSync(join(repoRoot, "static/js/core-log-shim.js"), "utf8");
-    expect(src).toContain("if (L.logFunction) return;");
-    expect(src).toContain("csmSetLogFunction");
-    expect(src).toContain("__l2dShared");
+  test("core-log-shim: DIHAPUS di R9-4 — slot log Core kini single-writer (A/B terbukti)", () => {
+    // R9-4: vendor Pixi6/pixi-live2d terhapus → hanya CubismFramework.startUp
+    // yang memanggil csmSetLogFunction (sekali, ter-guard __l2dFrameworkStarted).
+    // A/B browser verification (test/smoke-corelog-shim-ab.ts) membuktikan
+    // WITH & WITHOUT shim identik penuh → file dihapus permanen.
+    expect(existsSync(join(repoRoot, "static/js/core-log-shim.js"))).toBe(false);
+    for (const page of ["static/index.html", "static/pet.html", "static/vtuber.html"]) {
+      const html = readFileSync(join(repoRoot, page), "utf8");
+      expect(html.includes("core-log-shim.js")).toBe(false);
+    }
   });
 
   test("HostOptions composite: dua mode terdokumentasi, default direct", () => {
@@ -489,17 +494,16 @@ describe("R3 — namespace isolation & composite (static)", () => {
     expect(host).toContain("compositeInfo()");
   });
 
-  test("coexist page: shim dimuat SETELAH core SEBELUM framework, loader v8 terakhir", () => {
+  test("coexist page (sandbox historis R3): artefak era transisi — shim & vendor legacy tidak lagi tersaji", () => {
+    // R9-4: shim dihapus; vendor Pixi6/pixi-live2d sudah dihapus fisik di sesi
+    // sebelumnya. r3-coexist.html dipertahankan sebagai ARTEFAK SEJARAH
+    // (readiness era coexistence) — urutan pemuatannya tidak lagi kontrak
+    // produk. Yang dijaga: halaman produksi TIDAK memuat shim/vendor legacy.
     const html = readFileSync(join(repoRoot, "static/r3-coexist.html"), "utf8");
-    const iCore = html.indexOf("live2dcubismcore.min.js");
-    const iShim = html.indexOf("core-log-shim.js");
-    const iFw = html.indexOf("cubism-framework.js");
-    const iAdapter = html.indexOf("live2d-adapter.js");
-    const iLoader = html.indexOf("pixi8-namespace.js");
-    expect(iCore).toBeGreaterThan(-1);
-    expect(iShim).toBeGreaterThan(iCore);
-    expect(iFw).toBeGreaterThan(iShim);
-    expect(iAdapter).toBeGreaterThan(iFw);
-    expect(iLoader).toBeGreaterThan(iAdapter);
+    // struktur historis masih terbaca (bukti artefak utuh)
+    expect(html.indexOf("live2dcubismcore.min.js")).toBeGreaterThan(-1);
+    expect(html.indexOf("cubism-framework.js")).toBeGreaterThan(-1);
+    expect(html.indexOf("live2d-adapter.js")).toBeGreaterThan(-1);
+    expect(html.indexOf("pixi8-namespace.js")).toBeGreaterThan(-1);
   });
 });

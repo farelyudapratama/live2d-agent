@@ -45,14 +45,14 @@ describe("R8-2 Static Dependency Audit", () => {
     expect(petHtml).toContain('src="js/i18n.js');
   });
 
-  test("pet.html mempertahankan script legacy secara terisolasi untuk fallback A/B comparison", () => {
-    expect(petHtml).toContain('src="js/pixi.6.5.10.min.js"');
-    expect(petHtml).toContain('src="js/pixi-live2d-0.4.0.js');
+  test("pet.html TIDAK memuat script legacy Pixi6 / pixi-live2d", () => {
+    expect(petHtml).not.toContain('src="js/pixi.6.5.10.min.js"');
+    expect(petHtml).not.toContain('src="js/pixi-live2d-0.4.0.js');
   });
 
-  test("Renderer produksi adalah default (hanya fallback saat ?renderer=legacy)", () => {
-    expect(petScript).toContain('const useLegacy = qs.get("renderer") === "legacy";');
-    expect(petScript).toContain("production: !useLegacy");
+  test("Renderer produksi adalah satu-satunya runtime (unconditional production: true)", () => {
+    expect(petScript).toContain("production: true");
+    expect(petScript).toContain("?renderer=legacy parameter is retired in R9-3");
   });
 
   test("Percabangan produksi memanggil API produksi live2dApi", () => {
@@ -69,26 +69,17 @@ describe("R8-2 Static Dependency Audit", () => {
     expect(petScript).toContain("handle.onBeforeModelUpdate");
   });
 
-  test("Percabangan produksi TIDAK mengakses coreModel atau internalModel", () => {
-    // Cari bagian if (state.production) sampai else
-    const prodSectionMatch = petScript.match(/if\s*\(state\.production\)\s*\{([\s\S]*?)\}\s*else\s*\{/);
-    expect(prodSectionMatch).not.toBeNull();
-    const prodSection = prodSectionMatch![1];
-
-    expect(prodSection).not.toContain("internalModel");
-    expect(prodSection).not.toContain("coreModel");
-    expect(prodSection).not.toContain("setParameterValueById");
-    expect(prodSection).not.toContain("PIXI");
+  test("pet.html TIDAK mengakses coreModel atau internalModel", () => {
+    expect(petScript).not.toContain("internalModel");
+    expect(petScript).not.toContain("coreModel");
+    expect(petScript).not.toContain("setParameterValueById");
+    expect(petScript).not.toContain("PIXI");
   });
 
-  test("Percabangan legacy terisolasi di dalam blok else", () => {
-    const legacySectionMatch = petScript.match(/\}\s*else\s*\{([\s\S]*?startIdleLife\(\);)/);
-    expect(legacySectionMatch).not.toBeNull();
-    const legacySection = legacySectionMatch![1];
-
-    expect(legacySection).toContain("PIXI.live2d.Live2DModel.registerTicker");
-    expect(legacySection).toContain("new PIXI.Application");
-    expect(legacySection).toContain("PIXI.live2d.Live2DModel.from");
+  test("Percabangan legacy tereliminasi total dari pet.html", () => {
+    expect(petScript).not.toContain("Live2DModel.registerTicker");
+    expect(petScript).not.toContain("new PIXI.Application");
+    expect(petScript).not.toContain("Live2DModel.from");
   });
 
   test("Terdapat penanganan window resize untuk produksi dan legacy", () => {

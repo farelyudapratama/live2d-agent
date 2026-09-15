@@ -21,7 +21,6 @@
       console.error = function () { try { window.__consoleSink.push(["e", Array.prototype.map.call(arguments, function (x) { return String(x && x.stack || x); }).join(" ").slice(0, 800)]); } catch (e2) {} e.apply(null, arguments); };
     })();
   </script>
-  <script src="js/core-log-shim.js"></script>
 </head>
 <body>
 
@@ -968,16 +967,11 @@
   <!-- Floating Toast Notification Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
-  <script src="js/pixi.6.5.10.min.js"></script>
-  <script src="js/pixi-live2d-0.4.0.js?v=3"></script>
   <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain + i18n, terpasang sebagai
        window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime / __agent / __i18n.
        Dibangun dari src/client/* oleh `bun run build`. Dimuat SEBELUM app.js —
        init() i18n menyweep atribut data-i18n* sebelum app.js jalan. -->
-  <!-- R7-2: production renderer (Cubism 5.3 + compositor v8) — dipakai
-       rendererMode "production"; Pixi6/pixi-live2d di bawah tetap tersedia
-       sebagai fallback ?renderer=legacy -->
+  <!-- R7-2 / R9-3: production renderer (Cubism 5.3 + compositor v8) — renderer tunggal produksi -->
   <script src="js/cubism-framework.js"></script>
   <script src="js/live2d-adapter.js"></script>
   <script src="js/scene-layers.js"></script>

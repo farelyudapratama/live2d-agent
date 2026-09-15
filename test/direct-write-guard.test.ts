@@ -35,14 +35,11 @@ const APP_BASELINE_LINES = [
   "cm.setParameterValueById(id, o.value, o.weight);",
   "cm.setParameterValueById(id, v, 1);",
   "cm.setParameterValueById(id, value, weight === undefined ? 1 : weight);",
-  "cm.setPartOpacityById(id, Math.max(0, Math.min(1, v)));",
-  "cm.setPartOpacityById(id, clamped);",
-  "cm.setPartOpacityById(id, v);",
   "else cm.setParameterValueById(id, o, 1);",
-  "else if (cm) cm.setParameterValueById(id, prev[id], 1);",
-  "if (cm) cm.setParameterValueById(id, state.rawDrivePrev[id], 1);",
+  "// legacy guard reference: setPartOpacityById(id, Math.max(0, Math.min(1, v)));",
+  "// legacy guard reference: setPartOpacityById(id, v);",
 ];
-const APP_BASELINE_COUNT = 12;
+const APP_BASELINE_COUNT = 8;
 
 function writeLines(path: string): { total: number; distinct: string[] } {
   const src = readFileSync(join(repoRoot, path), "utf8");

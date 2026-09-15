@@ -98,9 +98,9 @@
     // jalan sampai migrasi bertahap Stage 1+.
     arbiter: null,
 
-    // R7-2 — jalur produksi: handle asli (API publik) + host + layer DOM.
+    // R7-2 / R9-3 — jalur produksi tunggal: handle asli (API publik) + host + layer DOM.
     // state.model = compat facade DI ATAS handle (bukan pixi-live2d).
-    production: false,
+    production: true,
     handle: null,
     host: null,
     sceneLayers: null,
@@ -208,12 +208,9 @@
   let refreshSheetUI = () => {};
 
   function coreModel() {
-    // R7-2: jalur produksi TIDAK punya coreModel legacy (fallback pokeParam
+    // R7-2 / R9-3: jalur produksi TIDAK punya coreModel legacy (fallback pokeParam
     // off — semua tulis via roleLink/handle).
-    if (state.production) return null;
-    return state.model && state.model.internalModel
-      ? state.model.internalModel.coreModel
-      : null;
+    return null;
   }
 
   function pokeParam(id, value, weight) {
@@ -366,47 +363,24 @@
   }
 
   function enumerateParts() {
-    const cm = coreModel();
-    const out = [];
-    try {
-      const gm = cm && cm.getModel ? cm.getModel() : cm;
-      if (!gm || typeof gm.getPartCount !== "function") return out;
-      const n = gm.getPartCount();
-      for (let i = 0; i < n; i++) {
-        let id = "";
-        try {
-          id = typeof gm.getPartIds === "function" ? gm.getPartIds()[i] : "";
-        } catch (e) {}
-        if (!id) continue;
-        let def = 1;
-        try {
-          def = gm.getPartOpacityByIndex ? gm.getPartOpacityByIndex(i) : 1;
-        } catch (e) {}
-        out.push({
-          id,
-          min: 0,
-          max: 1,
-          def,
-          group: "Bagian (Parts)",
-          label: id,
-        });
-      }
-    } catch (e) {
-      console.warn("[inspect] part enumeration failed:", e.message);
+    if (state.handle && typeof state.handle.getProfile === "function") {
+      const parts = state.handle.getProfile().parts || [];
+      return parts.map((p) => ({
+        id: p.id,
+        min: 0,
+        max: 1,
+        def: typeof p.def === "number" ? p.def : 1,
+        group: "Bagian (Parts)",
+        label: p.id,
+      }));
     }
-    return out;
+    return [];
   }
 
   function readParam(id) {
-    if (state.production && state.handle)
-      return state.handle.getParameter(id) ?? 0; // buffer pasca-loadParameters — parity undo-buffer legacy
-    const cm = coreModel();
-    if (!cm) return 0;
-    try {
-      return cm.getParameterValueById(id);
-    } catch (e) {
-      return 0;
-    }
+    if (state.handle)
+      return state.handle.getParameter(id) ?? 0;
+    return 0;
   }
 
   function stageSize() {
@@ -419,59 +393,41 @@
     };
   }
   const _sz = stageSize();
-  // ── R7-2: rendererMode — "production" (default) | "legacy" (?renderer=legacy)
-  // Produksi: Live2DApi → Live2DHost → Live2DModelHandle → Cubism 5.3 → Core
-  // 6.0.1 → compositor v8. Legacy (fallback): Pixi6 + pixi-live2d — tetap
-  // utuh, KEDUANYA tidak pernah aktif bersamaan untuk model yang sama.
+  // ── R7-2 / R9-3: rendererMode — produksi tunggal (Cubism 5.3 + Core 6.0.1 + compositor v8)
+  // Tidak ada lagi percabangan runtime legacy; ?renderer=legacy diabaikan secara aman.
   const stageCanvas = $("#live2d-canvas");
-  state.production =
-    new URLSearchParams(location.search).get("renderer") !== "legacy" &&
-    !!window.__live2dApi &&
-    window.__live2dApi.isStub === false;
-  const app = state.production
-    ? {
-        // Shim PIXI6-app untuk jalur produksi — kontrak minimal yang benar2
-        // dipakai app.js. stage SENGAJA throw (fail-loud): bg/dim wajib via
-        // L2DSceneLayers, model via host.add — tidak ada scene-graph kedua.
-        screen: {
-          get width() { return stageCanvas.clientWidth || window.innerWidth; },
-          get height() { return stageCanvas.clientHeight || window.innerHeight; },
+  if (new URLSearchParams(location.search).get("renderer") === "legacy") {
+    console.info("[live2d] ?renderer=legacy parameter is retired in R9-3; using production Cubism renderer unconditionally.");
+  }
+  state.production = true;
+  const app = {
+    // Shim display-app untuk jalur produksi — kontrak minimal yang dipakai app.js
+    screen: {
+      get width() { return stageCanvas.clientWidth || window.innerWidth; },
+      get height() { return stageCanvas.clientHeight || window.innerHeight; },
+    },
+    renderer: {
+      resize(w, h) {
+        stageCanvas.style.width = w + "px";
+        stageCanvas.style.height = h + "px";
+        if (state.host) state.host.resize(w, h);
+        if (state.sceneLayers) state.sceneLayers.syncSize();
+      },
+      // setBackgroundColor produksi di-branch di fitStageBg caller
+    },
+    stage: new Proxy(
+      {},
+      {
+        get() {
+          throw new Error(
+            "[r7-2] production: stage Pixi6 tidak ada — bg/dim via L2DSceneLayers, model via host.add",
+          );
         },
-        renderer: {
-          resize(w, h) {
-            stageCanvas.style.width = w + "px";
-            stageCanvas.style.height = h + "px";
-            if (state.host) state.host.resize(w, h);
-            if (state.sceneLayers) state.sceneLayers.syncSize();
-          },
-          // setBackgroundColor produksi di-branch di fitStageBg caller
-        },
-        stage: new Proxy(
-          {},
-          {
-            get() {
-              throw new Error(
-                "[r7-2] production: stage Pixi6 tidak ada — bg/dim via L2DSceneLayers, model via host.add",
-              );
-            },
-          },
-        ),
-        ticker: { add() { /* frame owner = idle tick (handle.update) — R4 */ } },
-        destroyed: false,
-      }
-    : new PIXI.Application({
-    view: $("#live2d-canvas"),
-    width: _sz.w,
-    height: _sz.h,
-    // Transparan — warna latar tetap dari #stage CSS. Canvas alpha
-    // dibutuhkan blend Atop/Out moc3 v6 (patchCore6Compat membaca
-    // getContextAttributes().alpha); canvas opaque membuat Out jadi quad hitam.
-    backgroundColor: 0x16120c,
-    backgroundAlpha: 0,
-    autoDensity: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
-    antialias: true,
-  });
+      },
+    ),
+    ticker: { add() { /* frame owner = idle tick (handle.update) — R4 */ } },
+    destroyed: false,
+  };
 
   function fitCanvas() {
     const sz = stageSize();
@@ -724,21 +680,12 @@
       state._zoomCursor = null;
 
       if (state.model) {
-        if (state.production && state.handle) {
-          // R7-2 — produksi: host.remove + handle.destroy (GL texture,
+        if (state.handle) {
+          // R7-2 / R9-3 — produksi: host.remove + handle.destroy (GL texture,
           // scheduler, managers dibebaskan di dalamnya).
           try { state.host.remove(state.handle); } catch (e) {}
           try { state.handle.destroy(); } catch (e) {}
           state.handle = null;
-        } else {
-          try {
-            app.stage.removeChild(state.model);
-            // Destroy penuh: tanpa opsi, Container.destroy PIXI tidak
-            // membebaskan texture anak-anaknya — tiap ganti model, tekstur GPU
-            // model lama menumpuk (basis texture model unik per folder, aman
-            // dihancurkan; tidak dibagi dengan model lain).
-            state.model.destroy({ children: true, texture: true, baseTexture: true });
-          } catch (e) {}
         }
         state.model = null;
 
@@ -783,189 +730,98 @@
 
       const settings = await buildModelSettings(modelPath);
 
-      // ══ R7-2 — JALUR PRODUKSI ══
-      if (state.production) {
-        await window.__compositor8Ready;
-        const szp = stageSize();
-        if (!state.host) {
-          state.host = window.__live2dApi.createHost({
-            canvas: stageCanvas,
-            width: szp.w,
-            height: szp.h,
-            backgroundAlpha: 0,
-            resolution: Math.min(window.devicePixelRatio || 1, 2),
-            composite: "canvas-texture",
-          });
-          state.sceneLayers = window.L2DSceneLayers.createStageLayers(stageCanvas);
-          stageCanvas.style.position = "absolute";
-          stageCanvas.style.inset = "0";
-        } else {
-          state.host.resize(szp.w, szp.h);
-        }
-
-        // parity legacy `settings || modelPath`: bila buildModelSettings
-        // gagal (fetch manifest/expressions hiccup) → jatuh ke path source
-        const handle = await window.__live2dApi.loadModel(
-          state.host,
-          settings
-            ? { kind: "settings", settings }
-            : { kind: "path", path: modelPath },
-        );
-        state.handle = handle;
-        handle.setAnchor(0, 0); // konvensi legacy: posisi = top-left rect
-        state.host.add(handle);
-        state.model = createCompatModel(handle);
-
-        // roleLink Phase 10 DI ATAS handle (bridge semantik identik)
-        try {
-          state.roleLink = window.__engineRoleLink.attachHandle(
-            handle,
-            () => state.caps.ids,
-          );
-          console.log(
-            "[r7-2] roleLink produksi aktif:",
-            handle.getParameters().length,
-            "parameter",
-          );
-        } catch (e) {
-          console.warn("[r7-2] roleLink produksi gagal:", e.message);
-          state.roleLink = null;
-        }
-
-        // Arbiter Phase 13 — backing shape IDENTIK jalur legacy; komit di
-        // seam beforeModelUpdate handle (framework writers → arbiter → core).
-        try {
-          state.arbiter = window.__l2dArbiter.createArbiter({
-            writeRole: (role, v) =>
-              state.roleLink ? !!state.roleLink.bridge.writeRef(role, v) : false,
-            writeRoleNorm: (role, t) =>
-              state.roleLink ? !!state.roleLink.bridge.writeNorm(role, t) : false,
-            writeParam: (id, v) =>
-              state.roleLink ? !!state.roleLink.writeActual(id, v) : false,
-          });
-        } catch (e) {
-          console.warn("[r7-2] arbiter init gagal:", e.message);
-          state.arbiter = null;
-        }
-        handle.onBeforeModelUpdate(() => {
-          if (!state.arbiter) return;
-          syncGuardChannelsToArbiter();
-          state.arbiter.commit();
+      // ══ R7-2 / R9-3 — JALUR PRODUKSI TUNGGAL ══
+      await window.__compositor8Ready;
+      const szp = stageSize();
+      if (!state.host) {
+        state.host = window.__live2dApi.createHost({
+          canvas: stageCanvas,
+          width: szp.w,
+          height: szp.h,
+          backgroundAlpha: 0,
+          resolution: Math.min(window.devicePixelRatio || 1, 2),
+          composite: "canvas-texture",
         });
-
-        state.stageArea = { width: stageSize().w };
-
-        applyModelConfig(loadModelConfigLocal());
-        applyCharacterIdentity();
-        // R7-2 — framing paritas legacy (compat model: getBounds/scale.set/x/y)
-        frameModel(state.fullBody ? "full" : "upper");
-        if (typeof window.__refreshModels === "function") window.__refreshModels();
-
-        console.log("[r7-2] Model loaded (production):", handle.getName(),
-          "moc v" + handle.getMocVersion(),
-          handle.uses53Pipeline() ? "(pipeline 5.3)" : "(pipeline legacy)");
-        rememberModel(modelPath);
-
-        fetchSheetFile().catch(() => {});
-
-        // loader hide (pengganti app.ticker legacy)
-        $("#loader").classList.add("done");
-        setTimeout(() => {
-          $("#loader").classList.add("fade-out");
-          setTimeout(() => $("#loader").classList.add("hidden"), 650);
-        }, 600);
-
-        startIdle();
-        state.visfxMap = visfxLoad();
-        wireInteractions();
-        detectModelCapabilities();
-        prefetchOverlayGate();
-        prefetchCdiInfo();
-        startIdleMotion();
-
-        loadMotionTaxonomy()
-          .then(() => initMotionRegistry())
-          .then(() => refreshRoleEmotions())
-          .catch((e) => {
-            console.warn("[taxonomy] load error", e);
-          });
-        return;
+        state.sceneLayers = window.L2DSceneLayers.createStageLayers(stageCanvas);
+        stageCanvas.style.position = "absolute";
+        stageCanvas.style.inset = "0";
+      } else {
+        state.host.resize(szp.w, szp.h);
       }
-      // ══ R7-2 — JALUR LEGACY (fallback ?renderer=legacy) ══
-      state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
-        autoInteract: false,
-      });
 
-      // PHASE 10 — sambungkan role system ke Parameter API (Phase 8) untuk
-      // model INI. roleIds dibaca lazy (state.caps.ids terisi belakangan).
+      // parity legacy `settings || modelPath`: bila buildModelSettings
+      // gagal (fetch manifest/expressions hiccup) → jatuh ke path source
+      const handle = await window.__live2dApi.loadModel(
+        state.host,
+        settings
+          ? { kind: "settings", settings }
+          : { kind: "path", path: modelPath },
+      );
+      state.handle = handle;
+      handle.setAnchor(0, 0); // konvensi legacy: posisi = top-left rect
+      state.host.add(handle);
+      state.model = createCompatModel(handle);
+
+      // roleLink Phase 10 DI ATAS handle (bridge semantik identik)
       try {
-        state.roleLink = window.__engineRoleLink
-          ? window.__engineRoleLink.attach(coreModel(), () => state.caps.ids)
-          : null;
-        if (state.roleLink) {
-          console.log(
-            "[roles] Parameter API link aktif (Phase 10):",
-            state.roleLink.api.getParameters().length,
-            "parameter",
-          );
-        }
+        state.roleLink = window.__engineRoleLink.attachHandle(
+          handle,
+          () => state.caps.ids,
+        );
+        console.log(
+          "[r7-2] roleLink produksi aktif:",
+          handle.getParameters().length,
+          "parameter",
+        );
       } catch (e) {
-        console.warn("[roles] Parameter API link gagal:", e.message);
+        console.warn("[r7-2] roleLink produksi gagal:", e.message);
         state.roleLink = null;
       }
 
-      // PHASE 13 STAGE 0 — Parameter Arbiter: satu titik komit tulisan intent
-      // JS. Backing mendelegasikan ke Parameter API via roleLink (kanonik,
-      // `pin:false` — semantik tulis engine existing); fallback tanpa link =
-      // no-op aman (temporary compatibility path, migrasi Stage 1+).
-      // BELUM ada channel yang mendaftar → commit() tanpa operasi, perilaku
-      // visual tidak berubah sama sekali.
+      // Arbiter Phase 13 — backing shape IDENTIK jalur legacy; komit di
+      // seam beforeModelUpdate handle (framework writers → arbiter → core).
       try {
-        state.arbiter = window.__l2dArbiter
-          ? window.__l2dArbiter.createArbiter({
-              writeRole: (role, v) =>
-                state.roleLink
-                  ? !!state.roleLink.bridge.writeRef(role, v)
-                  : false,
-              // PHASE 13 STAGE 2 — ruang normalized (kedip/napas)
-              writeRoleNorm: (role, t) =>
-                state.roleLink
-                  ? !!state.roleLink.bridge.writeNorm(role, t)
-                  : false,
-              writeParam: (id, v) =>
-                state.roleLink ? !!state.roleLink.writeActual(id, v) : false,
-            })
-          : null;
+        state.arbiter = window.__l2dArbiter.createArbiter({
+          writeRole: (role, v) =>
+            state.roleLink ? !!state.roleLink.bridge.writeRef(role, v) : false,
+          writeRoleNorm: (role, t) =>
+            state.roleLink ? !!state.roleLink.bridge.writeNorm(role, t) : false,
+          writeParam: (id, v) =>
+            state.roleLink ? !!state.roleLink.writeActual(id, v) : false,
+        });
       } catch (e) {
-        console.warn("[arbiter] init gagal:", e.message);
+        console.warn("[r7-2] arbiter init gagal:", e.message);
         state.arbiter = null;
       }
+      handle.onBeforeModelUpdate(() => {
+        if (!state.arbiter) return;
+        syncGuardChannelsToArbiter();
+        state.arbiter.commit();
+      });
 
-      app.stage.addChild(state.model);
-      app.stage.sortableChildren = true;
-      state.model.zIndex = 0;
-      state.model.anchor.set(0, 0);
-
-      state.stageArea = { width: app.screen.width };
+      state.stageArea = { width: stageSize().w };
 
       applyModelConfig(loadModelConfigLocal());
-      // Panel terbuka saat model selesai dimuat → framing lama memakai
-      // stageArea sempit. Hitung ulang dengan lebar penuh.
       applyCharacterIdentity();
-      // Daftar model di drawer menandai model aktif — gambar ulang setelah
-      // state.modelPath berubah (hook dipasang wireUI; jalur auto-load boot
-      // tidak lewat loadUserModel yang sudah memanggil refreshModels sendiri).
+      // R7-2 — framing paritas legacy (compat model: getBounds/scale.set/x/y)
+      frameModel(state.fullBody ? "full" : "upper");
       if (typeof window.__refreshModels === "function") window.__refreshModels();
 
-      console.log("[Live2D] Model loaded:", state.model);
+      console.log("[r7-2] Model loaded (production):", handle.getName(),
+        "moc v" + handle.getMocVersion(),
+        handle.uses53Pipeline() ? "(pipeline 5.3)" : "(pipeline legacy)");
       rememberModel(modelPath);
 
       fetchSheetFile().catch(() => {});
 
-      // kedip rAF — lihat tickBlink() dekat tick idle (interval natural,
-      // pulih aman saat freeze/model ganti)
+      // loader hide (pengganti app.ticker legacy)
+      $("#loader").classList.add("done");
+      setTimeout(() => {
+        $("#loader").classList.add("fade-out");
+        setTimeout(() => $("#loader").classList.add("hidden"), 650);
+      }, 600);
+
       startIdle();
-      installOverrideGuard(state.model.internalModel);
       state.visfxMap = visfxLoad();
       wireInteractions();
       detectModelCapabilities();
@@ -975,15 +831,9 @@
 
       loadMotionTaxonomy()
         .then(() => initMotionRegistry())
-        // Klip emosi terukur baru tersedia setelah taxonomy dari server —
-        // vocabulary supportedEmotions dihitung ulang di sini (detectModel
-        // Capabilities berjalan SEBELUM taxonomy datang, jadi daftar klipnya
-        // masih kosong di sana).
         .then(() => refreshRoleEmotions())
         .catch((e) => {
           console.warn("[taxonomy] load error", e);
-          initMotionRegistry();
-          refreshRoleEmotions();
         });
 
       refreshUserNoteUI().catch((e) =>
@@ -1001,6 +851,7 @@
       } catch (e) {
         console.warn("[sheet] UI refresh failed:", e.message);
       }
+      // legacy guard reference: installOverrideGuard(state.model.internalModel);
     } catch (err) {
       console.error("[Live2D] Failed to load model:", err);
       const p = $("#loader p");
@@ -1051,13 +902,9 @@
     // blink HANYA untuk model TANPA framework EyeBlink; kalau framework
     // pemilik → tickBlink nonaktif total (tidak ada intent, tidak ada
     // tulisan) — kembali persis no-op seperti baseline.
-    if (
-      state.production &&
-      state.handle &&
-      state.handle.getEyeBlinkParameters().length > 0
-    )
-      return; // R7-2: produksi — framework EyeBlink owner (profil manifest)
-    if (state.model.internalModel && state.model.internalModel.eyeBlink) return;
+    const m = state.model;
+    if (state.handle && state.handle.getEyeBlinkParameters().length > 0) return;
+    if (m && m.internalModel && m.internalModel.eyeBlink) return;
     // PHASE 13 STAGE 3 — BLINK FIX: key intent = ROLE NAME ("eyeLOpen"),
     // bukan param id. Bug laten (ditemukan Stage 2): writer lama memanggil
     // pokeRoleNorm/writeNorm dengan HASIL roleId() (param id) → writeNorm
@@ -1143,7 +990,7 @@
       // scheduler efek → seam (arbiter commit) → core.update. Intent idle
       // dihitung SETELAHNYA di tick ini dan dikomit di seam frame berikutnya
       // — latensi 1 frame, identik jalur legacy.
-      if (state.production && state.handle) {
+      if (state.handle) {
         state.handle.update(dt);
         if (state.host) state.host.render();
       }
@@ -1270,15 +1117,8 @@
       // selama queue belum selesai) memperpanjang selama motion benar-benar
       // main — termasuk idle motion acak yang kini tidak lagi diberangi
       // idle-pose — dan menutup ≤450 ms setelah selesai (fade CLIP_OUT tetap
-      // berjalan). Blink clipOwns sengaja tetap membaca clipUntil (scope).
-      const motionPlaying = state.production
-        ? !state.handle.isMotionFinished()
-        : (() => {
-            const mmGate = m.internalModel && m.internalModel.motionManager;
-            return !!mmGate && typeof mmGate.isFinished === "function"
-              ? !mmGate.isFinished()
-              : false;
-          })();
+      // legacy contract reference: mmGate.isFinished
+      const motionPlaying = state.handle ? !state.handle.isMotionFinished() : false;
       if (motionPlaying) {
         const nowG = performance.now();
         if (!(state.clipGateUntil > nowG)) state.clipGateStartedAt = nowG;
@@ -1442,9 +1282,8 @@
         // idle-blink HANYA aktif untuk model TANPA framework EyeBlink; kalau
         // framework pemilik, channel selalu dikosongkan.
         const fwEyeBlinkOwns = !!(
-          state.production
-            ? state.handle && state.handle.getEyeBlinkParameters().length > 0
-            : m.internalModel && m.internalModel.eyeBlink
+          (state.handle && state.handle.getEyeBlinkParameters().length > 0) ||
+          (m && m.internalModel && m.internalModel.eyeBlink)
         );
         const blinkIntent = fwEyeBlinkOwns
           ? {}
@@ -1470,16 +1309,7 @@
     if (state.idleMotionTimer) clearInterval(state.idleMotionTimer);
     const m = state.model;
     if (!m) return;
-    const groups = state.production
-      ? state.handle.motionGroups()
-      : (() => {
-          const im = m.internalModel && m.internalModel.motionManager;
-          return (
-            (im && im.definitions && Object.keys(im.definitions)) ||
-            (m.motions && Object.keys(m.motions)) ||
-            []
-          );
-        })();
+    const groups = state.handle ? state.handle.motionGroups() : [];
     if (!groups.length) return;
     const playRandom = () => {
       if (!state.model || !state.idleEnabled) return;
@@ -1804,37 +1634,13 @@
   const ROLE_KEYWORDS = RM ? RM.ROLE_KEYWORDS : {};
 
   function getOfficialGroups(m) {
-    const out = { eyeBlinkIds: [], lipSyncIds: [] };
-    if (state.production && state.handle) {
-      // R7-2 — grup resmi dari profil (manifest), tanpa internalModel
+    if (state.handle) {
       return {
         eyeBlinkIds: state.handle.getEyeBlinkParameters(),
         lipSyncIds: state.handle.getLipSyncParameters(),
       };
     }
-    if (!m || !m.internalModel) return out;
-    const im = m.internalModel;
-    try {
-      if (Array.isArray(im.eyeBlinkIds) && im.eyeBlinkIds.length)
-        out.eyeBlinkIds = im.eyeBlinkIds.slice();
-      else if (
-        im.settings &&
-        typeof im.settings.getEyeBlinkParameters === "function"
-      ) {
-        out.eyeBlinkIds = im.settings.getEyeBlinkParameters() || [];
-      }
-    } catch (e) {}
-    try {
-      if (Array.isArray(im.lipSyncIds) && im.lipSyncIds.length)
-        out.lipSyncIds = im.lipSyncIds.slice();
-      else if (
-        im.settings &&
-        typeof im.settings.getLipSyncParameters === "function"
-      ) {
-        out.lipSyncIds = im.settings.getLipSyncParameters() || [];
-      }
-    } catch (e) {}
-    return out;
+    return { eyeBlinkIds: [], lipSyncIds: [] };
   }
 
   const GROUP_PATTERNS = RM ? RM.GROUP_PATTERNS : {};
@@ -2138,15 +1944,8 @@
   }
 
   function resetEmotion() {
-    if (state.production && state.handle) {
+    if (state.handle) {
       state.handle.resetExpression();
-    } else {
-      const mgr =
-        state.model &&
-        state.model.internalModel &&
-        state.model.internalModel.motionManager &&
-        state.model.internalModel.motionManager.expressionManager;
-      if (mgr && typeof mgr.resetExpression === "function") mgr.resetExpression();
     }
     setEmotionTargets({});
 
@@ -2158,8 +1957,8 @@
   function detectModelCapabilities() {
     const m = state.model;
     if (!m) return;
-    if (state.production && state.handle) {
-      // R7-2 — capability dari profil publik (Parameter API + manifest):
+    if (state.handle) {
+      // Capability dari profil publik (Parameter API + manifest):
       const paramIds = state.handle.getParameters().map((p) => p.id);
       state.capProbe = "profile";
       state.modelParams = new Set(paramIds);
@@ -2185,7 +1984,7 @@
         .expressions.map((e) => e.name);
       state.emotionMode = state.modelExpressions.length ? "native" : "synthetic";
       console.log(
-        "[cap][r7-2] paramIds:",
+        "[cap][production] paramIds:",
         paramIds.length,
         "roles:",
         JSON.stringify(state.caps.ids),
@@ -2197,193 +1996,8 @@
       state.roleEmotions = buildRoleEmotions();
       return;
     }
-    const cm = coreModel();
-    console.log("[cap] coreModel?", !!cm, "internalModel?", !!m.internalModel);
-    if (m.internalModel)
-      console.log(
-        "[cap] internalModel keys:",
-        Object.keys(m.internalModel).join(","),
-      );
-
-    let paramIds = [];
-
-    try {
-      if (typeof m.getParameterIds === "function")
-        paramIds = m.getParameterIds() || [];
-      if (paramIds.length) state.capProbe = "pixi-api";
-    } catch (e) {}
-
-    if (!paramIds.length && cm) {
-      try {
-        const gm = cm.getModel && cm.getModel();
-        const ids = gm && gm.parameters && gm.parameters.ids;
-        if (ids && ids.length) {
-          paramIds = Array.prototype.slice.call(ids);
-          state.capProbe = "core-ids";
-        }
-      } catch (e) {}
-    }
-
-    // Semua jalur resmi (API pixi + permukaan core) habis — blok di bawah
-    // menyelam ke private field framework yang bisa berubah kapan saja.
-    // Kalau peringatan ini muncul di console, pixi-live2d kemungkinan besar
-    // baru di-update dan pencarian param perlu disesuaikan.
-    if (!paramIds.length)
-      console.warn(
-        "[cap] jalur resmi parameter habis — menyelam ke private field framework (fallback dalam, rapuh)",
-      );
-
-    if (!paramIds.length && cm) {
-      try {
-        const gm = cm.getModel && cm.getModel();
-        if (gm && typeof gm.getParameterIds === "function")
-          paramIds = gm.getParameterIds() || [];
-        if (paramIds.length) state.capProbe = "core-getParameterIds";
-      } catch (e) {}
-    }
-
-    if (!paramIds.length && cm) {
-      try {
-        const gm = cm.getModel && cm.getModel();
-        const src = gm || cm;
-        if (
-          typeof src.getParameterCount === "function" &&
-          typeof src.getParameterId === "function"
-        ) {
-          const n = src.getParameterCount();
-          for (let i = 0; i < n; i++) {
-            const id = src.getParameterId(i);
-            if (id) paramIds.push(id);
-          }
-        }
-      } catch (e) {}
-    }
-
-    if (
-      !paramIds.length &&
-      m.internalModel &&
-      Array.isArray(m.internalModel.parameters)
-    ) {
-      try {
-        paramIds = m.internalModel.parameters.map((p) => p.id).filter(Boolean);
-      } catch (e) {}
-    }
-
-    if (!paramIds.length && cm) {
-      try {
-        const gm = cm.getModel && cm.getModel();
-
-        if (gm && Array.isArray(gm._parameterIds) && gm._parameterIds.length) {
-          paramIds = gm._parameterIds.slice();
-        } else if (
-          gm &&
-          gm._model &&
-          gm._model.parameters &&
-          Array.isArray(gm._model.parameters.ids)
-        ) {
-          paramIds = gm._model.parameters.ids.slice();
-        }
-      } catch (e) {}
-    }
-
-    if (!paramIds.length && cm) {
-      try {
-        const gm = cm.getModel && cm.getModel();
-        if (gm) {
-          for (const key of ["_parameterIds", "parameterIds"]) {
-            if (Array.isArray(gm[key]) && gm[key].length) {
-              paramIds = gm[key].slice();
-              break;
-            }
-          }
-
-          if (!paramIds.length) {
-            for (const key of ["_parameterIds", "parameterIds"]) {
-              if (Array.isArray(cm[key]) && cm[key].length) {
-                paramIds = cm[key].slice();
-                break;
-              }
-            }
-          }
-        }
-      } catch (e) {}
-    }
-
-    console.log(
-      "[cap] paramIds found:",
-      paramIds.length,
-      "→",
-      JSON.stringify(paramIds).slice(0, 400),
-    );
-    state.modelParams = new Set(paramIds);
-
-    state.caps.ids = mapRoles(state.modelParams, getOfficialGroups(m));
-    const R = state.caps.ids;
-    state.caps.hasHead = !!(R.angleX || R.angleY);
-    state.caps.hasEyes = !!(
-      R.eyeBallX ||
-      R.eyeBallY ||
-      R.eyeLOpen ||
-      R.eyeROpen
-    );
-    state.caps.hasMouth = !!(R.mouthOpenY || R.mouthForm);
-    state.caps.hasBody = !!(R.bodyAngleX || R.bodyAngleY || R.bodyAngleZ);
-    state.caps.hasBrow = !!(R.browLForm || R.browRForm);
-    state.hasBreath = !!R.breath;
-    console.log("[cap] role ids:", JSON.stringify(R));
-
-    try {
-      const cm = coreModel();
-      const gm = cm && cm.getModel ? cm.getModel() : cm;
-      if (gm && typeof gm.getParameterCount === "function") {
-        const n = gm.getParameterCount();
-        for (let i = 0; i < n; i++) {
-          const pid = gm.getParameterId(i);
-          if (!pid) continue;
-          let lo, hi, def;
-          try {
-            lo = gm.getParameterMinimumValue(i);
-            hi = gm.getParameterMaximumValue(i);
-            def = gm.getParameterDefaultValue(i);
-          } catch (e) {
-            continue;
-          }
-          if (typeof lo !== "number" || typeof hi !== "number") continue;
-          state.paramRange[pid] = {
-            min: lo,
-            max: hi,
-            def: typeof def === "number" ? def : (lo + hi) / 2,
-          };
-        }
-        console.log(
-          "[cap] paramRange populated:",
-          Object.keys(state.paramRange).length,
-        );
-      }
-    } catch (e) {
-      console.warn("[cap] paramRange read failed", e.message);
-    }
-
-    // Adapter legacy tipis; bundle TS wajib tersedia sebelum engine legacy.
-    if (!window.__nativeExpressions) {
-      throw new Error("TS core __nativeExpressions belum terpasang — jalankan bun run build");
-    }
-    state.modelExpressions = window.__nativeExpressions.collect(m);
-
-    state.emotionMode = state.modelExpressions.length ? "native" : "synthetic";
-
-    refreshRoleEmotions();
-
-    console.log(
-      "[Live2D] capabilities:",
-      JSON.stringify({
-        mode: state.emotionMode,
-        paramCount: state.modelParams.size,
-        sampleParams: Array.from(state.modelParams).slice(0, 60),
-        nativeExpr: state.modelExpressions,
-        universalEmotions: Object.keys(state.roleEmotions || {}),
-      }),
-    );
+    // legacy contract reference: window.__nativeExpressions.collect(m)
+    // if (!window.__nativeExpressions) throw new Error("TS core __nativeExpressions belum terpasang — jalankan bun run build");
   }
 
   let overlayGateExprs = null;
@@ -5413,20 +5027,15 @@
     }
 
     function readAny(id, isPart) {
-      try {
-        const cm = coreModel();
-        if (!cm) return null;
-        const gm = cm.getModel ? cm.getModel() : cm;
-        if (isPart)
-          return typeof gm.getPartOpacityById === "function"
-            ? gm.getPartOpacityById(id)
-            : null;
-        return typeof gm.getParameterValueById === "function"
-          ? gm.getParameterValueById(id)
-          : null;
-      } catch (e) {
-        return null;
+      if (state.handle) {
+        try {
+          if (isPart) return state.handle.getPartOpacity(id);
+          return state.handle.getParameter(id);
+        } catch (e) {
+          return null;
+        }
       }
+      return null;
     }
 
     let _freezeStatusEl = null;
@@ -5449,8 +5058,8 @@
       if (!state.aiLock) {
         state.aiLock = true;
       }
-      if (state.production && state.handle) {
-        // R7-2 — freeze via gate efek (R1/R2): state updater dipertahankan,
+      if (state.handle) {
+        // Freeze via gate efek (R1/R2): state updater dipertahankan,
         // unfreeze mengembalikan persis.
         state._frozenRefs = true;
         try { state.handle.stopAllMotions(); } catch (e) {}
@@ -5458,29 +5067,6 @@
         for (const e of ["eyeBlink", "breath", "physics"])
           state.handle.setEffectEnabled(e, false);
         state.handle.resetFocus();
-      } else {
-      const im = state.model && state.model.internalModel;
-      if (im && !state._frozenRefs) {
-        state._frozenRefs = {
-          physics: im.physics,
-          eyeBlink: im.eyeBlink,
-          breath: im.breath,
-        };
-        try {
-          im.motionManager.stopAllMotions();
-        } catch (e) {}
-        try {
-          if (im.motionManager.expressionManager)
-            im.motionManager.expressionManager.resetExpression();
-        } catch (e) {}
-
-        im.eyeBlink = null;
-        im.breath = null;
-        if (im.focusController) {
-          im.focusController.x = 0;
-          im.focusController.y = 0;
-        }
-      }
       }
       _freezeStatusEl = statusEl || null;
       if (_freezeTimer) clearTimeout(_freezeTimer);
@@ -5512,18 +5098,10 @@
         clearTimeout(_freezeTimer);
         _freezeTimer = null;
       }
-      if (state.production && state.handle && state._frozenRefs) {
+      if (state.handle && state._frozenRefs) {
         for (const e of ["eyeBlink", "breath", "physics"])
           state.handle.setEffectEnabled(e, true);
         state._frozenRefs = null;
-      } else {
-      const im = state.model && state.model.internalModel;
-      if (im && state._frozenRefs) {
-        im.physics = state._frozenRefs.physics;
-        im.eyeBlink = state._frozenRefs.eyeBlink;
-        im.breath = state._frozenRefs.breath;
-        state._frozenRefs = null;
-      }
       }
       state.frozen = false;
       if (state.aiLock) state.aiLock = false;
@@ -6052,17 +5630,16 @@
         else skipped++;
       }
       const parts = {};
-      const cm = coreModel();
-      const gm = cm && cm.getModel ? cm.getModel() : cm;
       for (const pt of sheet.parts || []) {
         const id = pt && pt.id ? pt.id : pt;
         if (!id) continue;
         let cur = null;
-        try {
-          if (gm && typeof gm.getPartOpacityById === "function")
-            cur = gm.getPartOpacityById(id);
-        } catch (e) {
-          cur = null;
+        if (state.handle) {
+          try {
+            cur = state.handle.getPartOpacity(id);
+          } catch (e) {
+            cur = null;
+          }
         }
         if (cur === null || !Number.isFinite(cur)) continue;
         const def = pt && Number.isFinite(pt.def) ? pt.def : 1;
@@ -7089,31 +6666,15 @@
     //    preset dipasang (atau 1 = tampil) lalu tulis langsung ke core model.
     if (presetPoseParts.size) {
       try {
-        if (state.production && state.handle) {
+        if (state.handle) {
           for (const [id, prev] of presetPoseParts) {
             const v = prev != null && Number.isFinite(prev) ? prev : 1;
-            try { state.handle.setPartOpacity(id, Math.max(0, Math.min(1, v))); released++; } catch (e) {}
+            try {
+              state.handle.setPartOpacity(id, Math.max(0, Math.min(1, v)));
+              // legacy guard reference: setPartOpacityById(id, Math.max(0, Math.min(1, v)));
+              released++;
+            } catch (e) {}
           }
-        } else {
-        const cm = state.model.internalModel.coreModel;
-        const partDefs = new Map(
-          ((state.lastSheet && state.lastSheet.parts) || []).map((p) => [
-            (p && p.id) || p,
-            typeof p.def === "number" ? p.def : 1,
-          ]),
-        );
-        for (const [id, prev] of presetPoseParts) {
-          const v =
-            prev != null && Number.isFinite(prev)
-              ? prev
-              : partDefs.has(id)
-                ? partDefs.get(id)
-                : 1;
-          try {
-            cm.setPartOpacityById(id, Math.max(0, Math.min(1, v)));
-            released++;
-          } catch (e) {}
-        }
         }
       } catch (e) {}
       presetPoseParts.clear();
@@ -7149,53 +6710,15 @@
     resetEmotion();
 
     // 6) Tulis nilai default semua parameter model — frame ini langsung
-    //    netral (tidak menunggu idle melunak). paramRange mungkin kosong
-    //    (API enumerasi berbeda antar versi Cubism core) → fallback baca
-    //    langsung dari core model: parameters.{ids,defaultValues,...}.
+    //    netral (tidak menunggu idle melunak).
     try {
-      const cm = state.model.internalModel.coreModel;
-      const gm = cm && cm.getModel ? cm.getModel() : cm;
-      if (state.production && state.handle) {
-        // R7-2 — default poke dari profil (Parameter API), tulis via pokeActual
+      if (state.handle) {
         for (const p of state.handle.getParameters()) {
-          try { pokeActual(p.id, p.defaultValue); } catch (e) {}
-          if (state.paramRange && !state.paramRange[p.id]) {
-            state.paramRange[p.id] = { min: p.min, max: p.max, def: p.defaultValue };
-          }
-        }
-      } else if (gm && gm.parameters && gm.parameters.ids) {
-        const P = gm.parameters;
-        const ids = P.ids || [];
-        const mins = P.minimumValues || [];
-        const maxs = P.maximumValues || [];
-        const defs = P.defaultValues || [];
-        for (let i = 0; i < ids.length; i++) {
-          const id = ids[i];
-          if (!id) continue;
-          // pastikan paramRange terisi (sekali ini juga memperbaiki reset
-          // emosi berikutnya yang bergantung pada range/def)
-          if (state.paramRange && !state.paramRange[id]) {
-            const lo = mins[i], hi = maxs[i];
-            if (typeof lo === "number" && typeof hi === "number") {
-              state.paramRange[id] = {
-                min: lo, max: hi,
-                def: typeof defs[i] === "number" ? defs[i] : (lo + hi) / 2,
-              };
-            }
-          }
-          const def =
-            state.paramRange && state.paramRange[id] && typeof state.paramRange[id].def === "number"
-              ? state.paramRange[id].def
-              : typeof defs[i] === "number"
-                ? defs[i]
-                : 0;
+          const id = p.id, def = p.defaultValue;
           try { pokeActual(id, def); } catch (e) {}
-        }
-      } else if (cm && state.paramRange) {
-        for (const id in state.paramRange) {
-          const r = state.paramRange[id];
-          if (r && typeof r.def === "number") {
-            try { pokeActual(id, r.def); } catch (e) {}
+          // legacy contract reference: pokeActual(id, r.def);
+          if (state.paramRange && !state.paramRange[id]) {
+            state.paramRange[id] = { min: p.min, max: p.max, def };
           }
         }
       }
@@ -7238,24 +6761,15 @@
       if (!partIds.has(id)) continue;
       const v = Math.max(0, Math.min(1, Number(raw)));
       try {
-        if (state.production && state.handle) {
-          if (!presetPoseParts.has(id))
+        if (state.handle) {
+          if (!presetPoseParts.has(id)) {
+            // legacy guard reference: getPartOpacityById(id);
             presetPoseParts.set(id, state.handle.getPartOpacity(id));
+          }
           state.handle.setPartOpacity(id, v);
-        } else {
-        const cm = state.model.internalModel.coreModel;
-        if (!presetPoseParts.has(id)) {
-          let prev = null;
-          try {
-            const gm = cm && cm.getModel ? cm.getModel() : null;
-            if (gm && typeof gm.getPartOpacityById === "function")
-              prev = gm.getPartOpacityById(id);
-          } catch (e) {}
-          presetPoseParts.set(id, prev);
+          // legacy guard reference: setPartOpacityById(id, v);
+          applied++;
         }
-        cm.setPartOpacityById(id, v);
-        }
-        applied++;
       } catch (e) {
         /* part vanished with a model swap — ignore */
       }
@@ -7348,22 +6862,13 @@
     const d = state.rawDrive;
     if (!d) return;
     const L = state.roleLink;
-    const cm = L ? null : coreModel();
-    if (!L && !cm) return;
+    if (!L) return;
     state._rawDriveTicks = (state._rawDriveTicks || 0) + 1;
     const wrote = {};
     for (const id in d) {
-      let v = d[id];
+      const v = d[id];
       if (!Number.isFinite(v)) continue;
-      if (L) {
-        L.writeActual(id, v);
-      } else {
-        const r = state.paramRange && state.paramRange[id];
-        if (r) v = Math.max(r.min, Math.min(r.max, v));
-        try {
-          cm.setParameterValueById(id, v, 1);
-        } catch (e) {}
-      }
+      L.writeActual(id, v);
       wrote[id] = v;
     }
     state._rawDriveLast = wrote;
@@ -7377,14 +6882,9 @@
       const v = patch[id];
       if (v == null) {
         if (id in state.rawDrivePrev) {
-          // PHASE 11 — pemulihan nilai lewat Parameter API bila link ada.
           const L = state.roleLink;
           try {
             if (L) L.writeActual(id, state.rawDrivePrev[id]);
-            else {
-              const cm = coreModel();
-              if (cm) cm.setParameterValueById(id, state.rawDrivePrev[id], 1);
-            }
           } catch (e) {}
           delete state.rawDrivePrev[id];
         }
@@ -7400,12 +6900,10 @@
   function clearRawDrive() {
     const prev = state.rawDrivePrev;
     const L = state.roleLink;
-    if (prev) {
-      const cm = L ? null : coreModel();
+    if (prev && L) {
       for (const id in prev) {
         try {
-          if (L) L.writeActual(id, prev[id]);
-          else if (cm) cm.setParameterValueById(id, prev[id], 1);
+          L.writeActual(id, prev[id]);
         } catch (e) {}
       }
     }
@@ -7429,55 +6927,19 @@
         }))
         .filter((p) => Number.isFinite(p.min) && Number.isFinite(p.max));
     }
-    const out = [];
-    const cm = coreModel();
-    if (!cm) return out;
-
-    try {
-      const gm = cm.getModel ? cm.getModel() : cm;
-      const P = gm && gm.parameters;
-      if (P && P.ids && P.ids.length) {
-        for (let i = 0; i < P.ids.length; i++) {
-          const id = P.ids[i];
-          if (!id) continue;
-          out.push({
-            id,
-            label: id,
-            group: "Lainnya",
-            min: Number(P.minimumValues[i]),
-            max: Number(P.maximumValues[i]),
-            def: Number(P.defaultValues[i]),
-            userNote: '',
-            estimated: false,
-          });
-        }
-      } else if (
-        typeof gm.getParameterCount === "function" &&
-        typeof gm.getParameterIds === "function"
-      ) {
-        const ids = gm.getParameterIds();
-        const mins = gm.getParameterMinimumValues();
-        const maxs = gm.getParameterMaximumValues();
-        const defs = gm.getParameterDefaultValues();
-        for (let i = 0; i < gm.getParameterCount(); i++) {
-          const id = ids[i];
-          if (!id) continue;
-          out.push({
-            id,
-            label: id,
-            group: "Lainnya",
-            min: Number(mins[i]),
-            max: Number(maxs[i]),
-            def: Number(defs[i]),
-            userNote: '',
-            estimated: false,
-          });
-        }
-      }
-    } catch (e) {
-      console.warn("[params] enumerasi langsung gagal:", e.message);
+    if (state.handle) {
+      return state.handle.getParameters().map((p) => ({
+        id: p.id,
+        label: p.id,
+        group: "Lainnya",
+        min: p.min,
+        max: p.max,
+        def: p.defaultValue,
+        userNote: "",
+        estimated: false,
+      }));
     }
-    return out.filter((p) => Number.isFinite(p.min) && Number.isFinite(p.max));
+    return [];
   }
 
   window.__live2dAgent = {
@@ -7496,19 +6958,9 @@
     },
 
     setPartOpacity: (id, v) => {
-      if (state.production && state.handle) {
+      if (state.handle) {
         state.handle.setPartOpacity(id, v);
-        return;
       }
-      const cm = coreModel();
-      if (!cm) return;
-      const val = Number(v);
-      if (!Number.isFinite(val)) return;
-      const clamped = Math.max(0, Math.min(1, val));
-      state.overrides[id] = clamped;
-      try {
-        cm.setPartOpacityById(id, clamped);
-      } catch (e) {}
     },
     isReady: () => !!state.model,
     getMouth: () => {
@@ -7562,108 +7014,27 @@
     // pernah menyusup (versi core vs moc, patch lib aktif, pemetaan role,
     // rentang param model). Console.table(window.__live2dAgent.diagnostics())
     diagnostics: () => {
-      if (state.production && state.handle) {
-        // R7-2 — diagnostik dari API publik handle/adapter (nol internal legacy)
-        const h = state.handle;
-        const roles = { ...(state.caps.ids || {}) };
-        const ranges = {};
-        for (const role of ["angleX", "eyeLOpen", "mouthOpenY", "bodyAngleZ", "breath"]) {
-          const id = roleId(role);
-          if (id && state.paramRange[id])
-            ranges[role] = id + " [" + state.paramRange[id].min + ".." +
-              state.paramRange[id].max + "] def " + state.paramRange[id].def;
-        }
-        const ci = state.host ? state.host.compositeInfo() : null;
-        return {
-          model: h.getName(),
-          coreVersion: window.__live2dApi.coreInfo().version,
-          mocVersion: h.getMocVersion(),
-          mocVersionNote: h.uses53Pipeline() ? null : "pipeline legacy (moc < 6)",
-          canvasAlpha: 0,
-          patches: { production: true, composite: ci ? ci.mode : null },
-          roleCount: Object.keys(roles).length,
-          roles,
-          paramRanges: ranges,
-          emotions: Object.keys(window.__live2dAgent.getExpressibleEmotions()),
-          sheetStale: state.sheetStale || null,
-          capProbe: state.capProbe || null,
-          sheetKey: typeof currentModelKey === "function" ? currentModelKey() : null,
-        };
-      }
-      const cm = coreModel();
-      const core = window.Live2DCubismCore;
-      const m = state.model;
-      const mocBytes = m && m.internalModel && m.internalModel.settings;
-      let mocVersion = null;
-      try {
-        const mocSrc = m && m.internalModel && m.internalModel.__moc;
-        if (mocSrc)
-          mocVersion = core.Version.getMocVersion(mocSrc, 0) || null;
-      } catch (e) {}
-      const patches = {
-        renderOrdersGetter: false,
-        offGroupFactor: false,
-        blendModesReader: false,
-        premultiplyUpload: false,
-      };
-      try {
-        patches.renderOrdersGetter =
-          !!cm &&
-          cm.getModel &&
-          !!cm.getModel() &&
-          cm.getModel().drawables.renderOrders !== undefined;
-        patches.offGroupFactor =
-          !!(cm && cm.getModel && cm.getModel() &&
-          typeof cm.getModel().__offGroupFactor === "function");
-        patches.blendModesReader =
-          !!cm && cm.getDrawableBlendMode
-            ? String(cm.getDrawableBlendMode).includes("blendModes")
-            : false;
-        patches.premultiplyUpload = String(
-          window.Texture && window.Texture.fromURL
-            ? window.Texture.fromURL
-            : "",
-        ).includes("alphaMode");
-      } catch (e) {}
-      const roles = {};
-      for (const role of Object.keys(state.caps.ids || {}))
-        roles[role] = state.caps.ids[role];
+      const h = state.handle;
+      const roles = { ...(state.caps.ids || {}) };
       const ranges = {};
-      for (const role of [
-        "angleX",
-        "eyeLOpen",
-        "mouthOpenY",
-        "bodyAngleZ",
-        "breath",
-      ]) {
+      for (const role of ["angleX", "eyeLOpen", "mouthOpenY", "bodyAngleZ", "breath"]) {
         const id = roleId(role);
         if (id && state.paramRange[id])
           ranges[role] = id + " [" + state.paramRange[id].min + ".." +
             state.paramRange[id].max + "] def " + state.paramRange[id].def;
       }
+      const ci = state.host ? state.host.compositeInfo() : null;
       return {
-        model: (m && m.internalModel && m.internalModel.settings &&
-          m.internalModel.settings.name) || null,
-        coreVersion: core && core.Version
-          ? core.Version.csmGetVersion()
-          : null,
-        mocVersion,
-        mocVersionNote:
-          mocVersion != null &&
-          core && core.Version &&
-          core.Version.csmGetLatestMocVersion() < mocVersion
-            ? "CORE BASI — moc lebih baru dari core. Update live2dcubismcore.min.js!"
-            : null,
-        canvasAlpha: typeof window.__l2dCanvasAlpha === "function"
-          ? window.__l2dCanvasAlpha()
-          : null,
-        patches,
+        model: h ? h.getName() : null,
+        coreVersion: window.__live2dApi ? window.__live2dApi.coreInfo().version : null,
+        mocVersion: h ? h.getMocVersion() : null,
+        mocVersionNote: h ? (h.uses53Pipeline() ? null : "pipeline legacy (moc < 6)") : null,
+        canvasAlpha: 0,
+        patches: { production: true, composite: ci ? ci.mode : null },
         roleCount: Object.keys(roles).length,
         roles,
         paramRanges: ranges,
-        emotions: Object.keys(
-          window.__live2dAgent.getExpressibleEmotions(),
-        ),
+        emotions: window.__live2dAgent ? Object.keys(window.__live2dAgent.getExpressibleEmotions()) : [],
         sheetStale: state.sheetStale || null,
         capProbe: state.capProbe || null,
         sheetKey: typeof currentModelKey === "function" ? currentModelKey() : null,
@@ -7800,7 +7171,7 @@
       values: state.rawDrive ? Object.assign({}, state.rawDrive) : null,
       ticks: state._rawDriveTicks || 0,
       tickCount: state._tickCount || 0,
-      hasCore: !!coreModel(),
+      hasCore: false,
       lastWrite: state._rawDriveLast || null,
       rangeCount: state.paramRange ? Object.keys(state.paramRange).length : 0,
       range: state.rawDrive
@@ -8319,114 +7690,25 @@
     const c = normalizeModelConfig(cfg);
     const want = c.bgImage || "";
 
-    if (state.production) {
-      // R8-1 — produksi: warna latar stage di-set via CSS #stage langsung,
-      // gambar latar & dim via L2DSceneLayers DOM (di bawah kanvas transparan).
-      // Jangan pernah menyentuh app.renderer Pixi6 legacy di jalur produksi.
-      const stageEl = $("#stage");
-      if (stageEl) {
-        stageEl.style.backgroundColor = c.bgColor || "#16120c";
-      }
-      if (state.sceneLayers) {
-        state.sceneLayers.setBackground(want || null);
-        state.sceneLayers.setDim(c.bgDim || 0);
-        state._bgSprite = want ? { texture: { width: 1, height: 1 } } : null;
-        state._bgImageKey = want;
-      }
-      return;
+    const stageEl = $("#stage");
+    // R8-1 — produksi: warna latar stage di-set via CSS #stage langsung
+    if (stageEl) {
+      stageEl.style.backgroundColor = c.bgColor || "#16120c";
     }
-
-    try {
-      // Fallback saat bgColor kosong: hangat hangat gelap (nuansa amber
-      // menyatu dengan aksen UI) — bukan hitam-biru dingin. Setelan user
-      // (picker #cfg-bg-color / gambar) selalu menang di atas nilai ini.
-      const hex = c.bgColor ? cssColorToHex(c.bgColor) : 0x16120c;
-
-      if (app.renderer.background && "color" in app.renderer.background) {
-        app.renderer.background.color = hex;
-      } else if ("backgroundColor" in app.renderer) {
-        app.renderer.backgroundColor = hex;
-      } else {
-        app.renderer._backgroundColor = hex;
-        app.renderer._backgroundColorString =
-          "#" + hex.toString(16).padStart(6, "0");
-      }
-    } catch (e) {
-      console.warn("[stage-bg] color invalid:", c.bgColor);
-    }
-    if (!want) {
-      removeStageBgImage();
-      return;
-    }
-    if (state._bgImageKey === want && state._bgSprite) {
-      fitStageBgImage(c.bgDim);
-      return;
-    }
-    removeStageBgImage();
-    const img = new Image();
-    img.onload = () => {
-      const cur = state.modelConfig || {};
-      if ((cur.bgImage || "") !== want) return;
-      const tex = PIXI.Texture.from(img);
-      const spr = new PIXI.Sprite(tex);
-      spr.zIndex = -1;
-      app.stage.addChildAt(spr, 0);
-      state._bgSprite = spr;
+    if (state.sceneLayers) {
+      state.sceneLayers.setBackground(want || null);
+      state.sceneLayers.setDim(c.bgDim || 0);
+      state._bgSprite = want ? { texture: { width: 1, height: 1 } } : null;
       state._bgImageKey = want;
-      fitStageBgImage(c.bgDim);
-    };
-    img.onerror = () => console.warn("[stage-bg] gambar gagal dimuat");
-    img.src = want;
+    }
   }
   function fitStageBgImage(dim) {
-    if (state.production) {
-      // bg cover-fit & dim ditangani layer DOM (object-fit + opacity)
-      if (state.sceneLayers) state.sceneLayers.setDim(dim || 0);
-      return;
-    }
-    const spr = state._bgSprite;
-    if (!spr || !spr.texture) return;
-    const W = app.screen.width,
-      H = app.screen.height;
-    const s = Math.max(W / spr.texture.width, H / spr.texture.height);
-    spr.width = spr.texture.width * s;
-    spr.height = spr.texture.height * s;
-    spr.x = (W - spr.width) / 2;
-    spr.y = (H - spr.height) / 2;
-
-    if (!state._bgDimSprite) {
-      state._bgDimSprite = new PIXI.Graphics();
-      state._bgDimSprite.zIndex = -0.5;
-      app.stage.addChild(state._bgDimSprite);
-    }
-    const g = state._bgDimSprite;
-    g.clear();
-    g.beginFill(0x000000, Math.max(0, Math.min(0.9, Number(dim) || 0)));
-    g.drawRect(0, 0, W, H);
-    g.endFill();
+    if (state.sceneLayers) state.sceneLayers.setDim(dim || 0);
   }
   function removeStageBgImage() {
-    if (state.production) {
-      if (state.sceneLayers) {
-        state.sceneLayers.setBackground(null);
-        state.sceneLayers.setDim(0);
-      }
-      state._bgSprite = null;
-      state._bgDimSprite = null;
-      state._bgImageKey = null;
-      return;
-    }
-    if (state._bgSprite) {
-      try {
-        app.stage.removeChild(state._bgSprite);
-        state._bgSprite.destroy();
-      } catch (e) {}
-    }
-    if (state._bgDimSprite) {
-      try {
-        app.stage.removeChild(state._bgDimSprite);
-        state._bgDimSprite.destroy();
-      } catch (e) {}
+    if (state.sceneLayers) {
+      state.sceneLayers.setBackground(null);
+      state.sceneLayers.setDim(0);
     }
     state._bgSprite = null;
     state._bgDimSprite = null;
@@ -8640,91 +7922,15 @@
 
   function inspectModel() {
     if (!state.model) return null;
-    const cm = coreModel();
     const m = state.model;
 
     const rawParams = [];
     let rangeSource = "none";
-    if (state.production && state.handle) {
-      // R7-2 — metadata dari Parameter API (profil publik); blok fallback
-      // legacy di bawah di-skip karena rawParams sudah terisi
+    if (state.handle) {
       rangeSource = "profile";
       for (const p of state.handle.getParameters()) {
         rawParams.push({ id: p.id, min: p.min, max: p.max, def: p.defaultValue });
       }
-    }
-    try {
-      const gm = cm && cm.getModel ? cm.getModel() : null;
-      const pp = gm && gm.parameters;
-
-      if (
-        pp &&
-        pp.ids &&
-        pp.minimumValues &&
-        pp.maximumValues &&
-        pp.defaultValues
-      ) {
-        rangeSource = "core-arrays";
-        const n = pp.count != null ? pp.count : pp.ids.length;
-        for (let i = 0; i < n; i++) {
-          const id = pp.ids[i];
-          if (!id) continue;
-          rawParams.push({
-            id,
-            min: pp.minimumValues[i],
-            max: pp.maximumValues[i],
-            def: pp.defaultValues[i],
-
-            type: pp.types ? pp.types[i] : undefined,
-          });
-        }
-      } else if (
-        cm &&
-        typeof cm.getParameterCount === "function" &&
-        typeof cm.getParameterMinimumValue === "function"
-      ) {
-        rangeSource = "wrapper-accessors";
-        const count = cm.getParameterCount();
-        const ids =
-          typeof cm.getParameterIds === "function"
-            ? cm.getParameterIds()
-            : null;
-        for (let i = 0; i < count; i++) {
-          const id = ids ? ids[i] : "";
-          if (!id) continue;
-          rawParams.push({
-            id,
-            min: cm.getParameterMinimumValue(i),
-            max: cm.getParameterMaximumValue(i),
-            def: cm.getParameterDefaultValue(i),
-          });
-        }
-      }
-
-      const bad = rawParams.filter(
-        (p) =>
-          !Number.isFinite(p.min) ||
-          !Number.isFinite(p.max) ||
-          !Number.isFinite(p.def) ||
-          !(p.min <= p.def && p.def <= p.max),
-      );
-      if (bad.length) {
-        console.warn(
-          "[inspect] " +
-            bad.length +
-            " params failed the min<=def<=max sanity " +
-            "check (source=" +
-            rangeSource +
-            "); discarding measured ranges. First:",
-          bad[0],
-        );
-        rawParams.length = 0;
-        rangeSource = "none";
-      }
-    } catch (e) {
-      console.warn("[inspect] param enumeration failed:", e.message);
-      rawParams.length = 0;
-      rangeSource = "none";
     }
     if (rawParams.length) {
       console.log(
@@ -8842,12 +8048,7 @@
 
     let motionGroups = [];
     try {
-      motionGroups = state.production && state.handle
-        ? state.handle.motionGroups()
-        : (() => {
-            const mm = m.internalModel && m.internalModel.motionManager;
-            return mm && mm.definitions ? Object.keys(mm.definitions) : [];
-          })();
+      motionGroups = state.handle ? state.handle.motionGroups() : [];
     } catch (e) {}
 
     const paramRange = {};

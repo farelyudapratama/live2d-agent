@@ -263,43 +263,26 @@ async function run() {
     const legacyStateEval = await cdp.send<any>("Runtime.evaluate", {
       expression: `({
         production: window.__petState?.production,
+        hasHandle: Boolean(window.__petState?.handle),
+        hasHost: Boolean(window.__petState?.host),
         hasApp: Boolean(window.__petState?.app),
-        hasModel: Boolean(window.__petState?.model),
         bounds: window.__petState?.model?.getBounds ? window.__petState.model.getBounds() : null,
       })`,
       returnByValue: true,
     });
     const legacyState = legacyStateEval.result?.value;
-    console.log("  State Legacy:", JSON.stringify(legacyState));
-    if (legacyState.production !== false) {
-      throw new Error("Expected production === false in legacy mode");
+    console.log("  State with ?renderer=legacy:", JSON.stringify(legacyState));
+    if (legacyState.production !== true) {
+      throw new Error("Expected production === true unconditionally (legacy fallback retired in R9-3)");
     }
-    if (!legacyState.hasApp) {
-      throw new Error("Expected PIXI.Application in legacy mode");
+    if (legacyState.hasApp) {
+      throw new Error("Expected NO PIXI.Application (legacy fallback retired in R9-3)");
     }
-    console.log("  ✓ Legacy fallback mode verified (?renderer=legacy)");
-
-    // Perbandingan bounds
-    console.log("\n⚖️ A/B Comparison:");
-    console.log("  Production Bounds:", prodState.bounds);
-    console.log("  Legacy Bounds:    ", legacyState.bounds);
-
-    if (prodState.bounds && legacyState.bounds) {
-      const legX = legacyState.bounds.left ?? legacyState.bounds.x;
-      const legY = legacyState.bounds.top ?? legacyState.bounds.y;
-      const dw = Math.abs(prodState.bounds.width - legacyState.bounds.width);
-      const dh = Math.abs(prodState.bounds.height - legacyState.bounds.height);
-      const dx = Math.abs(prodState.bounds.left - legX);
-      const dy = Math.abs(prodState.bounds.top - legY);
-      console.log(`  Difference: Δwidth=${dw.toFixed(2)}px, Δheight=${dh.toFixed(2)}px, Δx=${dx.toFixed(2)}px, Δy=${dy.toFixed(2)}px`);
-      if (dw < 5 && dh < 5 && dx < 5 && dy < 5) {
-        console.log("  ✓ Geometric Parity A/B VERIFIED (< 5px difference across stacks)");
-      } else {
-        console.warn("  ⚠️ Slight bounds divergence:", { dw, dh, dx, dy });
-      }
+    if (!legacyState.hasHandle || !legacyState.hasHost) {
+      throw new Error("Expected production handle and host to remain active with ?renderer=legacy");
     }
+    console.log("  ✓ Retired legacy parameter safely ignored; production Cubism renderer active");
 
-    cdp.close();
     console.log("\n🎉 ALL PET BROWSER SMOKE CHECKS PASSED!");
   } finally {
     try { browserProc.kill(); } catch {}

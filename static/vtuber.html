@@ -65,12 +65,13 @@
   <label><span data-i18n="vt.cooldown">Jeda antar balas (dtk)</span> <input id="ov-cooldown" type="number" min="5" max="120" value="12" /></label>
   <button class="btn" id="ov-copy" data-i18n="vtOv.copyUrl">Salin URL OBS</button>
 </div>
-<script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/live2dcubismcore.min.js"></script>
-<script src="js/pixi-live2d-0.4.0.js?v=3"></script>
-<!-- bundle.js = core TS utuh: window.__i18n (sweep data-i18n saat init) +
-     window.LipSync (AudioLipSync untuk sinkron bibir audio remote). Tanpa
-     render loop — halaman ini yang punya loop sendiri. -->
+<script src="js/cubism-framework.js"></script>
+<script src="js/live2d-adapter.js"></script>
+<script src="js/scene-layers.js"></script>
+<script src="js/pixi8-namespace.js"></script>
+<!-- bundle.js = core TS utuh: window.__i18n, window.LipSync, window.__live2dApi,
+     window.__engineRoleLink, window.__l2dArbiter, motion, dll. -->
 <script src="js/bundle.js"></script>
 <script>
 (function () {
@@ -78,7 +79,29 @@
   const t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const qs = new URLSearchParams(location.search);
   const $ = (id) => document.getElementById(id);
-  const state = { model: null, app: null, bubbleTimer: null, alertTimer: null, dir: 1 };
+  if (qs.get("renderer") === "legacy") {
+    console.info("[vtuber] ?renderer=legacy parameter is retired in R9-3; using production Cubism renderer unconditionally.");
+  }
+
+  const state = {
+    production: true,
+    host: null,
+    handle: null,
+    model: null,
+    roleLink: null,
+    arbiter: null,
+    audioLipSync: null,
+    lipPulseActive: false,
+    lipPulseTime: 0,
+    swayTime: 0,
+    rafId: null,
+    activeModelPath: null,
+    bubbleTimer: null,
+    alertTimer: null,
+    heartbeatTimer: null,
+    eventsTimer: null,
+    dir: 1,
+  };
 
   function setStatus(msg) { $("status").textContent = "overlay — " + msg; }
   function bubble(text, ms) {
@@ -131,7 +154,189 @@
   const personaText = () => { const s = lsGet(); return s.persona || "ceria dan ramah"; };
   const cooldownMs = () => Math.max(5, (lsGet().cooldown || 12)) * 1000;
 
-  // ── Muat model (pola sama dengan pet.html) ───────────────────────────────
+  // ── Compat Model Facade untuk kode VTuber (paritas koordinat POJO murni) ──
+  function createCompatModel(handle) {
+    const nat = () => handle.getNaturalSize();
+    const sz = () => ({ w: window.innerWidth, h: window.innerHeight });
+    const rect = () => {
+      const n = nat();
+      const sc = handle.getScale();
+      const pos = handle.getPosition();
+      return { x: pos.x, y: pos.y, w: n.width * sc, h: n.height * sc };
+    };
+    return {
+      __isCompatModel: true,
+      get handle() { return handle; },
+      get width() { return rect().w; },
+      get height() { return rect().h; },
+      get x() { return sz().w / 2 + rect().x; },
+      set x(v) { handle.setPosition(v - sz().w / 2, handle.getPosition().y); },
+      get y() { return sz().h / 2 + rect().y; },
+      set y(v) { handle.setPosition(handle.getPosition().x, v - sz().h / 2); },
+      get position() {
+        return {
+          get x() { return sz().w / 2 + rect().x; },
+          set x(v) { handle.setPosition(v - sz().w / 2, handle.getPosition().y); },
+          get y() { return sz().h / 2 + rect().y; },
+          set y(v) { handle.setPosition(handle.getPosition().x, v - sz().h / 2); },
+        };
+      },
+      get scale() {
+        return {
+          get x() { return handle.getScale(); },
+          set x(v) { handle.setScale(v); },
+          get y() { return handle.getScale(); },
+          set y(v) { handle.setScale(v); },
+          set(x) { handle.setScale(x); },
+        };
+      },
+      set rotation(v) { handle.setRotation(v); },
+      anchor: { set(x, y) { handle.setAnchor(x, y); } },
+      motion(group, index, priority) {
+        return Promise.resolve(
+          handle.playNativeMotion(group, index === undefined ? -1 : index, priority || 2),
+        );
+      },
+      expression(name) {
+        return Promise.resolve(handle.playExpression(name));
+      },
+      destroy() { handle.destroy(); },
+      getBounds() {
+        const r = rect();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return {
+          left: L, top: T, right: L + r.w, bottom: T + r.h,
+          width: r.w, height: r.h,
+          centerX: L + r.w / 2, centerY: T + r.h / 2,
+        };
+      },
+      toGlobal(p) {
+        const r = rect();
+        const sc = handle.getScale();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return { x: L + p.x * sc, y: T + p.y * sc };
+      },
+      toLocal(p) {
+        const r = rect();
+        const sc = handle.getScale();
+        const L = sz().w / 2 + r.x, T = sz().h / 2 + r.y;
+        return { x: (p.x - L) / sc, y: (p.y - T) / sc };
+      },
+      texture: null,
+    };
+  }
+
+  // ── Framing model (paritas formula subpixel identik dengan pet.html) ───────
+  function frameModel() {
+    const m = state.model;
+    if (!m || !state.handle) return;
+    const natW = state.handle.getNaturalSize().width;
+    const natH = state.handle.getNaturalSize().height;
+    if (!natW || !natH) return;
+    const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
+    m.scale.set(s);
+    m.x = (window.innerWidth - natW * s) / 2;
+    m.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+  }
+
+  // ── Render Loop Tunggal (requestAnimationFrame eksplisit) ───────────────────
+  let lastTime = performance.now();
+  function startRenderLoop() {
+    if (state.rafId) cancelAnimationFrame(state.rafId);
+    lastTime = performance.now();
+    const tick = (now) => {
+      const dt = lastTime ? Math.max(0, Math.min(0.05, (now - lastTime) / 1000)) : 0.016;
+      lastTime = now;
+      if (state.handle) {
+        // 1. Idle sway halus (rotasi sinusoide)
+        state.swayTime += dt;
+        state.handle.setRotation(Math.sin(state.swayTime * 0.9) * 0.012);
+
+        // 2. Lip-sync intent (browser TTS pulse atau remote AudioLipSync analyser)
+        if (state.arbiter) {
+          if (state.lipPulseActive) {
+            state.lipPulseTime += dt;
+            const val = 0.25 + Math.abs(Math.sin(state.lipPulseTime * 5.2)) * 0.55;
+            state.arbiter.submit({
+              channel: "lipSync",
+              priority: 15,
+              domain: "role",
+              values: { mouthOpenY: val },
+            });
+          } else if (state.audioLipSync && state.audioLipSync.active) {
+            const open = state.audioLipSync.sample(now);
+            state.arbiter.submit({
+              channel: "lipSync",
+              priority: 15,
+              domain: "role",
+              values: { mouthOpenY: open },
+            });
+          } else {
+            state.arbiter.submit({
+              channel: "lipSync",
+              priority: 15,
+              domain: "role",
+              values: { mouthOpenY: 0 },
+            });
+          }
+        }
+
+        // 3. Exactly one model update (memicu onBeforeModelUpdate -> arbiter commit)
+        state.handle.update(dt);
+
+        // 4. Exactly one host render
+        if (state.host) state.host.render();
+      }
+      state.rafId = requestAnimationFrame(tick);
+    };
+    state.rafId = requestAnimationFrame(tick);
+  }
+
+  // ── Pembersihan & Siklus Hidup Model ───────────────────────────────────────
+  async function teardownCurrentModel() {
+    if (state.handle) {
+      if (state.host) {
+        try { state.host.remove(state.handle); } catch (e) {}
+      }
+      try { state.handle.destroy(); } catch (e) {}
+      state.handle = null;
+    }
+    state.model = null;
+    state.roleLink = null;
+    state.arbiter = null;
+    state.activeModelPath = null;
+  }
+
+  async function teardown() {
+    if (state.rafId) {
+      cancelAnimationFrame(state.rafId);
+      state.rafId = null;
+    }
+    if (state.bubbleTimer) {
+      clearTimeout(state.bubbleTimer);
+      state.bubbleTimer = null;
+    }
+    if (state.alertTimer) {
+      clearTimeout(state.alertTimer);
+      state.alertTimer = null;
+    }
+    if (state.heartbeatTimer) {
+      clearInterval(state.heartbeatTimer);
+      state.heartbeatTimer = null;
+    }
+    if (state.eventsTimer) {
+      clearInterval(state.eventsTimer);
+      state.eventsTimer = null;
+    }
+    pollingStarted = false;
+    await teardownCurrentModel();
+    if (state.host) {
+      try { state.host.destroy(); } catch (e) {}
+      state.host = null;
+    }
+  }
+
+  // ── Muat model ─────────────────────────────────────────────────────────────
   async function resolveModelPath() {
     let path = qs.get("model");
     if (path) return path;
@@ -146,51 +351,115 @@
     } catch (e) { return ""; }
   }
 
-  async function boot() {
+  async function loadModel(path) {
+    if (!path) {
+      setStatus(t("vtOv.noModel"));
+      return;
+    }
     setStatus(t("vtOv.loadingModel"));
-    const path = await resolveModelPath();
-    if (!path) { setStatus(t("vtOv.noModel")); return; }
-    // registerTicker adalah static di Live2DModel (jebakan yang sama dengan
-    // pet.html: memanggilnya lewat namespace PIXI.live2d melempar TypeError).
-    PIXI.live2d.Live2DModel.registerTicker(PIXI.Ticker);
-    const app = new PIXI.Application({
-      view: $("live2d-canvas"),
-      width: window.innerWidth, height: window.innerHeight,
-      backgroundAlpha: 0, autoDensity: true, resolution: Math.min(devicePixelRatio || 1, 2),
-    });
-    state.app = app;
-    const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
+    await teardownCurrentModel();
+
+    await window.__compositor8Ready;
+    let stageCanvas = document.getElementById("live2d-canvas");
+    if (!stageCanvas) {
+      stageCanvas = document.createElement("canvas");
+      stageCanvas.id = "live2d-canvas";
+      const stageEl = document.getElementById("stage") || document.body;
+      stageEl.appendChild(stageCanvas);
+    }
+    const W = window.innerWidth, H = window.innerHeight;
+    stageCanvas.style.width = W + "px";
+    stageCanvas.style.height = H + "px";
+    stageCanvas.style.position = "absolute";
+    stageCanvas.style.inset = "0";
+
+    if (!state.host) {
+      state.host = window.__live2dApi.createHost({
+        canvas: stageCanvas,
+        width: W,
+        height: H,
+        backgroundAlpha: 0,
+        resolution: Math.min(window.devicePixelRatio || 1, 2),
+        composite: "canvas-texture",
+      });
+    } else {
+      state.host.resize(W, H);
+    }
+
+    const handle = await window.__live2dApi.loadModel(state.host, { kind: "path", path });
+    state.handle = handle;
+    handle.setAnchor(0, 0); // konvensi posisi: origin sudut kiri-atas
+    state.host.add(handle);
+    const model = createCompatModel(handle);
     state.model = model;
-    app.stage.addChild(model);
-    // Skala pas jendela lalu pusatkan; bounds dibaca ulang setelah scale.set()
-    // (rumus pra-skala mendorong karakter keluar canvas — lihat catatan pet.html).
-    const nat = model.getBounds();
-    const natW = nat.width / model.scale.x;
-    const natH = nat.height / model.scale.y;
-    const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
-    model.scale.set(s);
-    model.x = (window.innerWidth - natW * s) / 2;
-    model.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+    state.activeModelPath = path;
+
+    // Wire roleLink Phase 10 di atas handle
+    if (window.__engineRoleLink && window.__roleMapping) {
+      try {
+        state.roleLink = window.__engineRoleLink.attachHandle(handle, () => {
+          const allParams = handle.getParameters().map((p) => p.id);
+          const blinkIds = handle.getEyeBlinkParameters();
+          const lipIds = handle.getLipSyncParameters();
+          return window.__roleMapping.mapRoles(new Set(allParams), {
+            eyeBlinkIds: blinkIds,
+            lipSyncIds: lipIds,
+          });
+        });
+      } catch (e) {
+        console.warn("[vtuber] roleLink attach failed:", e);
+      }
+    }
+
+    // Wire ParameterArbiter Phase 13
+    if (window.__l2dArbiter) {
+      try {
+        state.arbiter = window.__l2dArbiter.createArbiter({
+          writeRole: (role, v) => (state.roleLink ? !!state.roleLink.bridge.writeRef(role, v) : false),
+          writeRoleNorm: (role, t) => (state.roleLink ? !!state.roleLink.bridge.writeNorm(role, t) : false),
+          writeParam: (id, v) => (state.roleLink ? !!state.roleLink.writeActual(id, v) : false),
+        });
+      } catch (e) {
+        console.warn("[vtuber] arbiter init failed:", e);
+      }
+    }
+
+    handle.onBeforeModelUpdate(() => {
+      if (state.arbiter) state.arbiter.commit();
+    });
+
+    frameModel();
+    startRenderLoop();
+
     loadVoiceCfg(path);
     startIdleLife();
     startPolling();
     setStatus(t("vtOv.idle"));
   }
 
-  function startIdleLife() {
-    let t0 = 0;
-    setInterval(() => {
-      const m = state.model;
-      if (!m) return;
-      t0 += 0.016;
-      m.rotation = Math.sin(t0 * 0.9) * 0.012;
-    }, 16);
+  async function boot() {
+    const path = await resolveModelPath();
+    await loadModel(path);
   }
 
+  function startIdleLife() {}
+
+  // ── Penanganan Resize & DPR ────────────────────────────────────────────────
+  window.addEventListener("resize", () => {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const stageCanvas = document.getElementById("live2d-canvas");
+    if (stageCanvas) {
+      stageCanvas.style.width = W + "px";
+      stageCanvas.style.height = H + "px";
+    }
+    if (state.host) {
+      state.host.resize(W, H);
+      frameModel();
+    }
+  });
+
   // ── Param suara (sheet model = sumber sama dengan app utama) ─────────────
-  // app.js menyimpan ttsLang/ttsRate/ttsPitch/ttsVoiceName di character sheet
-  // per model (POST /api/sheet, kunci = path model yang di-sanitize). Overlay
-  // membaca sheet yang sama supaya suara overlay = suara app utama.
   const VOICE = { lang: "id-ID", rate: 1, pitch: 1.15, voiceName: "" };
   async function loadVoiceCfg(modelPath) {
     try {
@@ -216,26 +485,29 @@
     } catch (e) {}
   }
 
-  // Pecah kalimat — versi ringkas splitSpeechSegments app.js (batas . ! ? …).
+  // Pecah kalimat — batas . ! ? …
   function splitSegments(text) {
     const parts = String(text || "").trim().split(/(?<=[.!?…]["”»')\]]?)\s+/);
     return parts.map((p) => p.trim()).filter(Boolean);
   }
 
   // Gerakkan bibir saat browser TTS (yang tak punya data audio analisis):
-  // ParamMouthOpenY berdenyut halus sampai utterance selesai.
+  // Menggunakan flag lipPulseActive yang disampel oleh RAF loop via ParameterArbiter.
   function mouthPulse() {
-    let on = true, t0 = 0;
-    const iv = setInterval(() => {
-      const m = state.model;
-      if (!m || !on) return;
-      t0 += 0.06;
-      try {
-        const core = m.internalModel.coreModel;
-        core.setParameterValueById("ParamMouthOpenY", 0.25 + Math.abs(Math.sin(t0 * 5.2)) * 0.55);
-      } catch (e) {}
-    }, 50);
-    return () => { on = false; clearInterval(iv); try { state.model.internalModel.coreModel.setParameterValueById("ParamMouthOpenY", 0); } catch (e) {} };
+    state.lipPulseActive = true;
+    state.lipPulseTime = 0;
+    return () => {
+      state.lipPulseActive = false;
+      state.lipPulseTime = 0;
+      if (state.arbiter) {
+        state.arbiter.submit({
+          channel: "lipSync",
+          priority: 15,
+          domain: "role",
+          values: { mouthOpenY: 0 },
+        });
+      }
+    };
   }
 
   function speakBrowser(text) {
@@ -263,7 +535,6 @@
         };
         if (speechSynthesis.getVoices().length) pickVoice();
         else speechSynthesis.addEventListener("voiceschanged", pickVoice, { once: true });
-        // jaring pengaman: utterance kadang tak pernah onend di OBS CEF
         setTimeout(finish, 20000 + text.length * 120);
       } catch (e) { finish(); }
     });
@@ -272,7 +543,20 @@
   function speakRemote(text) {
     return new Promise((resolve, reject) => {
       let done = false;
-      const finish = () => { if (!done) { done = true; resolve(); } };
+      const finish = () => {
+        if (!done) {
+          done = true;
+          if (state.arbiter) {
+            state.arbiter.submit({
+              channel: "lipSync",
+              priority: 15,
+              domain: "role",
+              values: { mouthOpenY: 0 },
+            });
+          }
+          resolve();
+        }
+      };
       fetch(API + "/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -283,11 +567,10 @@
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audio.playbackRate = Math.min(2, Math.max(0.5, VOICE.rate));
-        let lip = null;
         if (window.LipSync && window.LipSync.AudioLipSync) {
-          lip = new window.LipSync.AudioLipSync();
-          lip.reset();
-          if (!lip.attach(audio)) lip = null;
+          state.audioLipSync = state.audioLipSync || new window.LipSync.AudioLipSync();
+          state.audioLipSync.reset();
+          if (!state.audioLipSync.attach(audio)) state.audioLipSync = null;
         }
         audio.onended = () => { URL.revokeObjectURL(url); finish(); };
         audio.onerror = () => { URL.revokeObjectURL(url); finish(); };
@@ -331,8 +614,6 @@
     return d.reply || "";
   }
 
-  // Balasan dicatat ke feed server (type "agent") supaya muncul juga di
-  // feed app utama — persis pola vtuberAgentSay() mode-runtime.
   function logAgentEvent(text) {
     fetch(API + "/api/vtuber/mock-event", {
       method: "POST",
@@ -343,7 +624,7 @@
 
   async function maybeRespond(ev) {
     if (!respondOn()) return;
-    if (Date.now() - lastReplyAt < cooldownMs()) return; // antrean sederhana: skip
+    if (Date.now() - lastReplyAt < cooldownMs()) return;
     lastReplyAt = Date.now();
     const isDono = ev.type === "donation";
     const prompt = isDono
@@ -357,27 +638,44 @@
     }
   }
 
+  let pollingStarted = false;
   async function startPolling() {
     loadTTSProvider();
-    setInterval(() => {
-      // heartbeat: app utama menahan balasannya selama ini segar
+    if (pollingStarted) return;
+    pollingStarted = true;
+    state.heartbeatTimer = setInterval(() => {
       fetch(API + "/api/vtuber/overlay", { method: "POST" }).catch(() => {});
     }, 3000);
-    setInterval(async () => {
+    state.eventsTimer = setInterval(async () => {
       try {
         const r = await fetch(API + "/api/vtuber/events?since=" + cursor);
         const d = await r.json();
         cursor = d.cursor || cursor;
         for (const ev of d.events || []) {
           if (ev.type === "donation") donationAlert(ev.user, ev.amount);
-          // type "agent" = balasan (milik sendiri / app utama) — jangan dibalas lagi
           if (ev.type === "chat" || ev.type === "donation") maybeRespond(ev);
         }
-      } catch (e) { /* runtime belum aktif / server restart — coba lagi */ }
+      } catch (e) {}
     }, 2000);
   }
 
   hudInit();
+
+  // ── Future Capability & Test Harness Seams ────────────────────────────────
+  window.__vtuberState = state;
+  window.__vtuberLoadModel = loadModel;
+  window.__vtuberTeardown = teardown;
+  window.__vtuberFrameModel = frameModel;
+  window.__vtuberPlayMotion = (group, no, priority) => {
+    return state.handle ? state.handle.playNativeMotion(group, no ?? -1, priority ?? 2) : null;
+  };
+  window.__vtuberPlayExpression = (name) => {
+    return state.handle ? state.handle.playExpression(name) : null;
+  };
+  window.__vtuberSubmitRole = (role, val, priority = 10, channel = "user") => {
+    return state.arbiter?.submit({ channel, priority, domain: "role", values: { [role]: val } });
+  };
+
   boot().catch((e) => setStatus(t("sys.errGeneric", { msg: e.message })));
 })();
 </script>

@@ -1,5 +1,49 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (42) — Phase 14 Stage 2: NATIVE MOTION AI CATALOG — VERIFIED
+
+Phase 14 Stage 2 selesai diverifikasi. Status: **PHASE 14 STAGE 2 — VERIFIED**.
+
+Native motion semantic information (verb, compatibleEmotions, duration) sudah exposed ke Speaker LLM dan Motion Director tanpa membuat sistem motion kedua.
+
+### Komponen yang diverifikasi:
+
+1. **Native motion registry metadata** (`app.js:initMotionRegistry`): EMOTION_VERBS di-invert ke verb→emosi, setiap native clip mendapat emotionCompatibility dari verb klasifikasinya. Deterministik (0.7 tetap).
+2. **Capability profile** (`app.js:getCapabilityProfile`): motionCatalog menyaring `source==="user" || source==="native"`, di-map via `summaryForLLM()`.
+3. **summaryForLLM** (`motion-dsl.ts`): mengembalikan `{id, description, verb, tags, compatibleEmotions, source, duration}`.
+4. **Speaker LLM prompt** (`brain.ts:motionCatalogBlock`): section "GERAKAN BAWAAN MODEL" menampilkan verb + compatibleEmotions + duration, dibatasi 30 entri.
+5. **Motion Director** (`server/index.ts:handleAnimateText`): menerima native catalog, menampilkannya di director prompt dengan metadata semantic.
+6. **Model switching**: `clearNativeMotions()` → rebuild taxonomy → rebuild capability profile. Model A catalog tidak terlihat setelah switch ke Model B.
+7. **Model-agnostic**: Tidak ada hardcoded nama model. Semantic intent → active catalog → motion selection.
+
+### Test (49 kasus, termasuk 2 tambahan baru):
+- Native catalog berisi entries source:"native" ✓
+- Native entries punya verb, compatibleEmotions, duration ✓
+- User motion entries tetap utuh ✓
+- Speaker prompt punya section NATIVE MOTIONS ✓
+- Speaker prompt TIDAK punya raw Cubism parameter IDs ✓
+- Motion Director menerima native catalog ✓
+- Model switch → catalog berubah ✓
+- Unknown native motion aman ✓
+- Emotion → native motion selection tetap bekerja ✓
+- Prompt-split existing tests hijau ✓
+
+### Quality gates:
+- `tsc --noEmit`: bersih
+- `bun run build`: bersih
+- `bun run test:unit`: 1039 pass, 0 fail
+- `bun run test:guards`: 411 pass, 0 fail (26 suite)
+- Static safety: tidak ada Cubism param ID bocor ke prompt, tidak ada hardcoded model name, tidak ada duplicate taxonomy/emotion mapping
+
+### Commit:
+- `7853077` feat(ai): expose native motion catalog to AI context (implementation)
+- `318f811` test(ai): add native motion catalog safety and emotion selection tests
+
+### Remaining Phase 14 gaps:
+- Stage 3 (jika ada) belum didefinisikan
+
+---
+
 > Dokumen handoff sesi kerja. Tulis ulang/tambah sesuai perkembangan; jangan
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).

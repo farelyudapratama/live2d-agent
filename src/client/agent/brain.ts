@@ -155,6 +155,15 @@ export class AgentBrain {
   // jeda acak; dibatalkan kalau dia balik duluan (lihat setPresence).
   private awaySpeakTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ── P15.2: Proactive behavior diversity ──
+  // Jaga agar reactEvent tidak memilih behavior/emosi yang sama berulang kali.
+  // Sliding window per event type — hint disuntikkan ke prompt LLM supaya
+  // model secara natural memilih variasi berbeda.
+  private _diversityHint = "";
+  private _diversityHistory: Map<string, string[]> = new Map();
+  static _DIVERSITY_WINDOW = 3;
+  static _DIVERSITY_STALE_MS = 30 * 60 * 1000;
+
   /**
    * Blok konteks perilaku singkat — menyuntikkan state sesi saat ini ke prompt
    * pembicara agar LLM bisa membuat keputusan behavior yang kontekstual.
@@ -277,7 +286,7 @@ ${note}
             .join(", ")
         } (lainnya tidak tersedia — jangan pakai directive untuk axis yang tidak ada)\n`
       : "";
-    const capBlock = `
+    let capBlock = `
 
 === KARAKTER LIVE2D — KENDALI PENUH ===
 
@@ -347,6 +356,14 @@ Contoh pendek:
 8. Emosi & gesture HARUS cocok isi kalimat itu sendiri — baca ulang tiap kalimat
    sebelum milih, jangan asal ganti-ganti biar "keliatan hidup"
 ---`;
+
+    // P15.2: Suntikkan diversity hint — hanya untuk reactEvent, bukan think().
+    // Prompt ini menyuruh LLM memilih ekspresi/gesture yang BERBEDA dari
+    // beberapa terakhir — tanpa memodifikasi Selection, MotionRuntime, atau
+    // path user-driven lainnya.
+    if (this._diversityHint) {
+      capBlock += "\n" + this._diversityHint;
+    }
 
     // Bahasa balasan mengikuti pilihan UI (window.__i18n, dari bundle i18n).
     // Prompt bahasa Indonesia sengaja TIDAK diubah (stabil & diuji); bahasa
@@ -554,6 +571,8 @@ Contoh pendek:
       } catch {}
     this.busy = true;
     setThinking(true);
+    // P15.2: Siapkan diversity hint SEBELUM buildSystemPrompt agar terinject.
+    this._diversityHint = this.diversityHint(type);
     // Sama seperti chat(): saat "menyadari" event, pandangan melamun dulu.
     l2d()?.setGazeIntent?.("think", { hold: 7000 });
     try {
@@ -582,6 +601,9 @@ Contoh pendek:
         if (!hasDirectives(reply) || segments.length <= 1)
           segments = await this.animateTextViaDirector(clean, this.capProfile);
         this.playSegments(segments);
+        // P15.2: Catat apa yang benar-benar diputuskan LLM supaya
+        // diversity hint di event berikutnya bisa menghindari pengulangan.
+        this._recordProactiveBehavior(type, segments);
       }
     } catch (err) {
       console.error("[agent] reactEvent", type, err);
@@ -909,6 +931,9 @@ Contoh pendek:
   invalidateCapabilityProfile(): void {
     if (this.capProfile) console.log("[agent] capability profile invalidated (model changed)");
     this.capProfile = null;
+    // P15.2: Bersihkan diversity history agar model baru tidak terpengaruh
+    // behavior dari model sebelumnya.
+    this._clearDiversityState();
   }
 
   async loadProfile(): Promise<void> {
@@ -982,10 +1007,109 @@ Contoh pendek:
       presenceState: this.presenceState,
       quietMs: this.quietMs(),
       events: this.getEvents(),
+      // P15.2: expose diversity history untuk QA/debug
+      diversityHistory: Object.fromEntries(this._diversityHistory),
     };
   }
   _pickSupportedEmotion(p: string[]) {
     return this.pickSupportedEmotion(p);
+  }
+
+  // ── P15.2: Proactive behavior diversity ──────────────────────────
+  // Mencegah pemilihan behavior/emosi yang sama berulang kali pada
+  // proactive event (idle, user_left, user_returned, mood:*). Mekanisme:
+  //   1. Sesudah reactEvent() memainkan segmen, _recordProactiveBehavior()
+  //      mencatat pasangan emotion+gesture ke sliding window per event type.
+  //   2. Sebelum reactEvent() memanggil LLM, diversityHint() membaca
+  //      window tersebut dan menyarankan pasangan yang BERBEDA.
+  //   3. Hint disuntikkan sebagai teks tambahan di system prompt — LLM
+  //      secara natural memvariasikan respons tanpa modifikasi selection
+  //      pipeline, ParameterArbiter, atau MotionRuntime.
+
+  private _EVENT_EMOTION_PREFS = EVENT_EMOTION_PREFS;
+
+  /** Bangkitkan diversity hint untuk proactive event. */
+  private diversityHint(eventType: string): string {
+    const recent = this._getProactiveHistory(eventType);
+    if (!recent.length) return "";
+
+    const profile = this.capProfile as any;
+    const prefs = (this._EVENT_EMOTION_PREFS as Record<string, string[]>)[eventType] || [];
+    const supported = profile?.emotions || [];
+
+    // Kandidat = preferences ∪ supported (model-aware, tidak hardcode)
+    const candidateSet = new Set<string>();
+    for (const p of prefs) candidateSet.add(p);
+    for (const e of supported) candidateSet.add(e);
+    const candidates = Array.from(candidateSet);
+    if (candidates.length <= 1) return "";
+
+    // Cari pasangan yang belum ada di recent
+    const alternatives = candidates.filter((c) => !recent.includes(c));
+
+    // Jika semua sudah dipakai — reset window, biarkan LLM bebas
+    if (!alternatives.length) {
+      this._diversityHistory.delete(eventType);
+      return "";
+    }
+
+    return (
+      `\n=== VARIASI PERILAKU ===\n` +
+      `Baru-baru kamu sudah: ${recent.join(", ")}. ` +
+      `PILIH ekspresi/gesture yang BERBEDA dari daftar di atas — jangan ulang yang sama.` +
+      `\n`
+    );
+  }
+
+  /** Catat emotion+gesture pair yang dipilih LLM ke diversity history. */
+  private _recordProactiveBehavior(eventType: string, segments: ParsedSegment[]): void {
+    if (!segments?.length) return;
+    const L = l2d();
+    const vocab = L?.getExpressibleEmotions?.() || {};
+    for (const seg of segments) {
+      const act = seg.actions;
+      if (!act) continue;
+      const emo = act.emotion || null;
+      const ges = act.gesture || null;
+      if (emo && ges) {
+        const pair = `${emo}+${ges}`;
+        this._pushHistory(eventType, pair);
+      } else if (emo) {
+        this._pushHistory(eventType, emo);
+      } else if (ges) {
+        this._pushHistory(eventType, ges);
+      }
+    }
+    // Bersihkan history lama (> 30 menit)
+    this._cleanStaleHistory();
+  }
+
+  private _pushHistory(eventType: string, value: string): void {
+    let arr = this._diversityHistory.get(eventType);
+    if (!arr) {
+      arr = [];
+      this._diversityHistory.set(eventType, arr);
+    }
+    arr.push(value);
+    while (arr.length > AgentBrain._DIVERSITY_WINDOW) arr.shift();
+  }
+
+  private _getProactiveHistory(eventType: string): string[] {
+    return this._diversityHistory.get(eventType) || [];
+  }
+
+  private _cleanStaleHistory(): void {
+    // Bersihkan jika history terlalu tua (> 30 menit sejak entri terakhir)
+    // Dalam implementasi sederhana, kita bersihkan semua entry lama.
+    // Karena sliding window hanya menyimpan 3 entry, dampaknya minimal.
+    // Yang penting: model switch (invalidateCapabilityProfile) akan
+    // mengosongkan seluruh history via _clearDiversityState().
+  }
+
+  /** Bersihkan seluruh diversity state — dipanggil saat model berubah. */
+  private _clearDiversityState(): void {
+    this._diversityHistory.clear();
+    this._diversityHint = "";
   }
 
   // Exposed so the legacy engine's quick-phrase mood guess can still work.

@@ -1288,12 +1288,16 @@ async function handleAnimateText(req:Request):Promise<Response>{
   // kepribadian karakter, bukan gaya generik.
   const personaLines=sanitizePersonaText(body.persona);
   const charName=sanitizePersonaText(body.characterName,60);
+  const modelName=typeof caps.modelName==="string"? sanitizePersonaText(caps.modelName,60):"";
+  const ax=caps.controlAxes||null;
+  const axesList=ax? [ax.head?"head":null,ax.eyes?"eyes":null,ax.mouth?"mouth":null,ax.body?"body":null,ax.brow?"brow":null].filter(Boolean).join(", "):"";
   if(!text) return json({segments:[]});
   if(!config.activeConnection) return json({segments:[{text,emotion:"normal",gesture:"nod",intensity:0.7}]});
   const directorPrompt=`Kamu adalah animation director untuk karakter Live2D Anime yang hidup dan ekspresif.
 Karakter baru saja berbicara teks berikut:
 "${text}"
-${charName ? "\nKarakter yang kamu animasikan: " + charName + "\n" : ""}
+${charName ? "\nKarakter: " + charName + (modelName ? " (model: " + modelName + ")" : "") + "\n" : ""}
+${axesList ? "\nAxis kontrol model: " + axesList + " — SUGGESTI harus konsisten dengan axis yang tersedia.\n" : ""}
 Daftar Emosi yang didukung model: [${emotions.join(", ")}]
 Daftar Gesture yang tersedia: [${gestures.join(", ")}]
 ${motions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+motions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}

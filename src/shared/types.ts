@@ -237,4 +237,14 @@ export interface CapabilityProfile {
   userNote: string;
   roleIds: Record<string, string>;
   paramRange: Record<string, { min: number; max: number; def: number }>;
+  /** Nama model dari manifest (Phase 14 Stage 1). */
+  modelName: string;
+  /** Axis kontrol yang tersedia pada model (Phase 14 Stage 1). */
+  controlAxes: {
+    head: boolean;
+    eyes: boolean;
+    mouth: boolean;
+    body: boolean;
+    brow: boolean;
+  };
 }

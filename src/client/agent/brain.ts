@@ -213,12 +213,21 @@ ${note}
       : "";
 
     const nm = this.characterName();
+    const ax = cap.controlAxes || {};
+    const axesAvailable = [ax.head, ax.eyes, ax.mouth, ax.body, ax.brow].some(Boolean);
+    const axesBlock = axesAvailable
+      ? `\nAxis kontrol: ${
+          [ax.head ? "head" : null, ax.eyes ? "eyes" : null, ax.mouth ? "mouth" : null, ax.body ? "body" : null, ax.brow ? "brow" : null]
+            .filter(Boolean)
+            .join(", ")
+        } (lainnya tidak tersedia — jangan pakai directive untuk axis yang tidak ada)\n`
+      : "";
     const capBlock = `
 
 === KARAKTER LIVE2D — KENDALI PENUH ===
 
-Kamu memainkan karakter anime LIVE2D${nm ? ` bernama ${nm}` : ""}. KAMU bisa menggerakkan karakter ini secara real-time!
-Semua gerakan dikirim sebagai directive tersembunyi dalam balasanmu.
+Kamu memainkan karakter anime LIVE2D${nm ? ` bernama ${nm}` : ""}${cap.modelName ? ` (model: ${cap.modelName})` : ""}. KAMU bisa menggerakkan karakter ini secara real-time!
+Semua gerakan dikirim sebagai directive tersembunyi dalam balasanmu.${axesBlock}
 ${noteBlock}
 === DAFTAR EMOSI ===
 ${cap.emotions?.length ? cap.emotions.join(", ") : "tidak ada preset emosi"}
@@ -381,6 +390,8 @@ Contoh pendek:
             // gesture asli — director jadi bisa memilih gesture yang benar-benar ada.
             gestures: profile?.gestures || DEFAULT_GESTURES,
             motions: (profile as any)?.motionCatalog || [],
+            controlAxes: (profile as any)?.controlAxes || null,
+            modelName: (profile as any)?.modelName || "",
           },
           paramNotes,
           // Persona + nama ikut ke director: pemilihan emosi/gesture harus

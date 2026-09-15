@@ -8569,6 +8569,15 @@
       hasMouthControl: sheet.controls.mouth,
       hasBodyControl: sheet.controls.body,
       hasBrowControl: sheet.controls.eyebrows,
+      // Phase 14 Stage 1 — model identity & control axes untuk AI context
+      modelName: sheet.modelName || "",
+      controlAxes: {
+        head: !!sheet.controls.head,
+        eyes: !!sheet.controls.eyes,
+        mouth: !!sheet.controls.mouth,
+        body: !!sheet.controls.body,
+        brow: !!sheet.controls.eyebrows,
+      },
       sheet: sheet,
     };
   }

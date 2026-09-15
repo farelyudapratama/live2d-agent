@@ -1289,6 +1289,9 @@ async function handleAnimateText(req:Request):Promise<Response>{
   // belum menulisnya. Director memakainya agar emosi/gesture konsisten dengan
   // kepribadian karakter, bukan gaya generik.
   const personaLines=sanitizePersonaText(body.persona);
+  // P15.3: Konteks perilaku dari brain (mood + sesi). Opsional — bila
+  // tidak ada atau kosong, Director beroperasi tanpa batasan mood.
+  const contextLines=sanitizePersonaText(body.context,200);
   const charName=sanitizePersonaText(body.characterName,60);
   const modelName=typeof caps.modelName==="string"? sanitizePersonaText(caps.modelName,60):"";
   const ax=caps.controlAxes||null;
@@ -1306,6 +1309,7 @@ ${nativeMotions.length? "Gerakan bawaan model (native) — model ini punya gerak
 ${userMotions.length? "Gerakan buatan user (Motion Studio) — pakai field \"motion\" dengan id PERSIS:\n"+userMotions.slice(0,24).map((m:any)=>"- "+m.id+": "+(m.description||m.id)+(m.compatibleEmotions&&m.compatibleEmotions.length? " (cocok saat: "+m.compatibleEmotions.join(", ")+")":"")).join("\n")+"\nGerakan ini dirancang user sendiri; utamakan bila maknanya pas. Jangan mengarang id.\n":""}
 ${noteLines ? "\nPENJELASAN PARAMETER DARI USER (otoritatif — hormati makna ini):\n"+noteLines+"\n" : ""}
 ${personaLines ? "\nKEPRIBADIAN KARAKTER (ditulis user — pilih emosi, gesture, dan intensity yang konsisten dengan kepribadian ini, jangan generik):\n"+personaLines+"\n" : ""}
+${contextLines ? "\n"+contextLines+"\n" : ""}
 TUGAS:
 1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup (jangan diam selama bicara!).
 2. Sebelum menentukan emotion/gesture, analisis dulu makna & nada tiap segment secara independen — apa yang sedang dirasakan/disampaikan karakter DI SEGMENT ITU, bukan di segment lain.

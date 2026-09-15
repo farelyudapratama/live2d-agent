@@ -431,6 +431,30 @@ Contoh pendek:
       : "";
   }
 
+  /**
+   * P15.3: Blok konteks perilaku singkat untuk Animation Director.
+   * Membawa mood user + durasi sesi agar Director bisa membuat keputusan
+   * animasi yang mood-aware. Maks 200 karakter; mood "normal" di-skip.
+   * Reuse sumber kebenaran yang sama dengan P15.1 (userMood, agentStart).
+   */
+  directorContextBlock(): string {
+    const parts: string[] = [];
+    if (this.userMood && this.userMood !== "normal") {
+      parts.push(`Mood user: ${this.userMood}`);
+    }
+    const ms = Math.max(0, Date.now() - (this.agentStart || Date.now()));
+    const totalMin = Math.floor(ms / 60000);
+    if (totalMin >= 60) {
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      parts.push(`Sesi: ${h}h ${String(m).padStart(2, "0")}m`);
+    } else {
+      parts.push(`Sesi: ${totalMin}m`);
+    }
+    if (!parts.length) return "";
+    return "\n=== KONTEKS PERILAKU ===\n" + parts.join(", ") + "\n";
+  }
+
   private async animateTextViaDirector(
     text: string,
     profile: CapabilityProfile | null
@@ -470,6 +494,9 @@ Contoh pendek:
           // konsisten dengan kepribadian karakter, bukan logika generik.
           persona: (profile?.userNote ?? "").trim().slice(0, 800),
           characterName: this.characterName(),
+          // P15.3: Konteks perilaku (mood + sesi) agar Director bisa
+          // membuat keputusan animasi yang mood-aware. Bounded, opsional.
+          context: this.directorContextBlock(),
         }),
       });
       if (!res.ok) throw new Error("Director HTTP " + res.status);

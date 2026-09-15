@@ -1,5 +1,38 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (45) — Phase 15.3: DIRECTOR MOOD AWARENESS — VERIFIED
+
+Phase 15.3 selesai diimplementasi dan diverifikasi. Status: **P15.3 VERIFIED**.
+
+Animation Director kini menerima konteks perilaku (mood user + durasi sesi) lewat field `context` pada request body `/api/animate-text`.
+
+### Komponen yang diimplementasi:
+
+1. **`directorContextBlock()`** (brain.ts): Method publik yang menghasilkan blok konteks bounded (<=200 char) berisi:
+   - Mood user (dihapus saat "normal" — konsisten dengan P15.1)
+   - Durasi sesi (human-readable: `5m`, `1h 05m`)
+   - Sumber kebenaran: `this.userMood` + `this.agentStart` (sama dengan P15.1)
+
+2. **Client → Server** (brain.ts: `animateTextViaDirector`): Field `context` ditambahkan ke request body. Opsional — bila kosong, Director beroperasi tanpa batasan mood.
+
+3. **Server → Director prompt** (server/index.ts: `handleAnimateText`): Context di-extract dari body, di-sanitize (max 200 char via `sanitizePersonaText`), dan di-inject ke Director prompt setelah persona block, sebelum TUGAS section.
+
+### Privacy boundary:
+- Tidak mengekspos: raw Cubism parameter, parameter range, model profile, renderer state, ParameterArbiter, MotionRuntime
+- Tidak ada nama model spesifik, motion ID, atau expression ID
+- Context murni mood + durasi — semantic, bukan technical
+
+### Apa yang TIDAK diubah:
+- P15.1 Speaker context (contextBlock) — tetap utuh, format konsisten
+- P15.2 proactive diversity — tetap isolasi dari Director
+- Model identity, control axes, native motion catalog, emotion/gesture capabilities — tetap utuh
+- ParameterArbiter, MotionRuntime, renderer, Cubism — tidak tersentuh
+
+### Commit: (belum commit — menunggu verifikasi)
+### Tests: 38 baru (total 1134 unit + 411 guard)
+
+---
+
 ## UPDATE 2026-09-15 (44) — Phase 15.2: PROACTIVE EVENT DIVERSITY — VERIFIED
 
 Phase 15.2 selesai diimplementasi dan diverifikasi. Status: **P15.2 VERIFIED**.

@@ -164,6 +164,23 @@ export class AgentBrain {
   private _diversityHistory: Map<string, string[]> = new Map();
   static _DIVERSITY_WINDOW = 3;
 
+  // ── Phase 16: lifecycle request LLM (timeout + abort + proteksi basi) ──
+  // SATU controller aktif per request — think() dan reactEvent() dijamin
+  // tidak pernah overlap oleh guard `busy`, jadi satu-satunya controller
+  // cukup; director request (animate-text) adalah bagian dari request induk
+  // dan ikut controller induk. Timeout AbortController membatasi umur
+  // request di sisi klien: fetch klien→server yang menggantung selamanya
+  // tidak boleh membuat `busy` true permanen (agent diam sampai reload).
+  // _reqGen: generation counter — invalidateCapabilityProfile() menaikkan
+  // dan meng-abort, sehingga hasil request model lama tidak pernah mendarat
+  // di model baru bahkan bila mock/provider tetap resolve setelah abort.
+  private _reqCtrl: AbortController | null = null;
+  private _reqTimer: ReturnType<typeof setTimeout> | null = null;
+  private _reqGen = 0;
+  // Longgar terhadap timeout idle server (60s di shared/llm-client.ts):
+  // nilai ini hanya terpicu kalau klien→server sendiri yang menggantung.
+  static LLM_REQUEST_TIMEOUT_MS = 90_000;
+
   // ── P15.5: Post-proactive context bridge ──
   // Mencatat perilaku proaktif terakhir yang benar-benar dieksekusi agar
   // percakapan user berikutnya (think()) memiliki konteks behavioral.
@@ -466,9 +483,43 @@ Contoh pendek:
     return "\n=== KONTEKS PERILAKU ===\n" + parts.join(", ") + "\n";
   }
 
+  // ── Phase 16: mekanisme lifecycle request LLM ─────────────────────
+  // SATU request aktif pada satu waktu (guard `busy` sudah menjamin
+  // think() dan reactEvent() tidak pernah overlap — request director
+  // adalah sub-await dari induknya dan ikut controller induk). Tidak ada
+  // state machine kedua: controller + timer + angka generasi saja.
+
+  /** Mulai request aktif: controller baru + timer timeout yang meng-abort. */
+  private _beginRequest(): { ctrl: AbortController; gen: number } {
+    this._endRequest(); // defensif: timer/controller lama tidak boleh tertinggal
+    const ctrl = new AbortController();
+    this._reqCtrl = ctrl;
+    const gen = this._reqGen;
+    this._reqTimer = setTimeout(
+      () => ctrl.abort(),
+      AgentBrain.LLM_REQUEST_TIMEOUT_MS,
+    );
+    return { ctrl, gen };
+  }
+
+  /** Bersihkan timer + controller — WAJIB di semua jalur terminal (finally). */
+  private _endRequest(): void {
+    if (this._reqTimer !== null) {
+      clearTimeout(this._reqTimer);
+      this._reqTimer = null;
+    }
+    this._reqCtrl = null;
+  }
+
+  /** true selama request masih milik generasi saat ini (belum ganti model). */
+  private _reqFresh(gen: number): boolean {
+    return gen === this._reqGen;
+  }
+
   private async animateTextViaDirector(
     text: string,
-    profile: CapabilityProfile | null
+    profile: CapabilityProfile | null,
+    signal?: AbortSignal
   ): Promise<ParsedSegment[]> {
     try {
       // Deskripsi per-parameter milik user, DIBATASI jumlahnya (24 entri ×
@@ -486,9 +537,12 @@ Contoh pendek:
           noteCount++;
         }
       }
+      // Phase 16: director request adalah sub-request think()/reactEvent() —
+      // ikut signal controller induk, satu abort mematikan seluruh rantai.
       const res = await fetch(API + "/api/animate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal,
         body: JSON.stringify({
           text,
           capabilities: {
@@ -526,6 +580,11 @@ Contoh pendek:
           }))
           .filter((s: ParsedSegment) => s.text.trim().length > 0);
     } catch (e: any) {
+      // Phase 16: abort/timeout dari lifecycle induk BUKAN kegagalan
+      // director — propagate ke induk supaya fallback tepat satu keluar di
+      // sana. Kesalahan lain (HTTP dsb.) tetap fallback segmen lokal seperti
+      // sebelumnya.
+      if (signal?.aborted) throw e;
       console.warn("[agent] Director fallback", e?.message);
     }
     return segmentTextFallback(text);
@@ -552,10 +611,13 @@ Contoh pendek:
     // Fase mikir: alih pandang ke atas-samping (intent "think"); balik
     // menghadap user otomatis saat mulai bicara (lockAI) atau lewat timer.
     l2d()?.setGazeIntent?.("think", { hold: 7000 });
+    // Phase 16: request terikat timeout + abort + generasi model.
+    const req = this._beginRequest();
     try {
       const resp = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: req.ctrl.signal,
         body: JSON.stringify({
           messages: this.history,
           system: this.buildSystemPrompt("") + this.moodSuffix(),
@@ -566,13 +628,26 @@ Contoh pendek:
         throw new Error(e.error || "HTTP " + resp.status);
       }
       const data = await resp.json();
+      // Phase 16: request dibatalkan (timeout / ganti model) sementara
+      // response sedang dibaca → buang hasilnya, JANGAN mainkan segmen
+      // basi di state yang mungkin sudah milik model baru.
+      if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
+        console.warn("[agent] think() result dibatalkan (stale) — tidak dimainkan");
+        return;
+      }
       const reply = (data.reply || "").trim();
       if (reply) {
         const clean = stripDirectives(reply);
         let segments = parseSegments(reply);
         // Plain prose (no directives) → run Pass 2 (Animation Director)
         if (!hasDirectives(reply) || segments.length <= 1)
-          segments = await this.animateTextViaDirector(clean, this.capProfile);
+          segments = await this.animateTextViaDirector(clean, this.capProfile, req.ctrl.signal);
+        // Cek ulang SEBELUM eksekusi: director pass bisa makan waktu — kalau
+        // selama itu request di-abort, segmen hasil model lama tidak jalan.
+        if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
+          console.warn("[agent] think() segments basi setelah director — tidak dimainkan");
+          return;
+        }
         console.log("[agent] speaking reply with", segments.length, "animation segments");
         this.playSegments(segments);
       } else {
@@ -581,12 +656,25 @@ Contoh pendek:
         addChat("agent", msg);
       }
     } catch (err: any) {
+      // Phase 16: abort/timeout masuk ke sini juga. Pembatalan SAAT GANTI
+      // MODEL (generasi naik) bukan kegagalan — dibuang diam-diam, tanpa
+      // fallback dan tanpa eksekusi apa pun. TIMEOUT (masih generasi sama,
+      // signal aborted) dan error lain → pakai jalur fallback yang SUDAH
+      // ada: satu pesan "gak bisa mikir", tidak lewat parsing directive.
+      if (req.ctrl.signal.aborted && !this._reqFresh(req.gen)) {
+        console.warn("[agent] think() dibatalkan (model switch) — tanpa fallback");
+        return;
+      }
       console.error("[agent]", err);
       const msg =
         "Maaf, aku lagi gak bisa mikir sekarang. Cek koneksi atau api key ya.";
       l2d()?.speak?.(msg);
       addChat("agent", msg);
     } finally {
+      // Phase 16: _endRequest() menjamin timer + controller dibersihkan di
+      // SEMUA jalur terminal (sukses, HTTP error, network error, abort,
+      // timeout, exception tak terduga) — busy/setThinking ikut selalu lepas.
+      this._endRequest();
       setThinking(false);
       this.busy = false;
     }
@@ -611,6 +699,8 @@ Contoh pendek:
     setThinking(true);
     // P15.2: Siapkan diversity hint SEBELUM buildSystemPrompt agar terinject.
     this._diversityHint = this.diversityHint(type);
+    // Phase 16: request proaktif juga terikat timeout/abort/generasi.
+    const req = this._beginRequest();
     // Sama seperti chat(): saat "menyadari" event, pandangan melamun dulu.
     l2d()?.setGazeIntent?.("think", { hold: 7000 });
     try {
@@ -625,6 +715,7 @@ Contoh pendek:
       const resp = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: req.ctrl.signal,
         body: JSON.stringify({ messages, system }),
       });
       if (!resp.ok) {
@@ -632,12 +723,22 @@ Contoh pendek:
         throw new Error(e.error || "HTTP " + resp.status);
       }
       const data = await resp.json();
+      // Phase 16: hasil basi (timeout/ganti model) dibuang SEBELUM dieksekusi
+      // — tidak ada playSegments, tidak ada record P15.2/P15.5 palsu.
+      if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
+        console.warn("[agent] reactEvent result dibatalkan (stale) — tidak dimainkan");
+        return;
+      }
       const reply = (data.reply || "").trim();
       if (reply) {
         const clean = stripDirectives(reply);
         let segments = parseSegments(reply);
         if (!hasDirectives(reply) || segments.length <= 1)
-          segments = await this.animateTextViaDirector(clean, this.capProfile);
+          segments = await this.animateTextViaDirector(clean, this.capProfile, req.ctrl.signal);
+        if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
+          console.warn("[agent] reactEvent segments basi setelah director — tidak dimainkan");
+          return;
+        }
         this.playSegments(segments);
         // P15.2: Catat apa yang benar-benar diputuskan LLM supaya
         // diversity hint di event berikutnya bisa menghindari pengulangan.
@@ -648,12 +749,23 @@ Contoh pendek:
         this._recordLastProactiveAction(segments);
       }
     } catch (err) {
-      console.error("[agent] reactEvent", type, err);
+      // Phase 16: sama seperti think() — timeout/abort adalah kegagalan yang
+      // layak-pulih. Proactive event memang TIDAK punya fallback chat (perilaku
+      // lama dipertahankan): kegagalan proaktif tetap diam.
+      const e: any = err;
+      if (req.ctrl.signal.aborted && !this._reqFresh(req.gen)) {
+        console.warn("[agent] reactEvent dibatalkan (model switch)");
+        return;
+      }
+      console.error("[agent] reactEvent", type, e);
     } finally {
+      // Phase 16: bersihkan timer/controller DULU, lalu state lain. Hint
+      // diversity TETAP dibersihkan walau request timeout — lifetime hint
+      // hanya untuk request proaktif ini. Proactive event TIDAK mengirim
+      // fallback chat (sama seperti sebelumnya: kegagalan proaktif diam).
+      this._endRequest();
       setThinking(false);
       this.busy = false;
-      // P15.2: Hint diversity hanya milik prompt reactEvent ini. Bersihkan
-      // setelah request selesai supaya tidak bocor ke think() user berikutnya.
       this._diversityHint = "";
     }
   }
@@ -976,6 +1088,12 @@ Contoh pendek:
   invalidateCapabilityProfile(): void {
     if (this.capProfile) console.log("[agent] capability profile invalidated (model changed)");
     this.capProfile = null;
+    // Phase 16: matikan request yang sedang berjalan (kalau ada) dan naikkan
+    // generasi — hasil request model lama tidak boleh mendarat di model baru,
+    // bahkan bila provider/mock tetap resolve setelah abort.
+    if (this._reqCtrl) this._reqCtrl.abort();
+    this._reqGen++;
+    this._endRequest();
     // P15.2: Bersihkan diversity history agar model baru tidak terpengaruh
     // behavior dari model sebelumnya.
     this._clearDiversityState();
@@ -1056,6 +1174,9 @@ Contoh pendek:
       diversityHistory: Object.fromEntries(this._diversityHistory),
       // P15.5: expose last proactive action untuk QA/debug
       lastProactiveAction: this._lastProactiveAction,
+      // Phase 16: expose lifecycle request untuk QA/debug (readonly snapshot)
+      activeRequest: this._reqCtrl !== null,
+      requestGeneration: this._reqGen,
     };
   }
   _pickSupportedEmotion(p: string[]) {

@@ -28,7 +28,7 @@ Animation Director kini menerima konteks perilaku (mood user + durasi sesi) lewa
 - Model identity, control axes, native motion catalog, emotion/gesture capabilities — tetap utuh
 - ParameterArbiter, MotionRuntime, renderer, Cubism — tidak tersentuh
 
-### Commit: (belum commit — menunggu verifikasi)
+### Commit: `cefb1bb` feat(ai): add mood context to animation director
 ### Tests: 38 baru (total 1134 unit + 411 guard)
 
 ---

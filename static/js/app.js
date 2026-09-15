@@ -3093,7 +3093,14 @@
         const av = log.querySelector(".msg-avatar");
         if (av) paintAvatarEl(av, characterInitial());
         if (window.__agent) {
-          window.__agent.history = [];
+          // FIX Bug-1 (clear chat): `window.__agent.history` adalah REFERENSI
+          // SHARED ke array hidup brain (kontrak "Array HIDUP", brain.ts:146).
+          // Reassign `= []` hanya menambat ulang properti facade —
+          // brain.history yang asli tetap terisi dan tetap terkirim ke LLM
+          // pada request berikutnya. Bersihkan IN-PLACE agar invariant
+          // facade === brain.history tetap berlaku dan kosong berarti kosong.
+          if (Array.isArray(window.__agent.history))
+            window.__agent.history.length = 0;
         }
         window.showToast?.(__t("chat.clearedToast"), "info");
       });

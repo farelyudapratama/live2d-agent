@@ -653,6 +653,17 @@ Contoh pendek:
       console.warn("[agent] model not ready");
       return;
     }
+    // FIX Bug-2 (race klaim-awal): busy + snapshot generasi diset SEBELUM
+    // await pertama. Sebelumnya, dua think() beruntun saat capProfile masih
+    // null sama-sama lolos `if (this.busy)` karena loadProfile yield lebih
+    // dulu, lalu KEDUANYA masuk lifecycle: _beginRequest() klaim kedua
+    // (defensif) men-null-kan timer/controller klaim pertama → request 1
+    // jalan tanpa timeout, dua request LLM paralel. Cek-busy + klaim kini
+    // satu satuan atomik JS (tanpa await di antaranya). Kebijakan pesan
+    // berikutnya saat request-busy TIDAK berubah: tetap silent-drop.
+    this.busy = true;
+    const genAtClaim = this._reqGen;
+    try {
     // Loading the character sheet must never be able to abort the chat.
     if (!this.capProfile)
       try {
@@ -660,10 +671,16 @@ Contoh pendek:
       } catch (e) {
         console.warn("[agent] profile unavailable", e);
       }
-    this.busy = true;
     this.history.push({ role: "user", content: userText });
     if (this.history.length > HISTORY_LIMIT * 2)
       this.history.splice(0, this.history.length - HISTORY_LIMIT * 2);
+    // Model berganti SELAMA menunggu profil → profil yang baru dimuat bisa
+    // milik model lama; buang SEBELUM request mulai. Pesan user tetap masuk
+    // history (identik semantik abort in-flight Phase 16 — tanpa mekanisme baru).
+    if (this._reqGen !== genAtClaim) {
+      console.warn("[agent] think() dibatalkan (model switch saat loadProfile)");
+      return;
+    }
     // Phase 18 S2: input pengguna SELALU menang atas playback aktif —
     // rantai (proaktif atau balasan lama) dibatalkan SEKARANG, bukan saat
     // balasan tiba (request bisa hitung detik-belasan detik). Lock lama
@@ -740,6 +757,15 @@ Contoh pendek:
       setThinking(false);
       this.busy = false;
     }
+    } finally {
+      // FIX Bug-2: safety-net untuk jendela claim→_beginRequest. Bila ada
+      // yang melempar SEBELUM request mulai (atau early-return model-switch
+      // di atas), busy TETAP lepas — klaim tidak boleh jadi kunci abadi.
+      // Semua panggilan di bawah idempoten terhadap cleanup inner finally.
+      this._endRequest();
+      setThinking(false);
+      this.busy = false;
+    }
   }
 
   async reactEvent(type: string): Promise<void> {
@@ -753,11 +779,20 @@ Contoh pendek:
       console.warn("[agent] reactEvent skipped, model not ready");
       return;
     }
+    // FIX Bug-2 (identik think()): klaim sinkron sebelum await pertama —
+    // event proaktif & think beruntun saat capProfile null tidak boleh
+    // lagi sama-sama masuk lifecycle request.
+    this.busy = true;
+    const genAtClaim = this._reqGen;
+    try {
     if (!this.capProfile)
       try {
         await this.loadProfile();
       } catch {}
-    this.busy = true;
+    if (this._reqGen !== genAtClaim) {
+      console.warn("[agent] reactEvent dibatalkan (model switch saat loadProfile)");
+      return;
+    }
     setThinking(true);
     // P15.2: Siapkan diversity hint SEBELUM buildSystemPrompt agar terinject.
     this._diversityHint = this.diversityHint(type);
@@ -834,6 +869,13 @@ Contoh pendek:
       // diversity TETAP dibersihkan walau request timeout — lifetime hint
       // hanya untuk request proaktif ini. Proactive event TIDAK mengirim
       // fallback chat (sama seperti sebelumnya: kegagalan proaktif diam).
+      this._endRequest();
+      setThinking(false);
+      this.busy = false;
+      this._diversityHint = "";
+    }
+    } finally {
+      // FIX Bug-2: safety-net jendela claim (lihat think()) — idempoten.
       this._endRequest();
       setThinking(false);
       this.busy = false;

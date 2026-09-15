@@ -459,18 +459,17 @@ describe("R2-L Pixi6 isolation", () => {
 });
 
 describe("R3 — namespace isolation & composite (static)", () => {
-  test("loader compositor v8: capture/restore window.PIXI, idempoten, tanpa loop", () => {
+  test("loader compositor v8: expose __compositor8, idempoten, tanpa loop", () => {
     const src = readFileSync(join(repoRoot, "static/js/pixi8-namespace.js"), "utf8");
-    // simpan legacy sebelum muat v8
-    expect(src).toContain("var legacyPIXI = window.PIXI");
-    // tangkap v8 ke namespace terisolasi
+    // R9-6-3: Pixi6 dihapus — capture/restore window.PIXI tidak lagi diperlukan.
+    // Loader cukup menangkap v8 → __compositor8 dan resolve __compositor8Ready.
     expect(src).toContain("window.__compositor8 = v8");
-    // pulihkan legacy — sinkron di onload
-    expect(src).toContain("window.PIXI = legacyPIXI");
-    // idempoten
     expect(src).toContain("if (window.__compositor8Ready) return");
     // bukan loop tersembunyi
     expect(src.match(/requestAnimationFrame|setInterval/)).toBeNull();
+    // R9-6-3: legacyPIXI & window.PIXI restore sudah dihapus
+    expect(src).not.toContain("legacyPIXI");
+    expect(src).not.toContain("window.PIXI = legacyPIXI");
   });
 
   test("core-log-shim: DIHAPUS di R9-4 — slot log Core kini single-writer (A/B terbukti)", () => {

@@ -1,5 +1,21 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-15 (43) — Phase 15.1: STRUCTURED BEHAVIOR CONTEXT — VERIFIED
+
+Phase 15.1 selesai diimplementasi dan diverifikasi. Status: **P15.1 VERIFIED**.
+
+`contextBlock()` ditambahkan ke `AgentBrain` yang menyuntikkan state sesi ke system prompt pembicara:
+- Mood user (dihapus saat "normal" untuk hemat token)
+- Durasi sesi (human-readable: `5m`, `1h 05m`)
+- Jumlah interaksi (pesan user di history)
+
+Maks 200 karakter. Tidak mengekspos parameter Cubism, range, atau state engine.
+
+### Commit: `2bc82e9` feat(ai): add structured behavior context to speaker prompt
+### Tests: 19 baru (total 1058 unit + 411 guard)
+
+---
+
 ## UPDATE 2026-09-15 (42) — Phase 14 Stage 2: NATIVE MOTION AI CATALOG — VERIFIED
 
 Phase 14 Stage 2 selesai diverifikasi. Status: **PHASE 14 STAGE 2 — VERIFIED**.

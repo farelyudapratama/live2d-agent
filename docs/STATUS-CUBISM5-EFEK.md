@@ -1,5 +1,84 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (60) — BEHAVIOR CONTRACT S4-D: SHARED SPEECH POLICY — VERIFIED
+
+S4-D (kebijakan audio TERKUNCI D1–D7) diimplementasi dan diverifikasi.
+HANYA arbitrase ucapan — eksekusi worker, antrean, modifikasi, lifecycle
+companion, dan semantik VTuber TIDAK berubah satu barispun. `channel.ts`
+BEKU: policy direpresentasikan seluruhnya dengan primitif yang sudah ada
+(priority claim + refusal + onLost + enforcer) — perubahan justru di
+PRODUSEN dan BRIDGE, bukan kanal.
+
+### Model prioritas (satu-satunya angka yang dipilih dengan alasan)
+
+Aturan kanal tak berubah: `incoming < holder → refused`, selainnya takeover
+legal. Nilai: user-chain **0** (PERSIS default lama — semua test S1/P18 dan
+probe(0) takeover tidak berubah sesentipun), worker/harness/actor **-1**
+(selalu refused saat chain memegang → D1; legal saat kanal bebas/proaktif),
+proaktif **-2** (refused vs holder mana pun ≥ -1 → D2; lapisan terendah).
+`vtuber/*` & `app/direct` tetap default 0 — semantik S3/lama UTUH; dan
+karena vtuber/harness tak pernah co-live per mode, 0-vs--1 tak pernah
+teramati silang. Prioritas = MEKANISME arbitrase, BUKAN hierarki
+kepentingan; "user input menang" (D6) dieksekusi lewat klaim preempt yang
+sudah ada, bukan angka magis.
+
+### Titik perubahan (3 file sumber, minimal)
+
+- `brain.ts` `_claimUtterance(preempt)`: klaim kanal kini `priority: preempt
+  ? 0 : -2`; refusal pada jalur proaktif = rantai TIDAK jadi lahir —
+  chainOwner dibatalkan, unlockAI dibalik (pairing P18 tetap 1:1),
+  playSegments sudah memperlakukan null sebagai skip senyap tanpa record.
+  `_onChannelLost` & taksonomi completed/lost TIDAK disentuh (D7).
+- `app.js speakShared`: (a) meneruskan `opts.priority` ke claim (default 0 =
+  konsumen lama identik); (b) JALUR REFUSAL yang selama ini laten:
+  `claim===null` → `onDone("refused")` dan RETURN sebelum speak — tanpa
+  audio, tanpa completed palsu, tanpa release token asing (menutup §5;
+  saat S4-A tak tercapai karena semua 0; kini hidup).
+- `panel.ts speakAsCharacter` (funnel SATU-satunya ucapan worker): klaim
+  EKSPISIT priority -1 dulu — refused → return SEBELUM addChat (D5: yang
+  ditolak tidak pernah "dikatakan"); serialisasi producer-side
+  `harnessVoicing` (D3: satu baris worker per waktu; baris baru dibuang,
+  TANPA replay, TANPA queue di kanal) + watchdog 60 dtk mengikuti konvensi
+  speakWait; token dilepas sendiri (pola chain). Supresi TIDAK pernah
+  menyentuh rt.* — speech ⊥ eksekusi (§7/§25).
+
+Approval tetap SUNYI (D4 — tidak ada klaim untuk permission_request; pasca
+resolve memakai jalur normal). Modifikasi berjalan (S4-C) bicara lewat
+jalur worker yang sama → otomatis patuh D1/D3.
+
+### Verifikasi dinamis — smoke S7 (page nyata, engine produksi)
+
+Recorder di batas `__live2dAgent.speak` membuktikan: refused outcome
+TERPISAH di log & nol audio; kanal tak berpindah & rantai HIDUP setelah
+percobaan worker; chain lanjut bicara seg-2 dengan tokennya sendiri dan
+TIDAK PERNAH menerima `lost` sepanjang S7a (buktinya di batas kepemilikan,
+bebas dari timing stub TTS — pelajaran sesi: assert KEPEMILIKAN, bukan byte
+audio); S7b user input merebut baris worker → worker `lost` + enforcer;
+S7c klaim proaktif(-2) refused saat worker(-1) memegang.
+`smoke-engine-utterance` naik 43 → 58 checks, semua pass.
+
+Unit baru `test/speech-policy.test.ts` 14 test (matriks numerik pada kanal
+ASLI, reactEvent refusal + pairing lock, guard teks asli app.js/panel/
+brain.ts, channel beku). Regresi: S1 9+7, S2 10, S3-A 21, S3-B 21, S4-A 24,
+S4-B 15, agent-panel, voice/tts suites — SEMUA hijau tanpa modifikasi.
+
+Gates: unit 1476 pass (1462 + 14), guards 411/411, tsc bersih, build bersih,
+smoke-engine-utterance 58/58, smoke-vtuber-browser pass.
+
+Catatan jujur: percobaan selama S4-D menemukan bahwa assertion akustik
+(`__ssSpoke`) di lingkungan stub rawan timing (retry /api/tts 599 → fallback
+browser dengan backoff) — dua kali "kegagalan" S7a ternyata artefak stub,
+bukan produk; pembuktian dipindah ke batas bridge. Tidak ada bug produk
+yang lahir dari sesi ini (P0/P1/P2 = none).
+
+Limitasi/diteruskan: serialisasi worker = DROP (bukan defer/replay) sesuai
+D3; dua baris worker berurutan → yang kedua hilang tanpa feedback user
+(dekoratif, boleh — kandidat polish kecil S5+); app/direct tetap 0
+(policy diam — didokumentasikan). S6 gating proaktif TETAP tersisa (S4-D
+hanya arbitrase klaim, bukan enable/disable).
+
+Commit kode: 8037fc4..
+
 ## UPDATE 2026-09-16 (59) — BEHAVIOR CONTRACT S4-C: WORKER TASK MODIFICATION — VERIFIED
 
 S4-C diimplementasi dan diverifikasi setelah keputusan produk TERKUNCI dari

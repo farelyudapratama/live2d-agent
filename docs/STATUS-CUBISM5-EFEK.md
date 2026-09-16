@@ -1,5 +1,72 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (59) — BEHAVIOR CONTRACT S4-C: WORKER TASK MODIFICATION — VERIFIED
+
+S4-C diimplementasi dan diverifikasi setelah keputusan produk TERKUNCI dari
+user (Option 1): modifikasi = cancel-kooperatif + replacement; A' MEWARISI
+posisi pipeline A — menjadi eksekusi berikutnya, di DEPAN seluruh parked.
+Bukan rewind dunia: side effect tool in-flight A tetap berdiri (kontrak).
+HANYA task AKTIF yang bisa dimodifikasi; modifikasi task PARKED ditolak
+eksplisit (deferred — tanpa reorder diam-diam).
+
+### Server (assistant.ts — SATU fungsi, NOL `await` → atomik)
+
+`assistantModify({taskId, text}, config)` — validasi (runtime hidup, id
+= activeTask saat ini, teks non-kosong ≤4000, antrean < MAX_PARKED) lalu
+satu tick event-loop mutasi:
+
+- RUNNING: `parkedTasks.unshift(A')` + `cancelRequested=true`. A tetap
+  pemegang slot sampai rilis TUNGGAL oleh eksekusinya sendiri (guard
+  equality taskId S4-A); drain pertama otomatis A', bukan B. Urutan final
+  A → A' → B → C. Jika A menyelesaikan turn sebelum flag teramati
+  (single-turn), jawabannya yang basi tetap sah — terdokumentasi, bukan bug.
+- PAUSED: `approvals.clear()` (approve/deny basi → "approval tidak
+  ditemukan" — T16 pola), pushMsg "(tugas t_x diganti → t_y oleh user)",
+  slot pindah LANGSUNG ke A' pada return yang sama — B tidak pernah punya
+  kesempatan menyelonong (diuji SENYAP tanpa tick: M5/M11).
+
+taskId baru selalu (`t_<n+1>`); id lama pensiun PERMANEN — cancel/modify/
+release stale untuk id lama = no-op (guard equality yang sudah ada). Tidak
+ada flag kedua, tidak ada generasi kedua, tidak ada queue paralel — semua
+dibangun dari primitif S4-A (nextTaskId, parkTask-shape rec, executeTask,
+guards). `state.ts` dan `loop.ts` TIDAK berubah sama sekali.
+
+Route: `POST /api/assistant/modify {taskId,text}` → hasil `json(r, ok?200:
+400)`; tolak = error string eksplisit, ZERO mutation (diuji M13–M15/M17/M18).
+
+### UI (task card S4-B, tanpa redesign)
+
+Baris ACTIVE mendapat tombol "Ganti" (pola callback injection sama
+`onTaskCancel`; parked TIDAK punya tombol modify). Alur: prompt() teks baru
+berisi teks lama (konvensi confirm()/prompt() yang sudah ada di reset) →
+POST → feedback "Task diganti → #id" → `refreshStatus()` — proyeksi dari
+otoritas server, TANPA mutasi optimistik apa pun. Batal-prompt = nol
+request. Gagal = ✗ server error. History/tanskrip tidak direkayasa ulang:
+entri lama A dan pesan user A' tetap dua jejak eksekusi berbeda (task
+identity ≠ transcript identity).
+
+### Test
+
+`test/harness-modify.test.ts`: 14 test (M1–M18) — harness deferred-fetch
+pola S4-A; atomisitas dibuktikan lewat assert SENYAP setelah return modify
+(paused) + guard regex "assistantModify tidak mengandung await"; urutan
+A'→B→C asserted eksplisit per-step; eksekusi tepat-satu via hitungan prompt
+stub; isolasi lintas-lane: test berjalan TANPA window/brain global (M16) +
+guard sumber view/panel (tombol active-only, body {taskId,text}, tanpa jalur
+optimistik).
+
+Gates: unit 1462 pass (1448 + 14), guards 411/411, tsc bersih, build bersih,
+smoke-engine-utterance 43/43, smoke-vtuber-browser semua pass. S4-A 24 test
++ S4-B 15 test + suite PET/VTuber hijau TANPA modifikasi.
+
+Limitasi faktual: modify pada task cap-penuh (20 parked) ditolak eksplisit
+(bukan membuang task terlama secara diam-diam); jawaban stale A yang lolos check-point terakhir tetap
+tercatat di history (kooperatif, kontrak); UI modify memakai prompt() polos
+(bukan inline editor) — konsisten konvensi repo, boleh di-upgrade S4-B+;
+parked-modification tetap deferred.
+
+Commit kode: 27d878a.
+
 ## UPDATE 2026-09-16 (58) — BEHAVIOR CONTRACT S4-B: HARNESS QUEUE UI + PER-TASK CANCEL — VERIFIED
 
 S4-B dari Behavior Contract (O4→S4-B) diimplementasi dan diverifikasi: UI

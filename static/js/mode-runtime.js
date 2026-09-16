@@ -114,20 +114,31 @@
     // donoQueue : FIFO event DONASI SEBELUM LLM (tidak pre-generate);
     //             overflow menjatuhkan yang TERBARU (FIFO yang tertampung
     //             tetap utuh), drain serialized oleh donoBusy.
+    // S3-B — opQueue : FIFO perintah OPERATOR (composer jendela utama), pola
+    //       persis donoQueue (cap + buang-terbaru + dedup HANYA event-id;
+    //       teks operator sama BUKAN spam — tidak pernah lewat dupKeys).
+    // S3-B — donoBusy kini adalah flag SATU slot aktif BERBAGI donation +
+    //       operator: hanya satu lifecycle ucap yang pernah berjalan.
+    //       Prioritas klaim (D-1): donasi dulu; slot yang sedang jalan
+    //       TIDAK pernah dipreempt. Wake operator: rantai self-drain-nya
+    //       sendiri + sapuan tiap poll (setelah donasi mengosongkan slot,
+    //       drain lanjut paling lambat satu tick poll — 2,5 dtk).
     const AUDIENCE_DUP_MS = 8000;
     const AUDIENCE_SEEN_MS = 300000;
     const AUDIENCE_SEEN_MAX = 500;
     const DONO_QUEUE_MAX = 20;
     const SPEECH_WAIT_MAX_MS = 60000;
+    const OP_QUEUE_MAX = 20;
     const seenIds = new Map();
     const dupKeys = new Map();
     let audBusy = false;
     let gen = 0;
     const donoQueue = [];
+    const opQueue = [];
     let donoBusy = false;
 
     function line(ev) {
-      const cls = ev.type === "donation" ? "donation" : ev.type === "system" ? "system" : ev.type === "agent" ? "agent" : "";
+      const cls = ev.type === "donation" ? "donation" : ev.type === "system" ? "system" : ev.type === "agent" ? "agent" : ev.type === "operator" ? "operator" : "";
       const row = el("div", "vt-line " + cls);
       if (ev.type === "donation") row.appendChild(el("span", "vt-amount", String(ev.amount || "")));
       row.appendChild(el("span", "vt-user", ev.user));
@@ -292,6 +303,66 @@
       }
     }
 
+    // OPERATOR (S3-B): TIDAK pernah lewat cooldown/dup audience — perintah
+    // eksplisit bukan spam. Dedup hanya event-id (identity yang sama dengan
+    // donasi: satu event tidak pernah diproses dua jalur).
+    function enqueueOperator(ev) {
+      if (alreadySeen(ev.id)) return;                 // polling dobel → sekali
+      noteSeen(ev.id);
+      if (opQueue.length >= OP_QUEUE_MAX) {
+        console.warn("[vtuber] antrean operator penuh — perintah TERBARU dilewati (bounded)");
+        return;                                       // yang terbuang = yang baru (FIFO utuh)
+      }
+      opQueue.push(ev);
+      pumpOperators();
+    }
+
+    // Slot BERSAMA (donoBusy) — klaim sinkron sebelum await pertama. D-1:
+    // saat slot bebas dan donasi menunggu, donasi yang klaim lebih dulu;
+    // operator tidak pernah mem-preempt slot yang sedang jalan.
+    async function pumpOperators() {
+      if (donoBusy) return;                           // satu slot: donasi/operatorku
+      if (donoQueue.length) { pumpDonations(); return; } // prioritas klaim D-1
+      const ev = opQueue.shift();
+      if (!ev) return;                                // drain queue kosong aman
+      donoBusy = true;
+      const myGen = gen;
+      try {
+        if (stopped || myGen !== gen) return;         // teardown menang: diam
+        // D-3: perintah operator = input eksplisit manusia untuk jendela
+        // utama — TIDAK diredam switch auto-balas audience maupun overlay
+        // OBS. Yang boleh membungkamnya hanya lifecycle (stopped/gen).
+        const persona = ($("#vt-persona") || {}).value || "ceria dan ramah";
+        try {
+          const reply = await askLLM(
+            [
+              {
+                role: "user",
+                content: __t("vt.operatorPrompt", { text: ev.text }),
+              },
+            ],
+            "Kamu adalah VTuber Live2D yang sedang streaming. Gaya bicara: " + persona + ". Jawab HANYA kalimat yang akan diucapkan, tanpa awalan nama.",
+          );
+          if (reply && !stopped && myGen === gen) {
+            vtuberAgentSay(reply);
+            // COMPLETION POINT: sama persis dengan donasi — queue maju hanya
+            // setelah lifecycle ucap (completed ATAU lost) berakhir.
+            await speakWait(reply, "vtuber/operator");
+          }
+        } catch (e) {
+          // LLM gagal → slot berakhir, antrean tidak deadlock.
+          if (!stopped && myGen === gen)
+            line({ type: "system", user: "system", text: __t("vt.aiFail", { msg: e.message }) });
+        }
+      } finally {
+        if (myGen === gen) donoBusy = false;
+        if (myGen === gen && !stopped && (donoQueue.length || opQueue.length)) {
+          // Rantai release: donasi tetap menang klaim saat dua antrean menunggu.
+          if (donoQueue.length) pumpDonations(); else pumpOperators();
+        }
+      }
+    }
+
     async function poll() {
       if (stopped) return;
       try {
@@ -305,13 +376,20 @@
         for (const ev of d.events || []) {
           line(ev);
           // S3-A: klasifikasi jalur di SATU titik — donasi tidak pernah lewat
-          // cooldown/dedup audience, dan sebaliknya.
+          // cooldown/dedup audience, dan sebaliknya. S3-B: operator jalur
+          // ketiganya — tidak pernah disalahartikan sebagai chat penonton.
           if (ev.type === "donation") {
             alert(ev);
             enqueueDonation(ev);
           } else if (ev.type === "chat") {
             maybeRespond(ev);
+          } else if (ev.type === "operator") {
+            enqueueOperator(ev);
           }
+        }
+        // Wake bounded: donasi yang barusan mengosongkan slot tidak punya
+        // rantai ke operator; sapuan tiap poll (2,5 dtk) menjamin drain lanjut.
+        pumpOperators();
         }
       } catch (e) { /* server restart dsb — coba lagi */ }
     }
@@ -353,6 +431,7 @@
       stopped = true;
       gen++;                       // S3-A: bungkam kontinuaasi donasi/audience in-flight
       donoQueue.length = 0;        // S3-A: antrean tidak boleh selamat lintas stop
+      opQueue.length = 0;          // S3-B: antrean operator ikut mati — stop bersih
       vtStopBtn.disabled = true;
       try { await post("/api/vtuber/stop"); } catch (e) {}
       setStatus(__t("vt.inactive"));
@@ -372,16 +451,36 @@
     // ?hud=1 (panel preferensi tampil); URL untuk OBS = tanpa ?hud=1.
     const onOverlayOpen = () => window.open(API + "/vtuber.html?hud=1", "_blank");
     $("#vt-overlay-open").addEventListener("click", onOverlayOpen);
+    // S3-B composer — operator mengetik perintah langsung: HANYA menyuntik
+    // event "operator" ke feed server lewat pintu resmi mock-event. Tidak ada
+    // LLM/ucap di composer; pemrosesan penuh lewat FIFO responder yang sama
+    // (guard O18 mengunci tidak adanya askLLM/speak pada jalur ini).
+    const opInputEl = $("#vt-operator-input");
+    const opSendEl = $("#vt-operator-send");
+    function onOperatorSend() {
+      const text = String((opInputEl && opInputEl.value) || "").trim();
+      if (!text) return;                              // input kosong = bukan perintah
+      if (opInputEl) opInputEl.value = "";
+      post("/api/vtuber/mock-event", { type: "operator", user: "operator", text }).catch((e) => {
+        setStatus("gagal: " + e.message, "var(--coral)");
+      });
+    }
+    const onOperatorKey = (e) => { if (e.key === "Enter") onOperatorSend(); };
+    if (opSendEl) opSendEl.addEventListener("click", onOperatorSend);
+    if (opInputEl) opInputEl.addEventListener("keydown", onOperatorKey);
     pollTimer = setInterval(poll, 2500);
 
     return function destroy() {
       stopped = true;
       gen++;                  // S3-A: async mount lama dibungkam selamanya
       donoQueue.length = 0;   // S3-A: queue tidak survive teardown
+      opQueue.length = 0;     // S3-B: queue operator juga tidak
       $("#vt-start").removeEventListener("click", onStart);
       $("#vt-stop").removeEventListener("click", onStop);
       $("#vt-provider").removeEventListener("change", onProviderChange);
       $("#vt-overlay-open").removeEventListener("click", onOverlayOpen);
+      if (opSendEl) opSendEl.removeEventListener("click", onOperatorSend);
+      if (opInputEl) opInputEl.removeEventListener("keydown", onOperatorKey);
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       post("/api/vtuber/stop").catch(() => {});
       feed.textContent = "";

@@ -363,8 +363,11 @@ describe("S3-A wiring & lifecycle", () => {
     const stop = src.slice(src.indexOf("const onStop = async"), src.indexOf("const onStop = async") + 520);
     expect(stop).toMatch(/gen\+\+;[\s\S]{0,140}donoQueue\.length = 0;/);
   });
-  test("S3-A tidak menyentuh operator (O2 masih terbuka) & kanal ucap S1 tidak diubah", () => {
-    expect(src).not.toMatch(/["']vtuber\/operator["']/);
+  test("S3-B memperkenalkan jalur operator TANPA mengubah kanal ucap S1 audience/donasi", () => {
+    // S3-A dulu: not.toMatch(/vtuber\/operator/) — penanda "O2 masih terbuka".
+    // S3-B menutup O2 dengan sengaja, jadi guard pengganti asserting kebalikannya
+    // (produsen operator ADA) + kanal S3-A lama tetap utuh byte-per-byte.
+    expect(src).toMatch(/speakWait\(reply, "vtuber\/operator"\)/);
     expect(src).toMatch(/__debugSpeak\(text, null, "vtuber\/audience"\)/); // speak() lama utuh
     expect(src).toMatch(/speakWait\(reply, "vtuber\/donation"\)/);          // via bridge S1 yang sama
   });

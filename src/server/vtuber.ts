@@ -14,7 +14,9 @@ import { WebSocket } from "ws";
 export type VtEvent = {
   id: number;
   ts: number;
-  type: "chat" | "donation" | "system" | "agent";
+  // "operator" (S3-B): jalur composer jendela utama — perintah langsung
+  // manusia, BUKAN chat penonton; tidak pernah disimulasikan provider live.
+  type: "chat" | "donation" | "system" | "agent" | "operator";
   user: string;
   text: string;
   amount?: string;
@@ -58,8 +60,10 @@ export function vtuberInjectEvent(body: { type?: string; user?: string; text?: s
   if (!runtime) return null;
   // "agent" diizinkan: mock-event adalah pintu resmi client menandai balasan
   // AI (kelas .agent di Feed Live) — jangan dipaksa jadi "chat".
+  // "operator" (S3-B): pintu composer jendela utama. Tipe TAK DIKENAL tetap
+  // jatuh ke "chat" — keamanan lama dipertahankan.
   const type =
-    body.type === "donation" || body.type === "agent"
+    body.type === "donation" || body.type === "agent" || body.type === "operator"
       ? body.type
       : "chat";
   return pushEvent({ type, user: String(body.user || "Guest"), text: String(body.text || "").slice(0, 400), amount: body.amount });

@@ -179,6 +179,13 @@
           <button id="vt-config-open" class="mini-btn" data-i18n-title="vt.cfgOpenTip" data-i18n="vt.cfgOpen">Pengaturan</button>
         </div>
         <div id="vt-alert" class="vt-alert hidden"></div>
+        <!-- S3-B: composer operator — perintah LANGSUNG ke AI jendela utama
+             (jalur "operator" di feed server; diproses FIFO oleh responder,
+             slot bersama dengan donasi). Bukan chat penonton. -->
+        <div class="note-row vt-operator-row">
+          <input id="vt-operator-input" type="text" maxlength="400" data-i18n-ph="vt.operatorPh" placeholder="Perintah langsung ke AI…" />
+          <button id="vt-operator-send" class="mini-btn" data-i18n="vt.operatorSend">Kirim</button>
+        </div>
         <div class="section-title" data-i18n="vt.feedTitle">Feed Live</div>
         <div class="vt-feed-wrap">
           <div id="vt-feed" class="vt-feed" aria-live="polite"></div>

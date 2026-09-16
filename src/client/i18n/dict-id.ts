@@ -429,6 +429,9 @@ export const DICT_ID: Record<string, string> = {
   // ── mode-runtime ───────────────────────────────────────────────
   "vt.donatePrompt": "Penonton bernama {user} baru saja donasi {amount} dengan pesan: \"{text}\". Ucapkan terima kasih hangat yang khas (1-2 kalimat). Berbicaralah dalam bahasa Indonesia.",
   "vt.chatPrompt": "Penonton bernama {user} bilang di live chat: \"{text}\". Balas singkat (1 kalimat) yang fun dan personal. Berbicaralah dalam bahasa Indonesia.",
+  "vt.operatorPrompt": "Perintah langsung dari operator (BUKAN chat penonton): \"{text}\". Sahut/sampaikan sebagai karakter VTuber; jawab HANYA kalimat yang akan diucapkan.",
+  "vt.operatorPh": "Perintah langsung ke AI…",
+  "vt.operatorSend": "Kirim",
   "vt.aiFail": "AI gagal balas: {msg}",
   "vt.overlayBtn": "Buka Overlay OBS",
   "vt.overlayHint": "URL bersih untuk Browser Source: /vtuber.html",

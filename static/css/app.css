@@ -2921,6 +2921,14 @@ input[type="range"]::-moz-range-thumb {
   border-left-color: var(--mint);
 }
 .vt-line.agent .vt-user { color: var(--mint); }
+/* S3-B: jalur operator — perintah langsung manusia, warna coral (kanal
+   eksplisit; beda dari agent/mint dan donasi/lamp). */
+.vt-line.operator {
+  background: var(--coral-soft);
+  border-left-color: var(--coral);
+}
+.vt-line.operator .vt-user { color: var(--coral); }
+.vt-operator-row input { flex: 1; min-width: 0; }
 .vt-alert {
   padding: 6px 10px;
   border-radius: var(--r-sm);

@@ -421,6 +421,9 @@ export const DICT_EN: Record<string, string> = {
   // ── mode-runtime ───────────────────────────────────────────────
   "vt.donatePrompt": "Viewer {user} just donated {amount} with the message: \"{text}\". Give a warm, in-character thank-you (1-2 sentences). Speak English.",
   "vt.chatPrompt": "Viewer {user} said in live chat: \"{text}\". Reply briefly (1 sentence), fun and personal. Speak English.",
+  "vt.operatorPrompt": "Direct command from the operator (NOT viewer chat): \"{text}\". Respond/deliver as the VTuber character; reply with ONLY the sentence to be spoken.",
+  "vt.operatorPh": "Direct command to the AI…",
+  "vt.operatorSend": "Send",
   "vt.aiFail": "AI failed to reply: {msg}",
   "vt.overlayBtn": "Open OBS Overlay",
   "vt.overlayHint": "Clean URL for Browser Source: /vtuber.html",

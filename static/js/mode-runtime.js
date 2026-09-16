@@ -99,6 +99,33 @@
     // otomatis supaya chat tidak dibalas dobel (di sini DAN di overlay).
     let overlayOn = false;
 
+    // ── S3-A: Audience suppression + DONATION FIFO (lokal, bounded) ──
+    // seenIds   : guard re-delivery event (dua poll tumpang tindih) — window
+    //             300 dtk, cap 500. Dipakai audience DAN donation (identity
+    //             event yang sama), BUKAN pengganti cooldown.
+    // dupKeys   : suppression spam AUDIENCE saja — key = user lowercase +
+    //             teks ternormalisasi (trim+lowercase+whitespace), window
+    //             8 dtk. User berbeda dengan teks sama TIDAK dibungkam
+    //             (percakapan sah); DONASI tidak melewati key ini sama sekali.
+    // audBusy   : SATU request audience in-flight; yang lain skip (bukan
+    //             antrean — audience tidak pernah punya queue, kontrak S3-A).
+    // gen       : generasi mount — kontinuaasi async yang datang setelah
+    //             destroy/stop dibungkam (tidak bicara ke mode/session baru).
+    // donoQueue : FIFO event DONASI SEBELUM LLM (tidak pre-generate);
+    //             overflow menjatuhkan yang TERBARU (FIFO yang tertampung
+    //             tetap utuh), drain serialized oleh donoBusy.
+    const AUDIENCE_DUP_MS = 8000;
+    const AUDIENCE_SEEN_MS = 300000;
+    const AUDIENCE_SEEN_MAX = 500;
+    const DONO_QUEUE_MAX = 20;
+    const SPEECH_WAIT_MAX_MS = 60000;
+    const seenIds = new Map();
+    const dupKeys = new Map();
+    let audBusy = false;
+    let gen = 0;
+    const donoQueue = [];
+    let donoBusy = false;
+
     function line(ev) {
       const cls = ev.type === "donation" ? "donation" : ev.type === "system" ? "system" : ev.type === "agent" ? "agent" : "";
       const row = el("div", "vt-line " + cls);
@@ -125,30 +152,143 @@
       } catch (e) {}
     }
 
+    // S3-A helpers — semua murni atas state lokal bounded di atas.
+    function pruneSeen(now) {
+      for (const [id, t] of seenIds) if (now - t > AUDIENCE_SEEN_MS) seenIds.delete(id);
+      while (seenIds.size > AUDIENCE_SEEN_MAX) seenIds.delete(seenIds.keys().next().value);
+    }
+    function alreadySeen(id) {
+      return seenIds.has(Number(id));
+    }
+    function noteSeen(id) {
+      seenIds.set(Number(id), Date.now());
+      pruneSeen(Date.now());
+    }
+    function normKey(ev) {
+      return (
+        String(ev.user || "").toLowerCase() +
+        "::" +
+        String(ev.text || "").trim().toLowerCase().replace(/\s+/g, " ")
+      );
+    }
+    function audienceDup(key) {
+      const now = Date.now();
+      for (const [k, t] of dupKeys) if (now - t > AUDIENCE_DUP_MS * 4) dupKeys.delete(k);
+      if (dupKeys.size > 200) dupKeys.delete(dupKeys.keys().next().value);
+      const prev = dupKeys.get(key);
+      if (prev !== undefined && now - prev < AUDIENCE_DUP_MS) return true;
+      dupKeys.set(key, now);
+      return false;
+    }
+
+    // speakWait: ucapkan lewat kanal S1 dan TUNGGU siklus hidupnya selesai.
+    // 'completed' dan 'lost' sama-sama mengakhiri slot (tidak ada retry-loop
+    // tanpa batas); watchdog melindungi bridge yang tidak memanggil callback.
+    function speakWait(text, producer) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(watchdog);
+          resolve();
+        };
+        const watchdog = setTimeout(finish, SPEECH_WAIT_MAX_MS);
+        try {
+          if (window.__debugSpeak) window.__debugSpeak(text, finish, producer);
+          else if (window.__addChat) window.__addChat("agent", text);
+          else finish();
+        } catch (e) {
+          finish();
+        }
+      });
+    }
+
+    // AUDIENCE (S3-A): dedup → cooldown → in-flight. Yang ditekan TIDAK
+    // pernah masuk antrean apa pun — skip adalah final (kebijakan produk).
     async function maybeRespond(ev) {
       // Overlay OBS yang pegang balasan → app utama hanya jadi penonton feed.
       if (overlayOn) return;
       const respond = $("#vt-respond") && $("#vt-respond").checked;
       if (!respond) return;
+      if (alreadySeen(ev.id)) return;                 // polling dobel → satu proses
+      noteSeen(ev.id);
+      if (audienceDup(normKey(ev))) return;           // spam user yang sama, 8 dtk
       const cooldown = Math.max(5, Number(($("#vt-cooldown") || {}).value) || 12) * 1000;
-      if (Date.now() - lastSpeakAt < cooldown) return; // antrean sederhana: skip
+      if (Date.now() - lastSpeakAt < cooldown) return; // kebijakan lama: skip
+      if (audBusy) return;                             // tak pernah 2 request paralel
       lastSpeakAt = Date.now();
+      audBusy = true;
+      const myGen = gen;
       const persona = ($("#vt-persona") || {}).value || "ceria dan ramah";
-      const isDono = ev.type === "donation";
-      const prompt = isDono
-        ? __t("vt.donatePrompt", { user: ev.user, amount: ev.amount || "", text: ev.text })
-        : __t("vt.chatPrompt", { user: ev.user, text: ev.text });
       try {
         const reply = await askLLM(
-          [{ role: "user", content: prompt }],
+          [{ role: "user", content: __t("vt.chatPrompt", { user: ev.user, text: ev.text }) }],
           "Kamu adalah VTuber Live2D yang sedang streaming. Gaya bicara: " + persona + ". Jawab HANYA kalimat yang akan diucapkan, tanpa awalan nama.",
         );
-        if (reply && !stopped) {
+        if (reply && !stopped && myGen === gen) {
           vtuberAgentSay(reply);
           speak(reply);
         }
       } catch (e) {
-        line({ type: "system", user: "system", text: __t("vt.aiFail", { msg: e.message }) });
+        if (!stopped && myGen === gen)
+          line({ type: "system", user: "system", text: __t("vt.aiFail", { msg: e.message }) });
+      } finally {
+        if (myGen === gen) audBusy = false;
+      }
+    }
+
+    // DONATION (S3-A): TIDAK pernah lewat cooldown/dup audience — selalu
+    // masuk FIFO; tidak ada yang hilang karena audience sedang antre/sibuk.
+    function enqueueDonation(ev) {
+      if (alreadySeen(ev.id)) return;                 // D5: polling dobel → sekali
+      noteSeen(ev.id);
+      if (donoQueue.length >= DONO_QUEUE_MAX) {
+        console.warn("[vtuber] antrean donasi penuh — donasi TERBARU dilewati (bounded)");
+        return;                                       // yang terbuang = yang baru (FIFO utuh)
+      }
+      donoQueue.push(ev);
+      pumpDonations();
+    }
+
+    // Drain serialized: satu donasi aktif; lanjut HANYA setelah siklus ucap
+    // selesai (completed/lost) — bukan saat request/bubble mulai.
+    async function pumpDonations() {
+      if (donoBusy) return;                           // D10: dua trigger → satu drain
+      const ev = donoQueue.shift();
+      if (!ev) return;                                // D9: drain queue kosong aman
+      donoBusy = true;
+      const myGen = gen;
+      try {
+        if (stopped || myGen !== gen) return;         // teardown menang: diam
+        const respond = $("#vt-respond") && $("#vt-respond").checked;
+        if (overlayOn || !respond) return;            // yield/mute existing: slot
+                                                      // TETAP diakhiri (tanpa sumbat)
+        const persona = ($("#vt-persona") || {}).value || "ceria dan ramah";
+        try {
+          const reply = await askLLM(
+            [
+              {
+                role: "user",
+                content: __t("vt.donatePrompt", { user: ev.user, amount: ev.amount || "", text: ev.text }),
+              },
+            ],
+            "Kamu adalah VTuber Live2D yang sedang streaming. Gaya bicara: " + persona + ". Jawab HANYA kalimat yang akan diucapkan, tanpa awalan nama.",
+          );
+          if (reply && !stopped && myGen === gen) {
+            vtuberAgentSay(reply);
+            // COMPLETION POINT: queue maju hanya setelah lifecycle ucap via
+            // kanal S1 selesai — 'lost' juga mengakhiri slot (no retry loop).
+            await speakWait(reply, "vtuber/donation");
+          }
+        } catch (e) {
+          // D5-error: LLM gagal → slot tetap selesai, queue tidak deadlock.
+          if (!stopped && myGen === gen)
+            line({ type: "system", user: "system", text: __t("vt.aiFail", { msg: e.message }) });
+        }
+      } finally {
+        if (myGen === gen) donoBusy = false;
+        if (myGen === gen && !stopped && donoQueue.length) pumpDonations();
       }
     }
 
@@ -164,8 +304,14 @@
         overlayOn = nowOverlay;
         for (const ev of d.events || []) {
           line(ev);
-          if (ev.type === "donation") alert(ev);
-          if (ev.type === "chat" || ev.type === "donation") maybeRespond(ev);
+          // S3-A: klasifikasi jalur di SATU titik — donasi tidak pernah lewat
+          // cooldown/dedup audience, dan sebaliknya.
+          if (ev.type === "donation") {
+            alert(ev);
+            enqueueDonation(ev);
+          } else if (ev.type === "chat") {
+            maybeRespond(ev);
+          }
         }
       } catch (e) { /* server restart dsb — coba lagi */ }
     }
@@ -205,6 +351,8 @@
     };
     const onStop = async () => {
       stopped = true;
+      gen++;                       // S3-A: bungkam kontinuaasi donasi/audience in-flight
+      donoQueue.length = 0;        // S3-A: antrean tidak boleh selamat lintas stop
       vtStopBtn.disabled = true;
       try { await post("/api/vtuber/stop"); } catch (e) {}
       setStatus(__t("vt.inactive"));
@@ -228,6 +376,8 @@
 
     return function destroy() {
       stopped = true;
+      gen++;                  // S3-A: async mount lama dibungkam selamanya
+      donoQueue.length = 0;   // S3-A: queue tidak survive teardown
       $("#vt-start").removeEventListener("click", onStart);
       $("#vt-stop").removeEventListener("click", onStop);
       $("#vt-provider").removeEventListener("change", onProviderChange);

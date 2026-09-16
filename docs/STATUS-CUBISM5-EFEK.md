@@ -1,5 +1,79 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (55) — BEHAVIOR CONTRACT S3-A: VTUBER AUDIENCE SUPPRESSION + DONATION FIFO — VERIFIED
+
+S3-A dari Behavior Contract v1 diimplementasi dan diverifikasi. HANYA dua itu:
+supresi AUDIENCE dan antrean FIFO DONATION pada responder VTuber jendela
+utama. OPERATOR (O2) TIDAK diimplementasi — identitas operator memang belum
+ada di kode dan kontrak melarang mengarangnya. Halaman overlay OBS
+(vtuber.html) TIDAK disentuh: jendela/proses berbeda di luar kanal ucap
+jendela utama.
+
+### Alur nyata setelah S3-A
+
+AUDIENCE (poll → chat):
+  seen-id (cap 500/300s) → dup-key user+teks window 8 dtk → cooldown
+  existing (≥5s, default 12s) → audBusy (satu in-flight) → LLM → ucap.
+  Yang ditekan di titik mana pun = FINAL, tidak pernah masuk antrean apa
+  pun (kontrak: audience tidak punya queue).
+
+DONATION (poll → donation):
+  alert visual (tetap) → seen-id → push FIFO (cap 20; overflow membuang
+  yang TERBARU sehingga FIFO yang tertampung utuh) → drain serialized
+  (donoBusy) → LLM SAAT slot aktif (tidak pre-generate) → ucap via kanal
+  S1 (producer "vtuber/donation", via __debugSpeak/speakWait) → queue
+  HANYA maju setelah lifecycle ucap selesai — 'completed' ATAU 'lost'
+  sama-sama mengakhiri slot (tidak ada retry-loop); watchdog 60 dtk
+  melindungi bridge yang tak memanggil callback.
+
+### Dedup audience — kunci & jendela (dokumentasi kontrak)
+
+Kunci: `lowercase(user) + "::" + trim(lowercase(text)) whitespace-collapsed`,
+window 8 dtk, Map bounded (prune >4×window, cap 200). Hanya pengulangan
+USER SAMA dengan teks sama yang ditekan — dua user sah mengucapkan hal
+sama TIDAK dibungkam (dibuktikan test A4). Event-ID seen-map (window
+300s, cap 500) melindungi re-delivery polling yang tumpang tindih untuk
+kedua kelas. Donasi TIDAK PERNAH lewat dup-key.
+
+### Semantik antrean donasi
+
+Data: array event mentah (sebelum LLM). Drain: guard `donoBusy` diset
+sinkron sebelum await pertama → dua pemicu serentak = satu proses (D10).
+Overlay aktif / respond OFF: slot diakhiri tanpa LLM (yield/mute policy
+existing — antrean tidak tersumbat; didokumentasikan, bukan preservasi
+baru). Error LLM: slot tetap berakhir (finally), donasi berikutnya jalan
+(D5). Teardown (destroy + onStop): `stopped=true; gen++; donoQueue.length=0`
+— kontinuaasi async mount lama dibungkam oleh cek `myGen === gen` di
+SETIAP titik setel-side-effect; test D8 membuktikan stale donasi tidak
+bersuara ke mode baru.
+
+### Catatan proses (jujur)
+
+Harness vm mengungkap semantik Bun: binding `var` dalam script context TIDAK
+tersinkron dua-arah dengan objek host — state skalar test dibaca/ditulis via
+accessor `__ctl` di dalam context; array/Map aman dirujuk (tidak pernah
+di-reassign). Test juga fire-and-forget (persis cara poll() memanggil),
+bukan await fungsi yang tidak pernah resolve. Ini artefak test-harness,
+bukan defect produk.
+
+### Tests: `test/vtuber-audience-donation.test.ts` — 21 test
+A1-A6 + A-window (audience); D1/D2-D3-D6/D4/D5-error/D5-lost/D7/D8/D8b/
+D9-D10/D-bound/D-nooverlap; plus 3 guard wiring (rute poll, teardown gen++,
+tanpa "vtuber/operator" & speak() S1 lama utuh). Semua terhadap TEKS ASLI
+mode-runtime.js via vm-extraction, deferred promise deterministik.
+
+### Quality gates (satu rangkaian):
+- unit **1388 pass / 0 fail** (74 file; +21) · guards **411 / 0** (7 suite)
+- `tsc` bersih · `build` bersih
+- `smoke-engine-utterance.ts` **43/43** (halaman memuat mode-runtime) ·
+  `smoke-vtuber-browser.ts` penuh hijau (halaman overlay tak berubah)
+- Suite S1/S2/vtuber-inject/r8-3/i18n: hijau — semantik SpeechChannel dan
+  PET merge tidak disentuh
+
+### Commit: `10c8235` feat(vtuber): audience suppression + donation FIFO queue
+
+---
+
 ## UPDATE 2026-09-16 (54) — BEHAVIOR CONTRACT S2: PET THINKING MERGE — VERIFIED
 
 S2 dari Behavior Contract v1 diimplementasi dan diverifikasi. HANYA merge

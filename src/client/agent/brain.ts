@@ -608,7 +608,14 @@ Contoh pendek:
   /** Ambil hak bicara. preempt=true (user input SELALU menang): rantai
    *  aktif dibatalkan dulu — stop speech + lepas lock + token basi.
    *  preempt=false (proaktif): null bila sudah ada yang bicara — proaktif
-   *  tidak pernah memotong dan tidak membuat rantai kedua. */
+   *  tidak pernah memotong dan tidak membuat rantai kedua.
+   *  S4-D (policy D1/D2 TERKUNCI): klaim kanal membawa PRIORITAS —
+   *  user-chain 0 (semantik lama persis; takeover antar-produsen-0 tidak
+   *  berubah) dan proaktif -2 (di BAWAH worker speech (-1) dan chain mana
+   *  pun → selalu refused saat kanal sedang dimiliki: D2). Refusal =
+   *  rantai TIDAK jadi started — lock dilepas lagi, caller memperlakukan
+   *  null sebagai skip senyap (playSegments/reactEvent sudah begitu).
+   *  _onChannelLost & taksonomi outcome TIDAK diubah (D7). */
   private _claimUtterance(preempt: boolean): number | null {
     if (this._chainOwner !== null) {
       if (!preempt) return null;
@@ -619,12 +626,25 @@ Contoh pendek:
     l2d()?.lockAI?.(); // claim = tepat satu lockAI
     // S1: rantai brain memegang KANAL ucap selama hidup. onLost = ada
     // producer luar mengambil alih → rantai MATI (bukan lanjut seolah
-    // segmen selesai). Refusal (null) hanya mungkin di masa depan saat
-    // priority dipakai; hari ini semua default 0 → selalu takeover legal.
+    // segmen selesai). S4-D: refusal kini mungkin utk proaktif (priority
+    // -2) — lihat blok pembatalan di bawah; pairing lock P18 tetap 1:1.
     const ch = chan();
-    this._chanToken = ch
-      ? ch.claim("brain/chain", { onLost: () => this._onChannelLost(token) })
-      : null;
+    if (ch) {
+      const chanToken = ch.claim("brain/chain", {
+        priority: preempt ? 0 : -2,
+        onLost: () => this._onChannelLost(token),
+      });
+      if (chanToken === null) {
+        // D2 refused: kanal masih milik orang lain — rantai tidak pernah
+        // lahir; batalkan owner+lock yang baru dipasang.
+        this._chainOwner = null;
+        l2d()?.unlockAI?.();
+        return null;
+      }
+      this._chanToken = chanToken;
+    } else {
+      this._chanToken = null; // bundle lama tanpa kanal: persis pra-S4-D
+    }
     return token;
   }
 

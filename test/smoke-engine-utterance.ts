@@ -350,6 +350,86 @@ async function run() {
       !spokeS6.some((x: string) => x.startsWith("S6DUA")) && !cS6.includes(G2),
       JSON.stringify(spokeS6));
 
+    // ── S7 (S4-D) — policy prioritas TERKUNCI: worker tidak merebut chain ──
+    console.log("\n🧪 S7: S4-D — refusal(-1 vs chain 0), chain utuh, user input merebut worker, proactive hormat worker");
+    // Recorder bridge SATU KALI sebelum submit: every __live2dAgent.speak +
+    // outcome dicatat di batas engine-bridge. Bukti kontinuitas rantai memakai
+    // log ini (bukan __ssSpoke) supaya tidak bergantung pada timing retry
+    // stub TTS remote — yang diuji S4-D adalah KEPEMILIKAN, bukan audio byte.
+    await ev(`if (!window.__bridge) {
+      window.__bridge = [];
+      const _origSpeak = window.__live2dAgent.speak;
+      window.__live2dAgent.speak = function (t, cb, o) {
+        window.__bridge.push({ ev: 'speak', t: String(t).slice(0, 7), tok: !!(o && o.token), pri: o && o.priority });
+        return _origSpeak.call(window.__live2dAgent, t, function (outcome) {
+          window.__bridge.push({ ev: 'cb', outcome: String(outcome) });
+          try { if (cb) cb(outcome); } catch (e) {}
+        }, o);
+      };
+    } window.__bridge.length = 0; true`);
+    const H1 = pad("S7SATU", 140);
+    const H2 = "S7DUA juga harus terdengar";
+    await stub([REPLY(H1, H2)]);
+    await submit("pesan S7");
+    check("S7 chain user aktif + owned brain/chain",
+      await pollFor(`window.__agent._reactiveState().utteranceActive === true && window.__speechChannel.current()?.producer === 'brain/chain'`, 5000));
+    // (a) D1: klaim worker-style (-1) saat chain memegang → refused, TANPA audio
+    const s7out = await ev(`new Promise(r=>{window.__live2dAgent.speak('S7WORKER ' + 'w'.repeat(60), (o)=>r(o), { producer: 'harness/actor', priority: -1 });})`, true);
+    check("S7a outcome 'refused' — bukan completed palsu", s7out === "refused", String(s7out));
+    check("S7a refusal dilaporkan sbg outcome TERPISAH di bridge & TIDAK ADA audio",
+      (await ev(`window.__bridge.some(b=>b.ev==='cb'&&b.outcome==='refused') && !window.__ssSpoke.some(x=>x.startsWith('S7WORKER'))`)) === true);
+    check("S7a kanal tidak berpindah & rantai HIDUP (D7: onLost tak tersentuh)",
+      (await ev(`window.__speechChannel.current()?.producer === 'brain/chain' && window.__agent._reactiveState().utteranceActive === true`)) === true);
+    // §19: chain lanjut seg-2 dengan token milik sendiri → 'completed' → lepas
+    check("S7a chain lanjut bicara seg-2 dengan token milik sendiri (D1 utuh)",
+      await pollFor(`window.__bridge.some(b=>b.ev==='speak' && b.t==='S7DUA j' && b.tok===true)`, 15000));
+    check("S7a kanal bebas setelah chain user selesai penuh",
+      await pollFor(`window.__speechChannel.current() === null`, 15000));
+    check("S7a chain tidak pernah menerima 'lost' sepanjang scenario (D1)",
+      (await ev(`!window.__bridge.some(b=>b.ev==='cb'&&b.outcome==='lost')`)) === true);
+
+    // (b) D6: baris worker(-1) audible → user input SELALU merebut (enforcer stop)
+    const cancelsB = await ev(`window.__ssCancels`);
+    await ev(`window.__s7b = null; window.__live2dAgent.speak('S7BARIS ' + 'b'.repeat(90), (o)=>{window.__s7b = o;}, { producer: 'harness/actor', priority: -1 }); true`);
+    check("S7b worker line memegang kanal",
+      await pollFor(`window.__speechChannel.current()?.producer === 'harness/actor'`, 3000));
+    await stub([REPLY(pad("S7USER", 140), "S7USER-B lanjut")]);
+    await submit("pesan S7b");
+    check("S7b user input merebut kanal dari worker (D6)",
+      await pollFor(`window.__speechChannel.current()?.producer === 'brain/chain'`, 6000));
+    check("S7b audio worker dihentikan enforcer (cancel meningkat)",
+      (await ev(`window.__ssCancels`)) > cancelsB);
+    await pollFor(`window.__s7b !== null`, 8000);
+    check("S7b worker menerima outcome 'lost' (bukan completed, bukan refused)",
+      (await ev(`window.__s7b === 'lost'`)) === true);
+    check("S7b chain user tetap lanjut (seg-2 speak ber-token terlihat)",
+      (await pollFor(`window.__bridge.some(b=>b.ev==='speak' && b.t==='S7USER-' && b.tok===true)`, 15000)) === true);
+
+    // (c) D2: worker(-1) audible → proactive(-2) refused senyap (bukan preempt).
+    // SATU evaluate: klaim worker + reactEvent berurutan sinkron — kanal
+    // terjamin MASIH dimiliki worker saat klaim -2 proaktif dicoba.
+    await pollFor(`window.__speechChannel.current() === null`, 15000);
+    await stub([REPLY("S7PRO-A.", "S7PRO-B.")]); // reply proaktif tersedia → klaim benar-benar dicoba
+    const proOut = await ev(`(async () => {
+      window.__appEvents.idleSpeak = true;
+      let out = null;
+      window.__live2dAgent.speak('S7B2 ' + 'c'.repeat(200), (o) => { out = o; }, { producer: 'harness/actor', priority: -1 });
+      await window.__agent.reactEvent('idle');
+      return JSON.stringify({
+        holder: (window.__speechChannel.current() || {}).producer || 'null',
+        workerOut: out,
+        active: window.__agent._reactiveState().utteranceActive,
+      });
+    })()`, true);
+    check("S7c proactive TIDAK merebut dari worker (kanal tetap harness/actor)",
+      String(proOut).includes('"holder":"harness/actor"'), String(proOut));
+    check("S7c proactive tidak bicara & rantai proaktif tidak pernah lahir",
+      (await ev(`!window.__bridge.some(b=>b.ev==='speak'&&String(b.t).startsWith('S7PRO')) && window.__agent._reactiveState().utteranceActive === false`)) === true);
+    check("S7c worker line tidak diganggu (belum 'lost'; out masih null saat return)",
+      String(proOut).includes('"workerOut":null'), String(proOut));
+    await pollFor(`window.__speechChannel.current() === null`, 15000);
+    void s7out;
+
     // ── health akhir ─────────────────────────────────────────────
     const errs = await ev(`window.__smokeErrors`);
     check("tanpa error halaman / unhandled rejection", Array.isArray(errs) && errs.length === 0, JSON.stringify(errs));

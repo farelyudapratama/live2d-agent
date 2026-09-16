@@ -36,12 +36,55 @@ function getT() {
   return (k: string, v?: Record<string, string | number>) => (i ? i.t(k, v) : k);
 }
 
+/**
+ * S4-D — arbitration ucapan WORKER (policy D1/D2/D3/D5/D6 TERKUNCI).
+ * Semua speech harness/actor bersifat DEKORATIF terhadap eksekusi worker:
+ * refusal tidak pernah menyentuh rt.* (server tidak tahu-menahu).
+ *  - klaim EKSPISIT `priority: -1` → saat brain/chain (0) memegang kanal,
+ *    claim DITOLAK channel.ts — completion/quip/cancel worker TIDAK BISA
+ *    preempt atau mematikan rantai companion (D1); user input tetap selalu
+ *    merebut kanal worker (D6, lewat mekanisme klaim brain yang sama);
+ *  - serialisasi producer-side (D3): hanya SATU baris worker yang sedang
+ *    audible; baris worker baru sementara yang lama aktif → SUPPRESS (bukan
+ *    defer — tidak ada replay), tanpa menyentuh antrean eksekusi;
+ *  - D5/§15: percobaan yang DITOLAK sebelum audio tidak membuat bubble —
+ *    bubble berarti "dikatakan", bukan "dicoba"; bubble lama (audio sudah
+ *    mulai) tidak direkayasa ulang;
+ *  - watchdog 60 dtk mengikuti konvensi speakWait (mode-runtime S3): engine
+ *    yang tidak pernah memanggil callback tidak boleh membekukan flag.
+ */
+let harnessVoicing = false;
 function speakAsCharacter(text: string): void {
   if (!text) return;
+  const w = window as any;
+  const ch = w.__speechChannel;
+  if (harnessVoicing) return; // D3: baris worker lama masih audible
+  let tok: any = null;
+  if (ch && typeof ch.claim === "function") {
+    tok = ch.claim("harness/actor", { priority: -1 });
+    if (!tok) return; // D1: kanal milik chain/companion — refused, senyap
+  }
   try { window.__addChat?.("agent", text); } catch {}
-  // S1: ucap karakter Harness ikut SpeechChannel jendela utama dengan
-  // identitas — quip/task tidak lagi nyelundup tanpa kepemilikan.
-  try { window.__live2dAgent?.speak?.(text, undefined, { producer: "harness/actor" }); } catch {}
+  let settled = false;
+  const done = (_outcome?: string) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(safety);
+    try { if (ch && tok && typeof ch.release === "function") ch.release(tok); } catch {}
+    harnessVoicing = false;
+  };
+  const safety = setTimeout(done, 60000);
+  try {
+    if (window.__live2dAgent?.speak) {
+      // Token eksplisit: speakShared TIDAK meng-claim ulang dan tidak
+      // melepas — kepemilikan dilepas di done() (pola chain brain).
+      window.__live2dAgent.speak(text, done, tok ? { token: tok, producer: "harness/actor" } : undefined);
+    } else {
+      done("lost"); // tanpa engine: lepaskan, jangan klaim "selesai"
+    }
+  } catch {
+    done("lost");
+  }
 }
 
 export function startAssistantPanel(): () => void {

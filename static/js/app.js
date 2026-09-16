@@ -2834,7 +2834,20 @@
     let token =
       opts.token && ch.isOwner && ch.isOwner(opts.token) ? opts.token : null;
     const implicit = !token;
-    if (implicit) token = ch.claim(String(opts.producer || "app/direct"), {});
+    if (implicit)
+      token = ch.claim(String(opts.producer || "app/direct"), {
+        // S4-D: prioritas claim diteruskan (worker speech memakai -1/-2;
+        // default 0 = perilaku lama semua konsumen eksisting persis).
+        priority: Number.isFinite(Number(opts.priority))
+          ? Number(opts.priority)
+          : 0,
+      });
+    if (!token && implicit) {
+      // S4-D §5: claim DITOLAK → TIDAK ADA AUDIO, TIDAK ADA "completed"
+      // palsu, TIDAK ADA percobaan release token yang tak pernah dipegang.
+      if (onDone) onDone("refused");
+      return;
+    }
     const mine = token;
     speak(text, function () {
       const outcome = !mine || ch.isOwner(mine) ? "completed" : "lost";

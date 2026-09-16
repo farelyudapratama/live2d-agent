@@ -185,19 +185,28 @@ function makeEnv(): Env {
 }
 
 describe("Fix-2 klaim request atomik sebelum await pertama (race first-request)", () => {
-  test("B1: dua think() beruntun saat profil belum ada → HANYA satu request masuk lifecycle", async () => {
+  test("B1: dua think() beruntun saat profil belum ada → SATU request; B ter-cakup watermark → dijawab sekali, tanpa pass sia-sia", async () => {
+    // S2 UPDATE: kebijakan lama silent-drop telah DIGANTI oleh PET MERGE.
+    // Intent lama tetap dikunci: TIDAK ADA request kedua paralel dan tak ada
+    // controller tercuri. Watermark historyIndex menunjukkan B sudah ikut
+    // payload pass-1 (fetch baru dikirim setelah profil tiba) → respons
+    // pass-1 sudah menjawab [A,B]: tidak perlu pass penggantian.
     const E = makeEnv();
     const pA = E.brain.think("A");
     // klaim HARUS sudah berlaku sebelum await berikutnya — cek sinkron:
     expect(E.brain.busy).toBe(true);
-    const pB = E.brain.think("B"); // harus silent-drop (kebijakan lama, tak berubah)
+    const pB = E.brain.think("B"); // diterima ke merge (BUKAN drop, BUKAN request paralel)
+    expect(E.begins).toBe(0);                            // tak ada request kedua
+    expect(E.brain._reactiveState().pendingMergeCount).toBe(1);
+    expect(E.brain.history.some((m: any) => m.content === "B")).toBe(true); // tak hilang
     E.resolveProfile();
-    await Promise.all([pA, pB]);
-    expect(E.begins).toBe(1);                    // tak ada _beginRequest kedua
-    expect(E.chatCalls.length).toBe(1);          // tak ada dua request LLM paralel
-    expect(E.chatCalls[0].body.messages.length).toBe(1); // hanya A di payload
-    expect(E.chatCalls[0].body.messages[0].content).toBe("A");
-    expect(E.spoken.filter((t) => t === "balas.").length).toBe(1); // satu balasan, tak dobel
+    await pB;
+    await pA;
+    expect(E.begins).toBe(1);                            // TIDAK ada pass sia-sia (covered)
+    expect(E.chatCalls.length).toBe(1);
+    expect(E.chatCalls[0].body.messages.map((m: any) => m.content)).toEqual(["A", "B"]); // order utuh
+    expect(E.brain._reactiveState().pendingMergeCount).toBe(0);
+    expect(E.spoken.filter((t) => t === "balas.").length).toBe(1); // satu balasan menjawab keduanya
     expect(E.brain.busy).toBe(false);
     expect(E.brain._reqCtrl).toBeNull();         // tak ada timer/controller tercuri tersisa
     expect(E.brain._reqTimer).toBeNull();
@@ -218,10 +227,15 @@ describe("Fix-2 klaim request atomik sebelum await pertama (race first-request)"
   });
 
   test("B3: timeout bookkeeping milik request AKTIF — signal fetch == controller aktif", async () => {
+    // S2 UPDATE: B kini masuk merge → pass-1 timeout diganti pass-2 (yang
+    // juga menggantung → timeout sendiri → fallback TEPAT SATU). Intent
+    // yang dikunci tetap utuh: timer/controller selalu milik pass AKTIF.
     const E = makeEnv();
-    let seenSignal: AbortSignal | undefined;
+    const sigs: (AbortSignal | undefined)[] = [];
+    let firstAbortedWhenSecondStarted = false;
     E.setChat(async (_b, sig) => {
-      seenSignal = sig;
+      if (sigs.length === 1 && sig) firstAbortedWhenSecondStarted = !!sigs[0]!.aborted;
+      sigs.push(sig);
       return new Promise((_res, rej) => {
         sig!.addEventListener("abort", () => {
           const e: any = new Error("aborted"); e.name = "AbortError"; rej(e);
@@ -232,13 +246,14 @@ describe("Fix-2 klaim request atomik sebelum await pertama (race first-request)"
     AgentBrain.LLM_REQUEST_TIMEOUT_MS = 40;
     try {
       const pA = E.brain.think("A");
-      const pB = E.brain.think("B");
+      const pB = E.brain.think("B"); // buffered (S2), bukan request kedua
       E.resolveProfile();
       await Promise.all([pA, pB]);
-      expect(E.chatCalls.length).toBe(1);
-      expect(seenSignal).toBeDefined();
-      expect(seenSignal!.aborted).toBe(true);     // yang di-abort justru yang AKTIF (bukan warisan)
-      expect(E.brain._reqCtrl).toBeNull();        // dan dibersihkan rapi
+      expect(sigs.length).toBe(2);                       // dua pass SEQUENTIAL (B memicu pengganti, bukan paralel)
+      expect(firstAbortedWhenSecondStarted).toBe(true);  // pass-2 hanya mulai setelah pass-1 abort
+      expect(sigs[0]!.aborted).toBe(true);
+      expect(sigs[1]!.aborted).toBe(true);               // yang di-abort justru yang AKTIF di tiap pass
+      expect(E.brain._reqCtrl).toBeNull();               // dan dibersihkan rapi
       expect(E.brain._reqTimer).toBeNull();
       expect(E.spoken.filter((t) => String(t).includes("gak bisa mikir")).length).toBe(1);
       expect(E.brain.busy).toBe(false);

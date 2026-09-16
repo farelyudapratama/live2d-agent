@@ -207,6 +207,17 @@ export class AgentBrain {
   // segmen brain. Dua tanggung jawab berbeda, keduanya token-guarded.
   private _chanToken: SpeechToken | null = null;
 
+  // ── S2 Behavior Contract: PET THINKING MERGE ──
+  // Pesan user yang tiba saat request THINKING (busy) TIDAK boleh lagi
+  // hilang diam-diam. Buffer ini menandai "perlu penggantian" — isinya
+  // sudah masuk history sejak diterima (invariant: pesan yang diterima
+  // tidak pernah hilang dari konteks), dan tiap entri menyimpan posisi
+  // history-nya (historyIndex) supaya checkpoint bisa membedakan: pesan
+  // yang SUDAH termuat dalam payload request terkirim (covered) tidak
+  // memicu penggantian sia-sia; pesan yang tiba SETELAH kirim memicu
+  // pass pengganti. BUKAN request kedua — pass loop selalu sekuensial.
+  private _pendingMerge: { text: string; historyIndex: number }[] = [];
+
   // ── P15.5: Post-proactive context bridge ──
   // Mencatat perilaku proaktif terakhir yang benar-benar dieksekusi agar
   // percakapan user berikutnya (think()) memiliki konteks behavioral.
@@ -542,6 +553,56 @@ Contoh pendek:
     return gen === this._reqGen;
   }
 
+  // ── S2: mekanisme merge THINKING (PET) ───────────────────────────
+
+  /** Terima pesan user saat busy THINKING: masuk history SEGERA (urutan
+   *  arrival = urutan history) + buffer penanda. historyIndex = posisi
+   *  entri di history — pembanding watermark payload request terkirim. */
+  private _acceptMerge(userText: string): void {
+    const t = String(userText || "").trim();
+    if (!t) return;
+    this.history.push({ role: "user", content: t });
+    if (this.history.length > HISTORY_LIMIT * 2)
+      this.history.splice(0, this.history.length - HISTORY_LIMIT * 2);
+    this._pendingMerge.push({ text: t, historyIndex: this.history.length - 1 });
+    console.log("[merge] input user ditahan (pending: " + this._pendingMerge.length + ")");
+  }
+
+  /** Checkpoint respons SUKSES: hanya pesan yang tiba SETELAH payload
+   *  request ini dikirim (`sentThrough` = jumlah entri history saat kirim)
+   *  yang menuntut pass pengganti. Yang sudah tercakup payload cukup
+   *  dilepas dari penanda — respons ini sudah menjawabnya. */
+  private _consumeMergeForReplacement(sentThrough: number): boolean {
+    if (!this._pendingMerge.length) return false;
+    const uncovered = this._pendingMerge.filter((p) => p.historyIndex >= sentThrough);
+    this._pendingMerge = uncovered;
+    if (!uncovered.length) return false;
+    console.log("[merge] respons digugurkan — " + uncovered.length + " input tiba setelah kirim; pass pengganti jalan");
+    return true;
+  }
+
+  /** Jalur error: TIDAK ada respons sukses yang bisa dianggap mencakup —
+   *  semua penanda menuntut percobaan ulang (pass pengganti), termasuk
+   *  yang terlanjur tercakup payload gagal. Fallback tetap untuk pass
+   *  terakhir tanpa penanda. */
+  private _consumeAllForRetry(): boolean {
+    if (!this._pendingMerge.length) return false;
+    const n = this._pendingMerge.length;
+    this._pendingMerge = [];
+    console.log("[merge] request gagal — " + n + " input menunggu percobaan percakapan");
+    return true;
+  }
+
+  /** Serahkan ke loop user SETELAH pemegang busy saat ini selesai
+   *  (makrotask berikutnya). Bila sudah ada loop user jalan, buffer sudah
+   *  dikonsumsinya via history — tidak ada aksi. */
+  private _scheduleFoldedThink(): void {
+    setTimeout(() => {
+      if (this.busy) return;
+      void this.think("");
+    }, 0);
+  }
+
   // ── Phase 18: mekanisme ownership utterance ───────────────────────
 
   /** Ambil hak bicara. preempt=true (user input SELALU menang): rantai
@@ -696,21 +757,33 @@ Contoh pendek:
   }
 
   async think(userText: string): Promise<void> {
-    if (this.busy) return;
+    if (this.busy) {
+      // S2 PET MERGE (CASE 1 — THINKING): input user selama request aktif
+      // TIDAK lagi hilang diam-diam — ditahan di history + buffer; respons
+      // yang sedang berjalan digugurkan dan DIGANTI oleh satu request
+      // percakapan dengan history gabungan (model yang menafsir, bukan
+      // classifier). CASE 2 (SPEAKING) tidak melewati sini: busy sudah
+      // false saat rantai bicara → jalur normal klaim + preempt rantai
+      // (Phase 18, tidak berubah).
+      this._acceptMerge(userText);
+      return;
+    }
     if (!l2d()?.isReady?.()) {
       console.warn("[agent] model not ready");
       return;
     }
-    // FIX Bug-2 (race klaim-awal): busy + snapshot generasi diset SEBELUM
-    // await pertama. Sebelumnya, dua think() beruntun saat capProfile masih
-    // null sama-sama lolos `if (this.busy)` karena loadProfile yield lebih
-    // dulu, lalu KEDUANYA masuk lifecycle: _beginRequest() klaim kedua
-    // (defensif) men-null-kan timer/controller klaim pertama → request 1
-    // jalan tanpa timeout, dua request LLM paralel. Cek-busy + klaim kini
-    // satu satuan atomik JS (tanpa await di antaranya). Kebijakan pesan
-    // berikutnya saat request-busy TIDAK berubah: tetap silent-drop.
+    // FIX Bug-2 (race klaim-awal): busy + snapshot generasi + push history
+    // diset SEBELUM await pertama — cek-busy + klaim SATU satuan atomik JS.
+    // History-push di sini (bukan setelah loadProfile) juga menjamin urutan:
+    // pesan yang di-merge-accept (S2) selalu menempel SETELAH pesan aktif
+    // yang sedang diklaim — meski requestnya belum berangkat.
     this.busy = true;
     const genAtClaim = this._reqGen;
+    if (userText) {
+      this.history.push({ role: "user", content: userText });
+      if (this.history.length > HISTORY_LIMIT * 2)
+        this.history.splice(0, this.history.length - HISTORY_LIMIT * 2);
+    }
     try {
     // Loading the character sheet must never be able to abort the chat.
     if (!this.capProfile)
@@ -719,14 +792,12 @@ Contoh pendek:
       } catch (e) {
         console.warn("[agent] profile unavailable", e);
       }
-    this.history.push({ role: "user", content: userText });
-    if (this.history.length > HISTORY_LIMIT * 2)
-      this.history.splice(0, this.history.length - HISTORY_LIMIT * 2);
     // Model berganti SELAMA menunggu profil → profil yang baru dimuat bisa
     // milik model lama; buang SEBELUM request mulai. Pesan user tetap masuk
     // history (identik semantik abort in-flight Phase 16 — tanpa mekanisme baru).
     if (this._reqGen !== genAtClaim) {
       console.warn("[agent] think() dibatalkan (model switch saat loadProfile)");
+      this._pendingMerge = []; // R6: merge tidak melintasi ganti model (pesan sudah di history)
       return;
     }
     // Phase 18 S2: input pengguna SELALU menang atas playback aktif —
@@ -738,9 +809,18 @@ Contoh pendek:
     // Fase mikir: alih pandang ke atas-samping (intent "think"); balik
     // menghadap user otomatis saat mulai bicara (lockAI) atau lewat timer.
     l2d()?.setGazeIntent?.("think", { hold: 7000 });
+    // S2: loop pass penggantian — SETIAP pass adalah SATU request thinking
+    // aktif; pass k+1 hanya dimulai setelah pass k resolve/reject, jadi
+    // tidak pernah ada dua request paralel dan proteksi Phase 16
+    // (_beginRequest/_endRequest/_reqGen) tetap otoritatif. Buffer merge
+    // BUKAN request kedua — hanya pemicu pass berikutnya.
+    for (;;) {
     // Phase 16: request terikat timeout + abort + generasi model.
     const req = this._beginRequest();
     try {
+      // S2 watermark: payload request ini memuat history SAMPAI sini —
+      // pesan yang masuk setelah titik ini menuntut pass pengganti.
+      const sentThrough = this.history.length;
       const resp = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -760,8 +840,13 @@ Contoh pendek:
       // basi di state yang mungkin sudah milik model baru.
       if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
         console.warn("[agent] think() result dibatalkan (stale) — tidak dimainkan");
+        this._pendingMerge = []; // R6: siklus basi tidak mewarisi merge
         return;
       }
+      // S2 CP-1: ada input user SELAMA request ini berlangsung dan TIDAK
+      // tercakup payload terkirim → respons ini BUKAN jawaban final;
+      // history sudah memuat semuanya → pass penggantian.
+      if (this._consumeMergeForReplacement(sentThrough)) continue;
       const reply = (data.reply || "").trim();
       if (reply) {
         const clean = stripDirectives(reply);
@@ -773,14 +858,23 @@ Contoh pendek:
         // selama itu request di-abort, segmen hasil model lama tidak jalan.
         if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
           console.warn("[agent] think() segments basi setelah director — tidak dimainkan");
+          this._pendingMerge = [];
           return;
         }
+        // S2 CP-2: director pass adalah SATU-SATUNYA window "sudah resolve
+        // tapi belum bersuara" (R4) — ia masih THINKING (busy), jadi input
+        // di sini ikut MERGE, bukan preempt. Setelah CP-2 kosong, sisa
+        // jalur menuju playSegments bersifat sinkron: window "resolved
+        // before playback" di luar director tidak tercapai (didokumentasikan).
+        if (this._consumeMergeForReplacement(sentThrough)) continue;
         console.log("[agent] speaking reply with", segments.length, "animation segments");
         this.playSegments(segments, true);
+        break;
       } else {
         const msg = "Hmm, aku bingung jawabnya...";
         l2d()?.speak?.(msg, undefined, { producer: "brain/fallback" });
         addChat("agent", msg);
+        break;
       }
     } catch (err: any) {
       // Phase 16: abort/timeout masuk ke sini juga. Pembatalan SAAT GANTI
@@ -790,29 +884,33 @@ Contoh pendek:
       // ada: satu pesan "gak bisa mikir", tidak lewat parsing directive.
       if (req.ctrl.signal.aborted && !this._reqFresh(req.gen)) {
         console.warn("[agent] think() dibatalkan (model switch) — tanpa fallback");
+        this._pendingMerge = []; // R6
         return;
       }
+      // S2 R5: request GAGAL → semua penanda menunggu percobaan percakapan
+      // (pass pengganti); fallback tetap TEPAT SATU di pass terakhir tanpa
+      // penanda.
+      if (this._consumeAllForRetry()) continue;
       console.error("[agent]", err);
       const msg =
         "Maaf, aku lagi gak bisa mikir sekarang. Cek koneksi atau api key ya.";
       l2d()?.speak?.(msg, undefined, { producer: "brain/fallback" });
       addChat("agent", msg);
+      break;
     } finally {
-      // Phase 16: _endRequest() menjamin timer + controller dibersihkan di
-      // SEMUA jalur terminal (sukses, HTTP error, network error, abort,
-      // timeout, exception tak terduga) — busy/setThinking ikut selalu lepas.
+      // Phase 16 per-pass: timer/controller pass ini tidak boleh bocor ke
+      // pass penggantian berikutnya (idempoten bila finally luar memanggil
+      // ulang).
       this._endRequest();
-      setThinking(false);
-      this.busy = false;
+    }
     }
     } finally {
-      // FIX Bug-2: safety-net untuk jendela claim→_beginRequest. Bila ada
-      // yang melempar SEBELUM request mulai (atau early-return model-switch
-      // di atas), busy TETAP lepas — klaim tidak boleh jadi kunci abadi.
-      // Semua panggilan di bawah idempoten terhadap cleanup inner finally.
-      this._endRequest();
+      // Outer safety-net (FIX Bug-2): busy/setThinking lepas di SEMUA jalur
+      // terminal — termasuk early-return sebelum request pertama mulai.
+      // _endRequest() di sini idempoten terhadap cleanup per-pass.
       setThinking(false);
       this.busy = false;
+      this._endRequest();
     }
   }
 
@@ -839,6 +937,7 @@ Contoh pendek:
       } catch {}
     if (this._reqGen !== genAtClaim) {
       console.warn("[agent] reactEvent dibatalkan (model switch saat loadProfile)");
+      this._pendingMerge = []; // R6
       return;
     }
     setThinking(true);
@@ -857,6 +956,8 @@ Contoh pendek:
       const messages = this.history
         .slice(-6)
         .concat([{ role: "user", content: synthetic }]);
+      // S2 watermark proaktif (lihat think()).
+      const sentThrough = this.history.length;
       const resp = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -872,6 +973,16 @@ Contoh pendek:
       // — tidak ada playSegments, tidak ada record P15.2/P15.5 palsu.
       if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
         console.warn("[agent] reactEvent result dibatalkan (stale) — tidak dimainkan");
+        this._pendingMerge = []; // R6: siklus basi tidak mewarisi merge
+        return;
+      }
+      // S2 PET: input user tiba selama proaktif berpikir (sudah tertahan di
+      // history + buffer). User input > proaktif — balasan proaktif ini
+      // TIDAK diucapkan; loop user mengambil alih lewat request baru.
+      // Watermark tetap dipakai: payload yang sudah mencakup semua pending
+      // tidak menggugurkan proaktif dua kali berturut-turut.
+      if (this._consumeMergeForReplacement(sentThrough)) {
+        this._scheduleFoldedThink();
         return;
       }
       const reply = (data.reply || "").trim();
@@ -882,6 +993,13 @@ Contoh pendek:
           segments = await this.animateTextViaDirector(clean, this.capProfile, req.ctrl.signal);
         if (!this._reqFresh(req.gen) || req.ctrl.signal.aborted) {
           console.warn("[agent] reactEvent segments basi setelah director — tidak dimainkan");
+          this._pendingMerge = [];
+          return;
+        }
+        // S2 CP-2 (identik think()): director masih THINKING → input baru
+        // ikut merge, proaktif mengalah.
+        if (this._consumeMergeForReplacement(sentThrough)) {
+          this._scheduleFoldedThink();
           return;
         }
         // Phase 18 S7: proaktif TIDAK pernah memotong utterance aktif.
@@ -909,8 +1027,12 @@ Contoh pendek:
       const e: any = err;
       if (req.ctrl.signal.aborted && !this._reqFresh(req.gen)) {
         console.warn("[agent] reactEvent dibatalkan (model switch)");
+        this._pendingMerge = []; // R6
         return;
       }
+      // S2: kegagalan proaktif tetap DIAM (semantik lama), tapi input
+      // user yang tertahan tidak boleh yatim — beri percobaan percakapan.
+      if (this._consumeAllForRetry()) this._scheduleFoldedThink();
       console.error("[agent] reactEvent", type, e);
     } finally {
       // Phase 16: bersihkan timer/controller DULU, lalu state lain. Hint
@@ -1367,6 +1489,8 @@ Contoh pendek:
       // Phase 18: expose ownership utterance untuk QA/debug
       utteranceActive: this._chainOwner !== null,
       utteranceChain: this._chainOwner,
+      // S2: expose buffer merge (hanya jumlah — isi = pesan user)
+      pendingMergeCount: this._pendingMerge.length,
     };
   }
   _pickSupportedEmotion(p: string[]) {

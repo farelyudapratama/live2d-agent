@@ -1,5 +1,81 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (61) — BEHAVIOR CONTRACT S6: GATE PROAKTIF (MODE × OTAK × WORKER) — VERIFIED
+
+S6 (gating proaktif, tersisa dari penutup S4-D) diimplementasi dan diverifikasi.
+HANYA gerbang ENABLE/DISABLE pada PRODUSEN — arbitrase ucap S4-D (0/-1/-2),
+kanal (`channel.ts` BEKU), eksekusi/antrean worker (S4-A/C), semantik VTuber
+(S3), MotionRuntime/ParameterArbiter TIDAK berubah satu barispun. Gate =
+baris PERTAMA; arbitrase kanal tetap baris TERAKHIR (kasus race tidak diubah).
+
+### Gerbang (satu predikat murni `proactiveAllowed` di brain.ts)
+
+Dieksekusi SEBELUM efek apa pun — refusal = TERJAMIN nol di semua dimensi:
+nol `/api/chat`, nol `/api/animate-text`, nol thinking/gaze/ekspresi, nol
+klaim kanal, nol bubble. Urutan baru di `reactEvent`: gate PALING AWAL
+(bahkan sebelum cek busy) → aturan lama (busy/idleSpeak/quiet/ready) utuh.
+Allowlist tipe = kunci `EVENT_PROMPTS`: event tak dikenal → REFUSE (tutup
+jalur "[EVENT: random]" dengan prompt kosong).
+
+Peta TERKUNCI: chat+ON+idle → ALLOW; `brainOn:false` (switch Mode Otak) →
+REFUSE; mode `vtuber` ATAU `vtuberStream` → REFUSE; worker `running`/`paused`
+→ REFUSE. Queued-parked TANPA pemegang slot = "idle" → TIDAK menyetel (parkir
+bukan aktivitas; S4-A). Mood/return/away ikut gerbang yang sama: gate
+`setCameraMood` menutup EKSPRESI+LLM (state mood tetap tersimpan — itu konteks
+prompt, bukan reaksi); pamit dievaluasi SAAT JEDA SELESAI (keputusan sedekat
+mungkin ke ucap — worker kelar tepat sebelum waktunya → pamit boleh lahir).
+
+### Context = PUSH murni, nol polling baru, brain tidak membaca window
+
+`setProactiveContext(patch)` tervalidasi (merge parsial; tipe/enum salah
+diabaikan); default = chat/ON/idle → perilaku P15 lama persis saat ctx absen
+(unit/harness tanpa ctx selalu ALLOW). Produsen: app.js `publishBrainGate`
+(#toggle-brain change+init), mode-runtime.js TIGA bridge nol-kebijakan
+(switchMode→mode; vtuber onStart/onStop/destroy→stream flag — flag ikut
+bersih saat teardown), projek.ts mem-peta `activeTask.state`/busy dari poll
+`/status` 4 dtk yang SUDAH ADA → worker idle/running/paused.
+
+### Perbaikan G4 — anchor masa tenang otoritatif
+
+Sebelumnya `agentStart` hanya lahir saat construction; apply profil Kelakuan
+menggeser countdown UI saja (UI dan gerbang menyimpang — G4). Kini
+`resetQuietPeriod()` MEMINDAHKAN gerbang nyata dan mengembalikan anchor yang
+sama untuk `__agentStartApprox` (SATU sumber kebenaran untuk gate + UI).
+`_reactiveState()` mengexpos `proactiveCtx` + `quietAnchor` untuk QA/debug.
+
+### Diteruskan (bukan bug terselubung — SENGAJA, di luar kontrak terkunci)
+
+- G6 backoff ucap-agent: TIDAK diubah — satu-satunya ucap non-user di mode
+  chat kini ter-gate mode/worker; aturan "jangan reset idle seolah user
+  aktif" jadi larangan yang dipatuhi dengan tidak melakukan apa-apa.
+- G8 worker-speech tanpa panel: tetap defer (putusan kontrak).
+- S5 polish leftovers (worker DROP vs defer; app/direct prioritas): tetap
+  parkir — "S5" resmi TIDAK PERNAH terdefinisi (slot kosong; hanya label
+  parkir "kandidat polish kecil S5+" di entri 60).
+
+### Test & gates
+
+Unit baru `test/proactive-gating.test.ts` 16 test: kelompok A matriks
+acceptance penuh dengan PENGHITUT nol-efek (chat/dir/speak/claims/lock/unlock/
+gaze/emotion/bubble) — termasuk A9 "gate tidak mengubah aturan lama"
+(idleSpeak-off tetap tolak; mood tanpa flag tetap jalan); B gate di sumber
+event (mood refused = state tersimpan nol reaksi; pamit fire-time + kontrol
+positif); C anchor quiet + validasi ctx; D kanal ASLI — worker(-1) memegang
+→ proaktif lolos gate, tetep REFUSED di klaim -2, kanal tak berpindah,
+pairing lock 1:1 (baris terakhir S4-D utuh). Jebakan sesi: drain rantai ucap
+WAJIB >180 ms (chain timer) di dalam test — kalau tidak, unlock rantai lama
+mendarat di env test berikutnya (window global dipulihkan tapi closure brain
+hidup terus). Regresi: S1/S2/S3/S4 semua suite + agent-panel + i18n HIJAU
+TANPA modifikasi.
+
+Gates: unit **1492 pass** (1476+16) / 0 fail · guards **411/411** · tsc
+bersih · build bersih · smoke-engine-utterance **58/58** (S7c bukti kanal-terisi
+tak berubah) · smoke-vtuber-browser pass (bridge mode-runtime baru tervalidasi
+on lifecycle nyata).
+
+Commit kode: `21d0a11` feat(agent): S6 gate proaktif terkunci — mode/otak/
+worker memutus SEBELUM efek; entry ini + hitung AGENTS.md = docs.
+
 ## UPDATE 2026-09-16 (60) — BEHAVIOR CONTRACT S4-D: SHARED SPEECH POLICY — VERIFIED
 
 S4-D (kebijakan audio TERKUNCI D1–D7) diimplementasi dan diverifikasi.

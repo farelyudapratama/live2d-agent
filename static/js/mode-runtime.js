@@ -78,6 +78,12 @@
     try { await post("/api/mode", { mode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
     active = mode;
     setPanel(mode);
+    // S6 (bridge MURNI — nol kebijakan): beri tahu brain mode aktif supaya
+    // gerbang proaktif menyetel dirinya; kebijakannya hidup di brain.ts.
+    try {
+      if (window.__agent && window.__agent.setProactiveContext)
+        window.__agent.setProactiveContext({ mode });
+    } catch (e) {}
     // 3) nyalakan runtime client baru
     if (mode === "vtuber") destroyFn = startVtuberClient();
     else if (mode === "assistant") destroyFn = startAssistantClient();
@@ -422,6 +428,9 @@
         reflectRunning(true);
         cursor = 0;
         feed.textContent = "";
+        // S6 bridge: stream NYATA menyala → proaktif companion wajib sunyi
+        // (sabuk pengaman selain gate mode — flag ikut dibaca brain).
+        publishStreamFlag(true);
       } catch (e) {
         setStatus("gagal: " + e.message, "var(--coral)");
         reflectRunning(false);
@@ -432,6 +441,7 @@
       gen++;                       // S3-A: bungkam kontinuaasi donasi/audience in-flight
       donoQueue.length = 0;        // S3-A: antrean tidak boleh selamat lintas stop
       opQueue.length = 0;          // S3-B: antrean operator ikut mati — stop bersih
+      publishStreamFlag(false);    // S6: stream berhenti → companion boleh aktif lagi
       vtStopBtn.disabled = true;
       try { await post("/api/vtuber/stop"); } catch (e) {}
       setStatus(__t("vt.inactive"));
@@ -469,12 +479,20 @@
     if (opSendEl) opSendEl.addEventListener("click", onOperatorSend);
     if (opInputEl) opInputEl.addEventListener("keydown", onOperatorKey);
     pollTimer = setInterval(poll, 2500);
+    // S6 bridge helper — flag stream hidup/mati untuk gate proaktif brain.
+    function publishStreamFlag(on) {
+      try {
+        if (window.__agent && window.__agent.setProactiveContext)
+          window.__agent.setProactiveContext({ vtuberStream: !!on });
+      } catch (e) {}
+    }
 
     return function destroy() {
       stopped = true;
-      gen++;                  // S3-A: async mount lama dibungkam selamanya
+      gen++;                  // S3-A: bungkam kontinuaasi donasi/audience in-flight
       donoQueue.length = 0;   // S3-A: queue tidak survive teardown
       opQueue.length = 0;     // S3-B: queue operator juga tidak
+      publishStreamFlag(false); // S6: pindah mode = stop di server → flag ikut bersih
       $("#vt-start").removeEventListener("click", onStart);
       $("#vt-stop").removeEventListener("click", onStop);
       $("#vt-provider").removeEventListener("change", onProviderChange);

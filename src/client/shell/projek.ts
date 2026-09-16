@@ -231,6 +231,7 @@ export function startProjekRail(): () => void {
       busy?: boolean;
       pendingApprovals?: unknown[];
       lastEvent?: { type?: string; label?: string } | null;
+      activeTask?: { taskId?: string; text?: string; state?: string } | null;
     };
     try {
       st = await requestJSON(API + "/api/assistant/status");
@@ -238,6 +239,25 @@ export function startProjekRail(): () => void {
     const pending = Array.isArray(st.pendingApprovals) ? st.pendingApprovals.length : 0;
     const state = !st.running ? "off" : pending > 0 ? "approval" : st.busy ? "busy" : "idle";
     asBtn.dataset.agent = state;
+
+    // S6: gerbang proaktif companion membaca status pemegang slot worker
+    // (S4-A: RUNNING/PAUSED) — dipublish dari poll yang SUDAH ADA ini.
+    // Push murni; tanpa polling baru; eksekusi/antrean worker tidak
+    // tersentuh sama sekali. Parked-only (slot kosong) = "idle": parkir
+    // bukan aktivitas (parked tidak memunculkan suara, klaim -1 hanya
+    // terjadi saat baris diucapkan).
+    try {
+      const a = (window as any).__agent;
+      if (a && typeof a.setProactiveContext === "function") {
+        const taskState = st.activeTask && st.activeTask.state;
+        const worker =
+          taskState === "paused" ? "paused"
+          : taskState === "running" || st.busy ? "running"
+          : "idle";
+        a.setProactiveContext({ worker });
+      }
+    } catch { /* brain bukan di halaman ini — senyap */ }
+
     const stateLabel = state === "approval" ? t("as.status.approval")
       : state === "busy" ? t("as.status.busy")
       : state === "idle" ? t("as.status.idle")

@@ -2479,6 +2479,20 @@
     else stopAgentIdle();
   };
 
+  // S6: switch "Mode Otak" kini ikut menggating perilaku PROAKTIF — brain
+  // OFF = karakter sunyi (idle/pamit/sambut/mood tidak lagi bicara sendiri).
+  // app.js hanya MEMUBLISH keadaan; kebijakannya hidup di brain (gate S6).
+  function publishBrainGate() {
+    const on = !$("#toggle-brain") || $("#toggle-brain").checked;
+    try {
+      if (window.__agent && window.__agent.setProactiveContext)
+        window.__agent.setProactiveContext({ brainOn: on });
+    } catch (e) {}
+  }
+  const brainGateEl = $("#toggle-brain");
+  if (brainGateEl) brainGateEl.addEventListener("change", publishBrainGate);
+  publishBrainGate();
+
   // Deteksi bahasa teks (heuristic script, tanpa jaringan) — dipakai jalur
   // TTS ketika "Bahasa suara" = auto (ikuti bahasa teks). Latin murni tanpa
   // tanda khas → cek kata layak Indonesia dulu; selain itu beri en-US agar
@@ -4664,7 +4678,19 @@
           /* no-op, kept for clarity */
         }
 
-        window.__agentStartApprox = Date.now();
+        // S6: anchor masa tenang kini otoritatif di brain — resetQuietPeriod()
+        // MEMINDAHKAN gerbang inQuietPeriod() sekaligus mengembalikan anchor
+        // yang sama untuk countdown UI. Sebelumnya hanya __agentStartApprox
+        // yang bergeser (UI berbohong: gerbang tetap menghitung dari load).
+        try {
+          if (window.__agent && window.__agent.resetQuietPeriod) {
+            window.__agentStartApprox = window.__agent.resetQuietPeriod();
+          } else {
+            window.__agentStartApprox = Date.now();
+          }
+        } catch (e) {
+          window.__agentStartApprox = Date.now();
+        }
       }
 
       function setSaveStatus(msg, kind) {

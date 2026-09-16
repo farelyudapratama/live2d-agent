@@ -90,6 +90,16 @@ const DEFAULT_GESTURES = [
   "wave_hi",
 ];
 
+/** State eksternal yang dibaca gerbang proaktif S6 (lihat _proactiveCtx).
+ *  `worker`: proyeksi status task harness dari /api/assistant/status —
+ *  "running"/"paused" memegangi slot (S4-A), "idle" = tidak ada pemegang. */
+export interface ProactiveContext {
+  brainOn: boolean;
+  mode: string;
+  vtuberStream: boolean;
+  worker: "idle" | "running" | "paused";
+}
+
 function l2d(): any {
   return (window as any).__live2dAgent;
 }
@@ -162,6 +172,24 @@ export class AgentBrain {
   // Timeout "pamit" yang tertunda: user pergi → dijadwalkan bicara setelah
   // jeda acak; dibatalkan kalau dia balik duluan (lihat setPresence).
   private awaySpeakTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // ── S6: Gating proaktif (mode × switch otak × status worker) ──────
+  // Kebijakan gate HANYA memutuskan rantai proaktif BOLEH LAHIR ATAU
+  // TIDAK, dan dievaluasi SEBELUM satu pun efek samping: nol fetch LLM,
+  // nol director, nol thinking/gaze/emotion, nol klaim kanal, nol bubble.
+  // Arbitrase ucap S4-D (prioritas 0/-1/-2) TIDAK digantikan — ia tetap
+  // baris pertahanan terakhir; gate tidak pernah mem-preempt dan tidak
+  // menyentuh kanal (channel.ts beku). Produsen ctx (murni PUSH — brain
+  // tidak polling): app.js = switch "Mode Otak"; mode-runtime.js (bridge)
+  // = mode aktif + stream vtuber; projek.ts = status worker dari poll
+  // /status yang sudah ada. Default = chat / brain ON / worker idle →
+  // perilaku P15 lama persis (test tanpa ctx selalu ALLOW).
+  private _proactiveCtx: ProactiveContext = {
+    brainOn: true,
+    mode: "chat",
+    vtuberStream: false,
+    worker: "idle",
+  };
 
   // ── P15.2: Proactive behavior diversity ──
   // Jaga agar reactEvent tidak memilih behavior/emosi yang sama berulang kali.
@@ -934,7 +962,53 @@ Contoh pendek:
     }
   }
 
+  // ── S6: gerbang proaktif ───────────────────────────────────────────
+
+  /** Publish potongan ctx; hanya field dikenal+tervalidasi yang digabung.
+   *  Produsen
+   *  (app.js/mode-runtime/projek.ts) tidak pernah membaca balik state ini —
+   *  write-only lewat facade. */
+  setProactiveContext(patch: Partial<ProactiveContext> | null | undefined): void {
+    if (!patch || typeof patch !== "object") return;
+    const c = this._proactiveCtx;
+    if (typeof patch.brainOn === "boolean") c.brainOn = patch.brainOn;
+    if (typeof patch.mode === "string" && patch.mode) c.mode = patch.mode;
+    if (typeof patch.vtuberStream === "boolean") c.vtuberStream = patch.vtuberStream;
+    if (
+      patch.worker === "idle" ||
+      patch.worker === "running" ||
+      patch.worker === "paused"
+    )
+      c.worker = patch.worker;
+  }
+
+  /** Gerbang SATU-satunya untuk SEMUA event proaktif (idle/pamit/sambut/mood).
+   *  FALSE = tolak total SEBELUM efek apa pun. Allowlist tipe = kunci
+   *  EVENT_PROMPTS — event asing ditolak sebelum apa pun (tidak ada lagi
+   *  LLM call dengan prompt kosong untuk "[EVENT: ketik-random]").
+   *  Peta kebijakan TERKUNCI S6:
+   *   - mode chat + brain ON + worker idle        → ALLOW (aturan lama utuh)
+   *   - brain OFF (switch Mode Otak)              → REFUSE
+   *   - mode vtuber / stream vtuber aktif         → REFUSE (jalur ucap siaran)
+   *   - worker RUNNING / PAUSED (slot terisi)     → REFUSE
+   *  Queued-parked TANPA pemegang slot = "idle" → TIDAK menyetel (kontrak
+   *  S4-A: parkir bukan aktivitas; worker speech tetap terarbitrase -1). */
+  private proactiveAllowed(type: string): boolean {
+    if (!Object.prototype.hasOwnProperty.call(EVENT_PROMPTS, type)) return false;
+    const c = this._proactiveCtx;
+    if (!c.brainOn) return false;
+    if (c.vtuberStream || c.mode === "vtuber") return false;
+    if (c.worker === "running" || c.worker === "paused") return false;
+    return true;
+  }
+
   async reactEvent(type: string): Promise<void> {
+    // S6: gate PALING AWAL — bahkan sebelum check busy — supaya refusal
+    // dijamin nol efek samping (tidak ada jalur lain yang tersentuh).
+    if (!this.proactiveAllowed(type)) {
+      console.log("[agent] S6 gate — proaktif ditolak:", type);
+      return;
+    }
     if (this.busy) return;
     if (type === "idle" && !this.getEvents().idleSpeak) return;
     if (this.inQuietPeriod()) {
@@ -1310,6 +1384,13 @@ Contoh pendek:
       this.awaySpeakTimer = setTimeout(() => {
         this.awaySpeakTimer = null;
         if (this.presenceState !== false) return; // sudah balik duluan
+        // S6: gate dievaluasi SAAT JEDA SELESAI (bukan saat penjadwalan) —
+        // keputusan diambil sedekat mungkin ke ucap; pamit tetap boleh kalau
+        // worker baru kelar tepat sebelum waktunya. Refusal = nol efek.
+        if (!this.proactiveAllowed("user_left")) {
+          console.log("[agent] S6 gate — pamit dibatalkan saat jeda selesai");
+          return;
+        }
         this.expressEventEmotion("user_left");
         this.reactEvent("user_left");
       }, delay);
@@ -1329,6 +1410,7 @@ Contoh pendek:
       const ev = this.getEvents();
       if (!ev.returnSpeak) return;
       if (this.inQuietPeriod()) return;
+      if (!this.proactiveAllowed("user_returned")) return; // S6 — sebelum emotion
       this.expressEventEmotion("user_returned");
       this.reactEvent("user_returned");
     }
@@ -1406,6 +1488,12 @@ Contoh pendek:
       return;
     }
     this.setUserMood(m, "camera");
+    // S6: state mood TETAP tersimpan (itu konteks prompt, bukan efek reaksi)
+    // — yang digating adalah REAKSINYA: ekspresi + LLM. Refusal = nol efek.
+    if (!this.proactiveAllowed("mood:" + m)) {
+      console.log("[agent] S6 gate — reaksi mood dibatalkan:", m);
+      return;
+    }
     this.expressEventEmotion("mood:" + m);
     this.reactEvent("mood:" + m);
   }
@@ -1492,6 +1580,17 @@ Contoh pendek:
     return Date.now() < this.agentStart + this.quietMs();
   }
 
+  /** S6 — anchor masa tenang kini PUNYA reset otoritatif. Sebelumnya anchor
+   *  tunggal = construction brain (page load), sehingga apply profil Kelakuan
+   *  hanya me-reset countdown UI (`__agentStartApprox`) sementara gerbang
+   *  nyata tetap menghitung dari load — UI dan gate menyimpang. Return anchor
+   *  baru supaya pemanggil (app.js) memakai SUMBER KEBENARANAN YANG SAMA
+   *  untuk countdown-nya. */
+  resetQuietPeriod(): number {
+    this.agentStart = Date.now();
+    return this.agentStart;
+  }
+
   _reactiveState() {
     return {
       userMood: this.userMood,
@@ -1511,6 +1610,9 @@ Contoh pendek:
       utteranceChain: this._chainOwner,
       // S2: expose buffer merge (hanya jumlah — isi = pesan user)
       pendingMergeCount: this._pendingMerge.length,
+      // S6: expose ctx gerbang proaktif untuk QA/debug (snapshot, bukan acuan)
+      proactiveCtx: { ...this._proactiveCtx },
+      quietAnchor: this.agentStart,
     };
   }
   _pickSupportedEmotion(p: string[]) {
@@ -1643,6 +1745,11 @@ if (typeof window !== "undefined") {
     setUserMood: (m: string, src?: string) => brain.setUserMood(m, src),
     setCameraMood: (m: string) => brain.setCameraMood(m),
     setPresence: (p: boolean | null) => brain.setPresence(p),
+    // S6: producer ctx gerbang proaktif (app.js / mode-runtime / projek.ts).
+    setProactiveContext: (patch: Partial<ProactiveContext> | null | undefined) =>
+      brain.setProactiveContext(patch),
+    // S6: reset anchor masa tenang otoritatif — return anchor baru (ms).
+    resetQuietPeriod: () => brain.resetQuietPeriod(),
     // Array HIDUP — app.js mengonsumsi referensi yang sama, bukan snapshot kosong.
     history: brain.history,
     guessEmotion,

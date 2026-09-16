@@ -142,6 +142,9 @@ export function createProductionHandle(
   let destroyed = false;
   let binding: GLHostBinding | null = null;
   const beforeModelUpdateCbs = new Set<() => void>();
+  // STEP2 BREATH PARITY — gate breath pasca-seam (default ON, paritas
+  // pendaftaran scheduler era sebelumnya yang selalu menambah breath).
+  let breathActive = true;
 
   // ── State transform (R7 yang menyempurnakan parity; R2 = fit golden PPU) ──
   let scale = 1;
@@ -361,6 +364,19 @@ export function createProductionHandle(
     setEffectEnabled(effect, enabled) {
       if (!guardLive()) return false;
       if (!VALID_EFFECTS.includes(effect)) return false;
+      // STEP2 BREATH PARITY — breath kini slot PASCA-SEAM milik handle
+      // (bukan anggota scheduler): dieksekusi SETELAH commit arbiter,
+      // SEBELUM coreModel.update. Alasan: commit engine absolut menimpa
+      // output breath yang ditambah scheduler pra-seam (baseline 3ff89bc
+      // mengomposisinya sebaliknya — tulisan absolut engine berada di buffer
+      // dasar dan breath ditambah di atasnya tepat sebelum core.update).
+      // Gate = flag pada closure handle; updater tetap tersimpan di
+      // data.updaters agar destroy/restore semantik R1 tetap.
+      if (effect === "breath") {
+        if (!data.updaters.breath) return false;
+        breathActive = enabled;
+        return true;
+      }
       const updater = data.updaters[effect];
       if (!updater) return false; // efek tak tersedia di model ini
       const inList = data.scheduler.hasUpdatable(updater);
@@ -438,7 +454,8 @@ export function createProductionHandle(
       const m = model();
       const st = data.stats;
       st.frames++;
-      // Pola golden / resmi: load → motion → save → efek → overrides → seam → update
+      // Pola golden / resmi: load → motion → save → efek → overrides → seam →
+      // breath (pasca-seam) → update
       m.loadParameters();
       const updated = data.user._motionManager.updateMotion(m, dt);
       st.motionUpdates++;
@@ -452,6 +469,16 @@ export function createProductionHandle(
       for (const cb of beforeModelUpdateCbs) {
         cb();
         st.seamCalls++;
+      }
+      // STEP2 BREATH PARITY — breath ADDITIF dieksekusi SETELAH commit
+      // absolut engine, SEBELUM coreModel.update. Bukan writer kedua untuk
+      // intent engine dan bukan bypass arbiter: arbiter tetap penulis
+      // absolut engine terakhir; breath adalah efek framework yang — seperti
+      // baseline 3ff89bc — mengomposisi nilai akhir = nilai engine + sway
+      // breath pada ParamAngleX/Y/Z, ParamBodyAngleX, ParamBreath. Satu
+      // pemanggilan per frame, tergerbang flag setEffectEnabled("breath").
+      if (breathActive && data.updaters.breath) {
+        data.updaters.breath.onLateUpdate(m, dt);
       }
       m.update();
       st.coreUpdates++;

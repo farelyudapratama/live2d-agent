@@ -194,6 +194,10 @@ describeIf(HAS_REN)("R5 Motion ownership vs Arbiter (gate isFinished)", () => {
   test("TANPA gate: arbiter menimpa kurva motion di seam (bukti mengapa gate perlu)", async () => {
     await bootPipeline();
     const h = await loadHandle(REN_MANIFEST);
+    // STEP2 — breath kini komposit pasca-seam (paritas baseline): test ini
+    // memverifikasi OWNERSHIP seam, bukan komposit breath → breath off agar
+    // toleransi ±1 murni mengukur tulisan arbiter.
+    h.setEffectEnabled("breath", false);
     const model = h.data.user.getModel()!;
     const roleIds = mapRoles(new Set(h.getParameters().map((p) => p.id)), {
       eyeBlinkIds: h.getProfile().eyeBlinkParameters,
@@ -226,6 +230,8 @@ describeIf(HAS_REN)("R5 Motion ownership vs Arbiter (gate isFinished)", () => {
   test("DENGAN gate isFinished: motion owns selama main; setelah selesai intent kembali", async () => {
     await bootPipeline();
     const h = await loadHandle(REN_MANIFEST);
+    // STEP2 — breath pasca-seam (paritas baseline): ownership test → breath off
+    h.setEffectEnabled("breath", false);
     const model = h.data.user.getModel()!;
     const roleIds = mapRoles(new Set(h.getParameters().map((p) => p.id)), {
       eyeBlinkIds: h.getProfile().eyeBlinkParameters,

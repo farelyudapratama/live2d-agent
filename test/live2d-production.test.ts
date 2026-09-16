@@ -236,10 +236,13 @@ describeIf(HAS_REN)("R2-A model load nyata — ren (moc v6)", () => {
     for (const e of ["breath", "physics", "eyeBlink"] as const) {
       handle.setEffectEnabled(e, true);
     }
+    // STEP2 — breath bukan anggota scheduler lagi (slot pasca-seam milik
+    // handle): gate-nya flag, keanggotaan scheduler tidak berubah oleh
+    // toggle breath.
     const before = handle.data.scheduler.getUpdatableCount();
     // breath selalu tersedia (parameter default resmi)
     expect(handle.setEffectEnabled("breath", false)).toBe(true);
-    expect(handle.data.scheduler.getUpdatableCount()).toBe(before - 1);
+    expect(handle.data.scheduler.getUpdatableCount()).toBe(before);
     expect(handle.setEffectEnabled("breath", true)).toBe(true);
     expect(handle.data.scheduler.getUpdatableCount()).toBe(before);
     // efek union-valid tetapi tidak tersedia di model → false (bukan throw)
@@ -251,9 +254,47 @@ describeIf(HAS_REN)("R2-A model load nyata — ren (moc v6)", () => {
     }
     // angka luar union → false (runtime guard)
     expect(handle.setEffectEnabled("halo" as never, true)).toBe(false);
-    // pasca gate on/off, updater sama yang kembali (referensi dipertahankan)
+    // updater breath tetap tersimpan, dan PASCA-SEAM: bukan anggota scheduler
     const uBreath = handle.data.updaters.breath!;
-    expect(handle.data.scheduler.hasUpdatable(uBreath)).toBe(true);
+    expect(uBreath).toBeTruthy();
+    expect(handle.data.scheduler.hasUpdatable(uBreath)).toBe(false);
+  });
+
+  test("STEP2 breath pasca-seam: gate off → nilai stabil, gate on → sway breath hadir di atas commit", () => {
+    // Satu penulis efek per fase: matikan blink & physics, tanpa motion —
+    // breath satu-satunya sumber variasi. ParamAngleX: peak 15 × weight 0.5
+    // → puncak-ke-puncak ≈15° (siklus 6.53 dtk); ParamBreath: 0.5±0.5 →
+    // range ≈1.0 (siklus 3.23 dtk). Id kanonik Cubism — model sample selalu
+    // memilikinya (ren terverifikasi lewat cdi3).
+    // Bersihkan pin override sisa R2-B (parameters[0] ter-pin di info.max —
+    // clamp-nya memotong setengah gelombang breath; test ini butuh buffer
+    // bebas pin agar range breath terukur penuh).
+    handle.data.paramApi.clearOverride();
+    handle.stopAllMotions();
+    handle.setEffectEnabled("physics", false);
+    handle.setEffectEnabled("eyeBlink", false);
+    const sample = (): { breathRange: number; axRange: number } => {
+      let bMin = Infinity, bMax = -Infinity, axMin = Infinity, axMax = -Infinity;
+      for (let i = 0; i < 480; i++) {
+        handle.update(1 / 60);
+        const b = handle.readParam("ParamBreath");
+        const ax = handle.readParam("ParamAngleX");
+        bMin = Math.min(bMin, b); bMax = Math.max(bMax, b);
+        axMin = Math.min(axMin, ax); axMax = Math.max(axMax, ax);
+      }
+      return { breathRange: bMax - bMin, axRange: axMax - axMin };
+    };
+    handle.setEffectEnabled("breath", false);
+    const off = sample();
+    handle.setEffectEnabled("breath", true);
+    const on = sample();
+    expect(off.breathRange).toBe(0);
+    expect(off.axRange).toBe(0);
+    expect(on.breathRange).toBeGreaterThan(0.5);
+    expect(on.axRange).toBeGreaterThan(10);
+    // pulihkan state untuk test berikutnya
+    handle.setEffectEnabled("eyeBlink", true);
+    handle.setEffectEnabled("physics", true);
   });
 
   test("blink single-owner: framework EyeBlink satu-satunya penulis kedip di handle", () => {

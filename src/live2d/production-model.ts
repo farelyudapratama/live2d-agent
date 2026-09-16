@@ -333,7 +333,11 @@ export async function loadProductionModel(
     new fw.BreathParameterData(idOf("ParamBreath"), 0.5, 0.5, 3.2345, 1.0),
   ]);
   updaters.breath = new fw.CubismBreathUpdater(breath);
-  scheduler.addUpdatableList(updaters.breath);
+  // STEP2 BREATH PARITY — breath TIDAK didaftarkan ke scheduler. Handle
+  // memilikinya sebagai slot PASCA-SEAM (setelah commit absolut engine,
+  // sebelum coreModel.update) — paritas komposisi baseline 3ff89bc yang
+  // menambahkan breath di atas tulisan engine, bukan di bawahnya. Gate:
+  // setEffectEnabled("breath") → flag di handle.
   if (user._physics) {
     updaters.physics = new fw.CubismPhysicsUpdater(user._physics);
     scheduler.addUpdatableList(updaters.physics);

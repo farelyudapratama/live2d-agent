@@ -1,5 +1,94 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (54) — BEHAVIOR CONTRACT S2: PET THINKING MERGE — VERIFIED
+
+S2 dari Behavior Contract v1 diimplementasi dan diverifikasi. HANYA merge
+saat THINKING; CASE SPEAKING (preempt Phase 18) dan S3+ (VTuber queue,
+operator, harness lanes, gating proaktif) TIDAK disentuh.
+
+### Perilaku lama → baru
+
+Lama: `think(B)` saat `busy` → silent-drop (B tidak pernah dilihat model).
+Baru (CASE 1 — THINKING): B DITERIMA — masuk history seketika (urutan
+arrival = urutan history) + ke buffer penanda `_pendingMerge` dengan
+`historyIndex` (watermark posisi). Saat respons pass aktif tiba:
+- B sudah tercakup payload yang terkirim (masuk sebelum fetch berangkat) →
+  respons itu sudah menjawab gabungan; penanda dilepas, TANPA pass sia-sia.
+- B tiba SETELAH payload terkirim → respons digugurkan (TIDAK diucapkan,
+  TIDAK masuk chat log) dan SATU pass penggantian dikirim dengan history
+  gabungan [.., A, B, C]. Model yang menafsir gabungan — tanpa classifier
+  "never mind/koreksi/supersede".
+CASE 2 (SPEAKING) tak tersentuh: busy sudah false saat rantai bicara →
+jalur think() normal → claim + preempt rantai (Phase 18). Buffer merge
+tidak pernah dilalui di jalur ini (dibuktikan test R8: pendingMergeCount 0).
+
+### Titik implementasi (semua AgentBrain-lokal; tanpa sistem baru)
+
+- Klaim `busy` + snapshot `_reqGen` + **push history user pindah ke blok
+  sinkron** (sebelum `await loadProfile`) — atomisitas klaim Bug-2 utuh dan
+  urutan history [A sebelum B] deterministik bahkan saat profil masih
+  di-resolve.
+- Loop pass di dalam `think()`: tiap iterasi SATU `_beginRequest()` aktif,
+  pass k+1 hanya dimulai setelah pass k resolve/reject → tidak pernah dua
+  request thinking paralel; proteksi Phase 16 (`_reqCtrl/_reqGen/timeout/
+  stale`) tetap otoritatif; finally per-pass membersihkan timer/controller.
+- CP-1 (setelah `resp.json()` + guard fresh) dan CP-2 (setelah director pass,
+  sebelum playSegments) memakai watermark `sentThrough`. Director pass =
+  SATU-SATUNYA window "sudah resolve tapi belum bersuara" yang benar-benar
+  await; window lain di luar director sinkron dan TIDAK tercapai
+  (didokumentasikan di kode, sesuai instruksi R4).
+- Jalur error (R5): SEMUA penanda menuntut satu percobaan percakapan
+  (pass pengganti) sebelum fallback; fallback tetap TEPAT SATU di pass
+  terakhir tanpa penanda. Timeout (B3) terverifikasi: dua pass SEQUENTIAL,
+  timer/controller selalu milik pass aktif.
+- Model switch (R6): siklus basi TIDAK mewarisi merge — buffer dibersihkan,
+  tanpa pass lintas model, tanpa pesan hilang dari history (history memang
+  bertahan lintas switch sejak dulu — tidak ada preservasi baru yang
+  direkayasa; didokumentasikan).
+- Proaktif (reactEvent): checkpoint identik + prioritas user — bila input
+  user menunggu, balasan proaktif TIDAK diucapkan, TIDAK dicatat P15.x,
+  dan loop user mengambil alih via `_scheduleFoldedThink()` (flush
+  `think("")` yang tidak menambah entri history kosong; ditolak ulang bila
+  ternyata sudah ada loop user berjalan — pesan sudah ada di history-nya).
+- QA: `_reactiveState().pendingMergeCount` (jumlah, bukan isi).
+
+### Semantik history yang dipertahankan (tidak ada arsitektur transkrip baru)
+
+History = array hidup otoritatif brain (clear-chat sudah in-place sejak
+fix 52); balasan assistant memang TIDAK disimpan (model user-only —
+semantik existing, sengaja tidak diubah); penggabungan terjadi lewat
+history, bukan payload khusus. UI: respons yang digugurkan tidak pernah
+masuk chat log, jadi transkrip tidak pernah mengklaim jawaban yang tidak
+terdengar.
+
+### Test lama yang DIUPDATE karena kebijakan (bukan dilonggarkan)
+
+`history-clear-and-claim.test.ts` B1/B3 mengunci silent-drop yang kini
+DIGANTI kontrak S2; keduanya ditulis ulang mengunci intents aslinya
+(tidak ada request paralel, tidak ada controller tercuri, sekuensial,
+fallback tepat satu) plus semantik merge baru. Semua suite lain (P15/P16/
+P17/P18/S1) hijau tanpa perubahan.
+
+### Tests: `test/pet-merge.test.ts` — 10 test
+R1 regresi A-saja; R2 fold+replace (payload [A,B], respons A tak pernah
+bersuara/masuk chat); R3/R7 [A,B,C] urut; R4 window director = THINKING →
+merge; R5 error → percobaan percakapan lalu tepat satu fallback; R6 switch
+membunuh siklus + buffer tanpa menghilangkan pesan; R8 SPEAKING tetap
+PREEMPT tanpa buffer; reactEvent menyerahkan ke loop user (proaktif diam,
+tidak mencatat, `think("")` tidak menodai history); invarian puncak:
+max concurrent thinking request === 1. Semua deterministik via deferred
+promise (resolve/reject manual), bukan sleep-as-proof.
+
+### Quality gates (satu rangkaian):
+- unit **1367 pass / 0 fail** (73 file; +10) · guards **411 / 0** (7 suite)
+- `tsc` bersih · `build` bersih
+- `smoke-engine-utterance.ts` **43/43** (jalur think()/rantai yang berubah
+  tetap utuh; S6 ownership tak terpengaruh)
+
+### Commit: `8bfc6fb` feat(agent): fold user input into thinking request (PET merge)
+
+---
+
 ## UPDATE 2026-09-16 (53) — BEHAVIOR CONTRACT S1: SHARED SPEECH CHANNEL — VERIFIED
 
 S1 dari Behavior Contract v1 diimplementasi dan diverifikasi. Infrastruktur

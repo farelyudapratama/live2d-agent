@@ -1,5 +1,76 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-17 (62) — VISUAL PARITY STEP 1 (PMA) + STEP 2 (BREATH PASCA-SEAM) — VERIFIED
+
+Audit parity visual/motion terhadap golden baseline `3ff89bc` (era pixi-live2d
+0.4.0) menemukan dua regresi HIGH confidence; keduanya sudah diperbaiki dan
+diverifikasi. Audit-only report mendahului; Step 3 (performa komposit) BELUM
+dikerjakan — menunggu review manusia.
+
+### STEP 1 (b707ddf) — PMA renderer produksi
+
+Stack baru tidak pernah memanggil `setIsPremultipliedAlpha(true)` (default
+false) sementara baseline eksplisit true. Akibatnya
+`getModelColorWithOpacity()` tidak mengalikan rgb×alpha → artmesh opacity<1
+(shading, blush, highlight, tepi atlas) tampil terlalu terang terhadap blend
+premultiplied (ONE, 1−SRC_ALPHA). Fix: panggilan ditambahkan di
+`production-host.bindHandle()` setelah startUp+loadShaders; deklarasi metode
+ditambah ke `RendererLike`. Halaman golden pixi8-official sengaja tidak
+disentuh (cabang baseColor blend-mode moc v6 tidak terdampak flag). Runtime
+lumine: `isPremultipliedAlpha() === true` terbaca dari instance hidup.
+
+### STEP 2 (6c4c66c) — breath pasca-seam
+
+Commit absolut engine (idle-pose via arbiter) di seam menimpa output breath
+yang scheduler tambahkan pra-seam — idle sway ParamAngleX/Y, ParamBodyAngleX,
+ParamBreath hilang (karakter kaku). Baseline mengomposisi sebaliknya: tulisan
+absolut engine ada di buffer dasar, breath ditambah di atasnya tepat sebelum
+coreModel.update. Fix ownership/urutan (formula breath tidak disentuh):
+breath keluar dari CubismUpdateScheduler menjadi slot PASCA-SEAM milik handle
+(`production-handle.update()` — sekali per frame, setelah commit arbiter,
+sebelum core.update); gate `setEffectEnabled("breath")` kini flag closure
+(semantik R1 on/off/destroy tetap). ParameterArbiter tetap boundary penulisan
+absolut engine terakhir — bukan bypass, bukan writer kedua.
+
+Ownership terukur (lumine, hasHead+hasBody): ter-clobber pra-fix hanya param
+yang dimiliki engine — AngleX/AY/BodyAngleX; ParamAngleZ & ParamBreath tidak
+pernah ter-clobber (engine tidak menulisnya utk lumine) — bukti peta clobber
+per-param, bukan asumsi. Model tanpa body: AngleZ ikut ter-clobber (engine
+menulis angleZ di fallback) — fix yang sama menutupinya.
+
+### Data sampling 10 dtk (lumine, idle, IAB 1280×720, pre→post)
+
+ParamAngleX p2p 10.2→18.1; ParamAngleY 6.1→11.2; ParamBodyAngleX 1.3→4.5;
+ParamAngleZ 10.0→10.0 (tidak berubah — sesuai ownership); ParamBreath 1.0
+(tidak berubah — hasBreath false, tak ditulis engine). Delta ≈ puncak breath
+framework (AngleX ±7.5, AngleY ±4, BodyAngleX ±2 — peak×weight 0.5). Unit
+test STEP2 (ren): gate off → range 0; gate on → ParamAngleX p2p ≈15, ParamBreath
+≈1.0. A/B pre/post diukur pada kondisi identik via stash→rebuild→restore.
+
+### Test yang disesuaikan (bukan perilaku terkunci)
+
+- R2-H: breath bukan anggota scheduler lagi — asersi keanggotaan → flag gate.
+- Test baru STEP2 breath pasca-seam (ren): bukti additif + gate.
+- R5 motion ownership ×2: breath dimatikan di test (yang diuji = ownership
+  seam; komposit breath kini sah menambah setelah arbiter). Catatan: R2-B
+  menge-pin parameters[0] — test STEP2 membersihkannya via clearOverride()
+  (ketergantungan urutan test terdokumentasi di komentarnya).
+
+### Yang TIDAK berubah
+
+Mouse-follow formula/gain/smoothing; blink; physics; expression; native
+motion; framing; DPR/resolution; shader; blend; mask; arsitektur komposit
+canvas-texture; SpeechChannel; Behavior Contract S1–S6. Verifikasi runtime:
+mouse-follow defleksi penuh (AngleX −30 saat pointer kiri-atas), blink min 0,
+konsol 0 error/warn, PMA true.
+
+### Tersisa (Step 3, belum dikerjakan)
+
+Performa komposit: upload tekstur full-canvas per frame + pass ganda +
+`preserveDrawingBuffer` (audit §5). Klaim pixelation TIDAK TERBUKTI dari kode
+(res/framing/komposit 1:1 paritas). screenColor = perbedaan tersengaja menuju
+viewer resmi (baseline tidak punya screenColor).
+
 ## UPDATE 2026-09-16 (61) — BEHAVIOR CONTRACT S6: GATE PROAKTIF (MODE × OTAK × WORKER) — VERIFIED
 
 S6 (gating proaktif, tersisa dari penutup S4-D) diimplementasi dan diverifikasi.

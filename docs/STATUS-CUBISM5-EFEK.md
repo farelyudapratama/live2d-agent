@@ -1,5 +1,91 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (57) — BEHAVIOR CONTRACT S4-A: HARNESS TASK IDENTITY + PARK/QUEUE — VERIFIED
+
+S4-A dari Behavior Contract (O3→S4) diimplementasi dan diverifikasi. HANYA
+slice yang dikunci: identitas task worker + antrean PARK FIFO + invariant
+active/paused + cancel task-aware + reset guard + feedback minimal. Companion
+lane (AgentBrain, merge/preempt PET semantics) TIDAK disentuh; SpeechChannel,
+MotionRuntime, ParameterArbiter TIDAK disentuh; task modification dan speech
+priority policy TIDAK diimplementasi (kontrak: jangan dulu).
+
+### Mekanisme (server = satu-satunya otoritas)
+
+State (agent/state.ts): `Runtime.activeTask: TaskRec|null` (taskId, text,
+state "running"|"paused", cfg) + `parkedTasks: {taskId,text}[]` +
+`nextTaskSeq`. taskId = `t_<n>` unik seumur runtime — deterministik, bukan
+sistem ID terdistribusi. Cap antrean `MAX_PARKED = 20`.
+
+Invarian inti (assistant.ts): kepemilikan slot = `activeTask`, BUKAN `busy`.
+Bug lama tertutup: approval-pause melepas `busy` tetapi `activeTask` tetap
+`paused` → ask kedua PARK, tidak pernah ada dua loop di satu history (I11).
+`assistantAsk`: slot bebas → klaim SENYAP sebelum await pertama →
+`executeTask`; slot terisi → `parkTask` (FIFO; kebanjiran → ok:false
+"antrean penuh (20) — task terbaru DITOLAK", antrean tak bermutasi, tanpa
+drop senyap). Hasil ask selalu membawa `taskId`; task parked → `{queued,
+taskId, position}`.
+
+Drain tunggal: `releaseAndDrain` dipanggil HANYA dari jalur terminal
+`executeTask` (sukses, error, cancel-paused, deny final, limit) dan
+`cancelActive` (paused). Guard: `rt.destroyed` → no-op; `activeTask.taskId
+!== task.taskId` → no-op. Klaim task berikutnya terjadi SINKRON di dalam
+fungsi yang sama — satu pemilik transisi, completion basi tidak bisa
+melepas/drain milik task lain (I6/I7). Task yang sedang RUNNING tetap
+kooperatif: cancel = flag, tool in-flight selesai dulu (kontrak lama).
+
+Cancel task-aware: `assistantCancel({taskId?})` — parked: buang dari antrean
+saja (I9); active running: flag kooperatif; active paused: terminal seketika
++ `approvals.clear()` (menutup celah resume basi); tanpa target: active
+(perilaku lama `accepted:false` saat idle dipertahankan). Antrean TIDAK
+pernah ikut batal (I10).
+
+Reset guard: `assistantReset` → `{ok:false, accepted:false, error}` selama
+ada `activeTask`/`busy` (I8); route kini mengembalikan hasil aslinya.
+Operasi sesi (create/switch/delete) kini juga menolak bila task paused ATAU
+antrean terisi — parked task tidak pernah bisa dieksekusi lintas ganti sesi
+(migrasi lintas sesi eksplisit = di luar cakupan, lihat limitation).
+
+/status diperluas (additif, konsumen lama utuh): `activeTask {taskId,text,
+state}`, `parkedTasks[]`, `queueCount`.
+
+### Panel (feedback minimal, TANPA UI manajemen antrean)
+
+`#as-input` tidak lagi dilumpuhkan selama stream sendiri — task kedua masuk
+antrean via ask non-stream → balasan `{queued,taskId}` → baris status
+"Task diantrekan (#t_n)" (helper murni `queuedFeedback` di transcript.ts,
+ter-unit-test). Feedback sama untuk event SSE `done{queued}` dan fallback
+non-stream. Baris "n task menunggu" saat jumlah antrean berubah. Cancel
+dihormati saat paused (tombol aktif bila `activeTask` ada). Reset gagal →
+✗ error dari server, transcript lokal TIDAK dihapus. Per-task cancel UI
+DENGAN SADIA belum — API-nya sudah ada (S4-B).
+
+### Test
+
+`test/harness-queue.test.ts`: 24 test (T1–T18 + T19/T20/T21 regresi + T22a/
+b/c) — facade + loop ASLI in-process; LLM distub di fetch dengan deferred
+manual per turn; bukti "tepat sekali" dari state + event bus `thinking_start`
+(drain), bukan sleep. T6 mengunci perilaku nyata: error provider memasang
+cooldown fallback (classifyError selalu shouldFallback) → task di-drain gagal
+cepat TANPA deadlock, rantai tetap FIFO, antrean kering.
+
+Gates: unit 1433 pass (1409 + 24), guards 411/411, tsc bersih, build bersih,
+`smoke-engine-utterance.ts` 43/43, `smoke-vtuber-browser.ts` semua pass.
+Regresi S1/S2/S3-A/S3-B seluruhnya hijau tanpa perubahan.
+
+### Limitasi faktual yang diterima (bukan bug terselubung)
+
+1. Task hasil drain tidak punya sink SSE pemilik → suara akhirnya lewat quip
+   actor atas `final_answer` (persis perilaku ask klien luar/CLI hari ini).
+2. `assistantStop` + ask berikutnya → `assistantAsk` error "mode tidak
+   aktif" (tetap); CLI tidak menampilkan teks "queued" khusus (ask-stream-nya
+   dapat `done{queued}` tanpa reply) — minor, di file di luar scope S4-A.
+3. Cooldown provider (30 dtk) bisa membuat sejumlah task parked gagal cepat
+   beruntun — tiap task tetap terminal + drain tepat sekali; tidak ada
+   retry otomatis.
+4. UI per-task cancel / kartu antrean = S4-B (kontrak memang hanya feedback).
+
+Commit kode: 4a38014.
+
 ## UPDATE 2026-09-16 (56) — BEHAVIOR CONTRACT S3-B: VTUBER OPERATOR FIFO QUEUE — VERIFIED
 
 S3-B dari Behavior Contract v1 diimplementasi dan diverifikasi: jalur

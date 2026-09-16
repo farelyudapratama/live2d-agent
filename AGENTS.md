@@ -34,7 +34,7 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 1409 unit test (bun test) + 411 guard (7 suite)
+bun run test           # SEMUA: 1433 unit test (bun test) + 411 guard (7 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)

@@ -1,5 +1,69 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (56) — BEHAVIOR CONTRACT S3-B: VTUBER OPERATOR FIFO QUEUE — VERIFIED
+
+S3-B dari Behavior Contract v1 diimplementasi dan diverifikasi: jalur
+OPERATOR eksplisit (composer jendela utama) + antrean FIFO operator, berbagi
+SATU slot aktif dengan donasi. O2 (audit identitas operator) sudah menutup
+kemungkinan "chat disalahartikan operator" — tipe baru `"operator"` dibuat
+EKSPLISIT, tidak ada reinterpretasi chat. Overlay OBS (`vtuber.html`) tidak
+disentuh dan memang tidak terpengaruh: loop poll-nya hanya bereaksi ke
+`chat|donation`, jadi event operator lewat tanpa jejak di sana (D-3 aman).
+Switch `#vt-donate-respond` TETAP mati/utuh (D-5).
+
+### Alur nyata setelah S3-B
+
+COMPOSER (input + tombol Kirim di panel `#mode-vtuber`):
+  HANYA `post("/api/vtuber/mock-event", { type:"operator", user:"operator",
+  text })` — tanpa LLM, tanpa ucap (guard O18 mengunci badan fungsinya).
+  Server: `vtuberInjectEvent` kini melewatkan "operator" (whitelist); tipe
+  tak dikenal TETAP jatuh ke "chat" (safety lama utuh). Tanpa runtime → 400
+  → composer mencatat "gagal: …" di status, tidak crash.
+
+OPERATOR (poll → operator): seen-id (share map dengan donasi — identity
+event) → push FIFO (cap 20; overflow buang TERBARU) → drain `pumpOperators`
+→ LLM (prompt `vt.operatorPrompt`, PERSONA yang sama, system string sama
+persis dengan donasi — D-4) → ucap via kanal S1 (producer
+"vtuber/operator", `speakWait`) → slot berakhir setelah lifecycle ucap
+(completed/lost/watchdog 60 dtk) — parity penuh donasi, tidak ada jalur
+baru ke __agent.
+
+### Scheduler slot bersama — keputusan desain (penting untuk penerus)
+
+Satu-satunya flag slot adalah `donoBusy` (nama historis S3-A dipertahankan
+— teks `pumpDonations` TIDAK BERUBAH sehingga 21 test S3-A lolos tanpa
+sentuh). Invarian: klaim terjadi SENYAP sebelum await pertama, jadi dua
+pemicu sinkron tidak pernah klaim ganda. Prioritas D-1 diterapkan saat
+KLAIM (bukan preempt): `pumpOperators` menolak saat `donoBusy`, dan bila
+donoQueue masih berisi, ia menyerah ke `pumpDonations()`. Rantai release
+operator memanggil donasi lebih dulu bila keduanya menunggu.
+
+Keterbatasan yang diterima (by design): rilis slot oleh DONASI tidak bisa
+merantai ke operator (finally `pumpDonations` terkunci teks S3-A) — wake
+operator dijamin sapuan `pumpOperators()` tiap poll (≤2,5 dtk, bounded).
+Rilis oleh OPERATOR sendiri sudah merantai penuh (donasi dulu, lalu
+operator berikutnya).
+
+### Gate & test
+
+`test/vtuber-operator.test.ts` baru: 21 test (O1–O20) — FIFO/serialisasi,
+completion point, lost, seen-id vs teks-sama (operator TIDAK pernah
+dup-key), prioritas klaim donation, non-preempt, overflow buang-terbaru,
+error lanjut, teardown diam, overlay-on & respond-off TETAP proses (D-3),
+watchdog pelepasan slot, perilaku composer (trim/clear/payload/no-LLM),
+kontrak tipe server (operator lolos; asing→chat), source guards wiring +
+lifecycle clear (`opQueue.length = 0` di onStop & destroy) + D-5.
+
+SATU perubahan pada file S3-A yang diizinkan dan jujur: guard sementara
+"S3-A tidak menyentuh operator (O2 masih terbuka)" (`not.toMatch
+(/vtuber\/operator/)`) sudah TERTUTUPI oleh S3-B — diganti guard penerusnya
+(operator ADA + kanal audience/donasi lama utuh). 20 test lainnya + semua
+assertion perilaku S3-A tidak berubah sebyte pun.
+
+Gates: unit 1409 pass (1388 + 21), guards 411/411, tsc bersih, build
+bersih, `smoke-engine-utterance.ts` 43/43, `smoke-vtuber-browser.ts` semua
+pass. Commit kode: 4a6d82c.
+
 ## UPDATE 2026-09-16 (55) — BEHAVIOR CONTRACT S3-A: VTUBER AUDIENCE SUPPRESSION + DONATION FIFO — VERIFIED
 
 S3-A dari Behavior Contract v1 diimplementasi dan diverifikasi. HANYA dua itu:

@@ -1,5 +1,72 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (58) — BEHAVIOR CONTRACT S4-B: HARNESS QUEUE UI + PER-TASK CANCEL — VERIFIED
+
+S4-B dari Behavior Contract (O4→S4-B) diimplementasi dan diverifikasi: UI
+ANTREAN worker di panel Harness yang menjadi proyeksi murni dari
+/api/assistant/status. SEMANTIC SERVER S4-A TIDAK BERUBAH SATU BARIS PUN —
+assistant.ts / state.ts / loop.ts / index.ts tidak tersentuh (sudah dibuktikan
+`git diff --stat`: hanya panel.ts, view.ts, transcript.ts, 2 kamus i18n,
+app.css, 1 file test baru). Keputusan terkunci: B1 (visibilitas jawaban antara)
+DIIMPLEMENTASIKAN; B2 (remount) dan B3 (speech selesai) TIDAK — keduanya
+tetap catatan follow-up/S4-D.
+
+### Bentuk UI
+
+Kartu TASK existing (`as-task`, view.renderTask) kini punya section "ANTREAN"
+di bawah plan: satu baris ACTIVE (taskId + chip AKTIF/JEDA-MENUNGGU-IZIN +
+teks), lalu baris PARKED FIFO `#posisi · taskId · chip ANTRE · teks ·
+[Batal]`. Tidak ada komponen baru, tidak ada baris queue di transcript
+(PARKED = eksekusi state, bukan pesan chat — aturan §15 O4). Cancel row
+HANYA ada di baris parked dan menarget PERSIS taskId baris itu; task aktif
+tetap lewat tombol global lama. CSS baru `.as-queue*` di blok as-task.
+
+### Proyeksi murni (satu-satunya jalur queue → DOM)
+
+`queueRows(status)` + `heroTaskText(status, fallback)` +
+`shouldSyncOnDrain(prevId, curId, liveAsk)` di transcript.ts — tanpa state
+client, tanpa mutasi input; posisi selalu hasil hitung ulang urutan array
+server (cancel B → C otomatis jadi #1). Panel menyimpan HANYA snapshot
+`/status` terakhir (`lastStatus`) + string `prevActiveId`; renderTaskCard
+dipanggil dari render() dan refreshStatus — idempoten per-snapshot. Hero
+kartu kini memprioritaskan `st.activeTask.text` (server berwenang) dan baru
+jatuh ke `transcript.currentTask()` saat idle.
+
+### B1 — visibilitas jawaban antara
+
+`refreshStatus`: bila identitas activeTask berganti A→B (drain) dan stream
+sendiri tidak hidup → `syncHistory()` sekali. A→idle tetap lewat aturan lama
+`prevBusy && !st.busy`; same-A lintas poll TIDAK pernah fetch. Tidak ada event
+baru, tidak ada polling baru, tidak ada generasi kedua.
+
+### Cancel per-taskId
+
+`cancelTask(targetTaskId?)` — tanpa target: body `{}` perilaku lama persis;
+dengan target: `{taskId}` → server balas `cancelled:"parked"` → baris hilang
+KARENA /status berubah (bukan edit optimistik lokal), feedback "Task {id}
+dibatalkan dari antrean.", stream aktif TIDAK di-abort, tombol global tidak
+dilumpuhkan buta (state tombol mengikuti /status).
+
+### Test
+
+`test/harness-queue-ui.test.ts`: 15 test (kelompok B1–B17) — proyeksi murni
+di atas fixture snapshot (FIFO, posisi recompute, idempotensi, non-mutasi,
+paused, stop), `shouldSyncOnDrain` (A→B / A→idle / same-A / liveAsk), dan
+source-guard pada TEKS ASLI panel.ts/view.ts/transcript.ts (target cancel,
+tombol parked-only, body `{taskId}` bersyarat, guard abort, tidak ada
+__agent/brain di jalur queue). B18–B20 dibuktikan oleh run penuh: S4-A
+harness-queue 24 test, PET/merge, VTuber/S3 — SEMUA hijau TANPA modifikasi.
+
+Gates: unit 1448 pass (1433 + 15), guards 411/411, tsc bersih, build bersih,
+smoke-engine-utterance 43/43, smoke-vtuber-browser semua pass.
+
+Limitasi yang DITERUSKAN (kontrak §13 B2/B3): remount panel memanggil
+assistantStart → runtime diganti → antrean parked bisa pensiun tanpa feedback
+per-baris; suara penyelesaian task drain tetap kebijakan S4-D; taskId unik
+per-umur-runtime (bukan global). S4-B sengaja tidak menyentuh ketiganya.
+
+Commit kode: 3b171f3.
+
 ## UPDATE 2026-09-16 (57) — BEHAVIOR CONTRACT S4-A: HARNESS TASK IDENTITY + PARK/QUEUE — VERIFIED
 
 S4-A dari Behavior Contract (O3→S4) diimplementasi dan diverifikasi. HANYA

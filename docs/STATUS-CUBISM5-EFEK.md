@@ -1,5 +1,50 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-17 (63) — FINAL VISUAL PARITY PASS: screenColor & SHARPNESS — NO FIX (TERBUKTI)
+
+Pass terakhir menuntaskan tiga sisa temuan audit parity; **tidak ada perubahan
+kode** — semua kesimpulan dibuktikan runtime/source, bukan screenshot.
+
+### screenColor — INTENTIONAL, NOL dampak pada model terpakai
+
+Probe runtime (semua drawable): **lumine** 223/223 multiplyColor=(1,1,1) dan
+screenColor=(0,0,0); **ren** 198 drawable: 2 memakai multiplyColor (diterapkan
+SAMA di baseline via `__mcDraw` patch dan di HEAD via shader resmi), 0
+screenColor. Dengan itu formula shader baru (`rgb + screen·a − rgb·screen`)
+adalah IDENTITAS untuk kedua model — perbedaan formula vs baseline tidak
+menghasilkan piksel berbeda. Keputusan: pertahankan (official 5.3; menghapusnya
+tidak mengubah apa pun di model ini dan merusak model masa depan yang benar-
+benar memakai screenColor).
+
+### Sharpness — terbukti BUKAN dari pipeline produksi
+
+Bukti piksel: kanvas GL offscreen vs output akhir komposit — **9216 piksel
+100% identik eksak (maxDiff = 0)** pada region tepi rambut. Dimensi runtime
+identik baseline: CSS 801×699 = pixel 801×699, DPR 1, drawing buffer sama;
+framing menghasilkan bbox karakter di posisi sama. A/B langsung (crop wajah
+280×280, region sama, kedua server): **meanDiff 1.12/255, 98.6% piksel ≤8**
+— residu = fase animasi (blink/breath). Metrik tepi (gradien kuat) baseline
+217.6 vs HEAD 193.9–201.8 — bervariasi per fase animasi di kedua stack dan
+TIDAK dapat diatribusikan ke resample apa pun (identitas piksel terbukti);
+mask texture filtering LINEAR+CLAMP di kedua stack. Kesimpulan: keluhan
+pixelation berasal dari kondisi capture/display screenshot, bukan pipeline.
+
+### Color path pasca-Step 1
+
+multiply: out.rgb = tex.rgb×mc×opacity (PMA true) ≡ baseline (mc di-fold ke
+baseColor). screenColor: identitas (di atas). Blend factor, mask math, upload
+premultiplied-LINEAR, Pixi CanvasSource premultiply round-trip: setara/neutral
+(piksel-identik). Tidak ada konversi sRGB di kedua stack.
+
+### Regression check
+
+PMA true, breath signature (AngleZ p2p 10.0 = framework ±5), mouse-follow
+(AngleX −18.9, EyeBallX −0.85 saat pointer kiri-atas), blink min 0, konsol
+0 error/warn, ren (moc v6, pipeline 5.3) render normal dengan PMA true.
+Test gate ulang: tsc bersih, build bersih, 1493 unit + 411 guard hijau.
+Tidak ada commit kode (bukti tidak membenarkan fix). Baseline A/B dijalankan
+dari git-worktree 3ff89bc di port 8311 — sudah dihapus setelah pengukuran.
+
 ## UPDATE 2026-09-17 (62) — VISUAL PARITY STEP 1 (PMA) + STEP 2 (BREATH PASCA-SEAM) — VERIFIED
 
 Audit parity visual/motion terhadap golden baseline `3ff89bc` (era pixi-live2d

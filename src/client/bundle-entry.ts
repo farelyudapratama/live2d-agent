@@ -39,6 +39,7 @@ import { startBrowserPanel } from "./browser/panel";
 import { startStageHintFade } from "./shell/stage-hint";
 import { installLive2DApi } from "../live2d/index";
 import { createSpeechChannel } from "./speech/channel";
+import * as MouseFollowGain from "./engine/mouse-follow-gain";
 
 if (typeof window !== "undefined") {
   window.MotionDSL = MotionDSL;
@@ -114,6 +115,14 @@ if (typeof window !== "undefined") {
   // Rumus framing panggung (murni) — dipakai legacy frameModel. upper/full
   // hanya fungsi TINGGI stage (anti-gepeng saat splitter didrag).
   window.__framing = Framing;
+  // Kalibrasi gain mouse-follow (murni) — konfigurasi lewat config
+  // `motion.mouseFollow` (preset default/strong/wild atau nilai eksplisit);
+  // app.js memakai resolve-nya saat loadAppConfig.
+  window.__mouseFollowGains = {
+    DEFAULTS: MouseFollowGain.MOUSE_FOLLOW_DEFAULTS,
+    PRESETS: MouseFollowGain.MOUSE_FOLLOW_PRESETS,
+    resolve: MouseFollowGain.resolveMouseFollowGains,
+  };
   // i18n: init() sinkron menyweep atribut data-i18n* di DOM statis SEBELUM
   // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
   // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.

@@ -1416,13 +1416,17 @@
       const ny = clamp(-rawY / (rawY < 0 ? upRoom : downRoom), -1, 1);
       const nx = clamp(rawX / (rawX < 0 ? leftRoom : rightRoom), -1, 1);
 
-      state.look.tax = nx * REF_HALF;
-      state.look.tay = ny * REF_HALF;
-      state.look.tex = nx;
-      state.look.tey = ny;
+      // Kalibrasi gain via config `motion.mouseFollow` (default = nilai lama:
+      // head 30, body 30×0.25, eye 1). Amplitudo tetap dijaga jalur existing
+      // (roleClampActual + clamp range ParameterApi; eye di-clamp ±1 di tick).
+      const MF = MOTION.mouseFollow;
+      state.look.tax = nx * MF.headGainX;
+      state.look.tay = ny * MF.headGainY;
+      state.look.tex = nx * MF.eyeGainX;
+      state.look.tey = ny * MF.eyeGainY;
 
-      state.look.tbx = nx * REF_HALF * 0.25;
-      state.look.tby = ny * REF_HALF * 0.25;
+      state.look.tbx = nx * REF_HALF * MF.bodyGainX;
+      state.look.tby = ny * REF_HALF * MF.bodyGainY;
     });
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -2417,6 +2421,12 @@
     model: "Xenova/facial_emotions_image_detection",
   };
   let MOTION = { enabled: false, gain: 1.5 };
+  // Kalibrasi gain mouse-follow (config `motion.mouseFollow`). Resolver murni
+  // di bundle (window.__mouseFollowGains — engine/mouse-follow-gain.ts);
+  // default = perilaku existing, algorithm handler tidak menyimpan literal.
+  MOTION.mouseFollow = window.__mouseFollowGains
+    ? { ...window.__mouseFollowGains.DEFAULTS }
+    : { headGainX: 30, headGainY: 30, bodyGainX: 0.25, bodyGainY: 0.25, eyeGainX: 1, eyeGainY: 1 };
   async function loadAppConfig() {
     try {
       const r = await fetch(API + "/api/config");
@@ -2435,6 +2445,10 @@
       if (d.motion) {
         MOTION.enabled = !!d.motion.enabled;
         if (typeof d.motion.gain === "number") MOTION.gain = d.motion.gain;
+        if (d.motion.mouseFollow && window.__mouseFollowGains) {
+          MOTION.mouseFollow =
+            window.__mouseFollowGains.resolve(d.motion.mouseFollow);
+        }
       }
 
       if (d.overlay) window.__overlayCfg = Object.assign({}, window.__overlayCfg || {}, d.overlay);

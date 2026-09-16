@@ -42,7 +42,16 @@
   },
   "motion": {
     "enabled": false,
-    "gain": 2.5
+    "gain": 2.5,
+    "mouseFollow": {
+      "preset": "default",
+      "headGainX": 30,
+      "headGainY": 30,
+      "bodyGainX": 0.25,
+      "bodyGainY": 0.25,
+      "eyeGainX": 1,
+      "eyeGainY": 1
+    }
   },
   "stt": {
     "model": "Xenova/whisper-base",

@@ -68,6 +68,11 @@ declare global {
       };
     };
     __framing?: typeof Framing;
+    __mouseFollowGains?: {
+      DEFAULTS: import("./engine/mouse-follow-gain").MouseFollowGains;
+      PRESETS: Record<string, import("./engine/mouse-follow-gain").MouseFollowGains>;
+      resolve: typeof import("./engine/mouse-follow-gain").resolveMouseFollowGains;
+    };
     __nativeExpressions?: { collect: typeof collectNativeExpressions };
     __i18n?: typeof I18n;
     __live2dAgent?: Live2DLegacyBridge;

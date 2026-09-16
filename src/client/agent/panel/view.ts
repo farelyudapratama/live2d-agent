@@ -6,7 +6,7 @@
  */
 
 import { createLifecycle } from "../../lifecycle";
-import type { Block } from "./transcript";
+import type { Block, QueueRow } from "./transcript";
 import { changeFromTool, MAX_RENDER_ROWS } from "./diff";
 import type { FileChange } from "./diff";
 import { parseMarkdown } from "./md";
@@ -27,6 +27,9 @@ export type PanelViewDeps = {
   onTabChange?: (tab: TechnicalTab) => void;
   /** Level tool ("safe"|"mutating") untuk badge; null = tak diketahui. */
   toolLevel?: (name: string) => "safe" | "mutating" | null;
+  /** S4-B: cancel SATU task PARKED by taskId — hanya baris parked yang memancing
+   *  callback ini; task aktif tidak pernah bisa dibatalkan lewat baris antrean. */
+  onTaskCancel?: (taskId: string) => void;
 };
 
 /** Badge level tool di header kartu: "auto" (mint) / "izin" (amber). */
@@ -634,12 +637,16 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
   /**
    * Hero card: apa yang agent kerjakan + checklist plan live. Hilang bila
    * tak ada task & tak ada plan (mode ngobrol biasa) — panel kembali polos.
+   * S4-B: antrean worker (proyeksi murni /status) tampil di KARTU INI —
+   * eksekusi state, bukan pesan chat; baris dibangun ulang penuh tiap render
+   * (taskBox.textContent="") sehingga mustahil dobel atau basi.
    */
-  function renderTask(task: string, plan: PlanItem[]): void {
+  function renderTask(task: string, plan: PlanItem[], queue?: QueueRow[]): void {
     taskBox.textContent = "";
     const tsk = String(task || "").trim();
     const hasPlan = !!(plan && plan.length);
-    if (!tsk && !hasPlan) {
+    const hasQueue = !!(queue && queue.length);
+    if (!tsk && !hasPlan && !hasQueue) {
       // TASK tetap hadir sebagai orientasi utama, tetapi empty state harus
       // jujur dan memberi tindakan berikutnya — bukan kartu kosong/fake task.
       taskBox.classList.remove("hidden");
@@ -678,6 +685,40 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
       }
       taskBox.appendChild(list);
     }
+    if (hasQueue) renderQueueSection(queue as QueueRow[]);
+  }
+
+  /** S4-B: ACTIVE (taskId + state) lalu PARKED FIFO (#posisi + taskId +
+   *  Batal). Cancel HANYA di baris parked, menarget persis taskId baris itu. */
+  function renderQueueSection(queue: QueueRow[]): void {
+    const head = el("div", "as-task-head as-queue-head");
+    head.appendChild(el("span", "as-task-label", t("as.queue.title")));
+    taskBox.appendChild(head);
+    const list = el("div", "as-queue");
+    for (const row of queue) {
+      const r = el("div", "as-qrow " + row.kind);
+      if (row.kind === "parked") {
+        r.appendChild(el("span", "as-qpos", "#" + row.position));
+      }
+      r.appendChild(el("span", "as-qid", row.taskId));
+      const label =
+        row.kind === "active"
+          ? row.state === "paused"
+            ? t("as.queue.paused")
+            : t("as.queue.active")
+          : t("as.queue.parked");
+      r.appendChild(el("span", "st " + row.state, label));
+      r.appendChild(el("span", "as-qtext", row.text));
+      if (row.kind === "parked" && deps.onTaskCancel) {
+        const btn = el("button", "mini-btn as-qcancel", t("as.queue.cancel")) as HTMLButtonElement;
+        btn.type = "button";
+        btn.title = t("as.queue.cancelTip", { id: row.taskId });
+        btn.addEventListener("click", () => deps.onTaskCancel?.(row.taskId));
+        r.appendChild(btn);
+      }
+      list.appendChild(r);
+    }
+    taskBox.appendChild(list);
   }
 
   // ── Widget memory ───────────────────────────────────────────────

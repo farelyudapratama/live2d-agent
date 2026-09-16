@@ -16,7 +16,7 @@
 
 import { createLifecycle } from "../../lifecycle";
 import { createAssistantApi, bootThenPoll } from "./api";
-import { Transcript, CONTINUATION_PROMPT, queuedFeedback } from "./transcript";
+import { Transcript, CONTINUATION_PROMPT, queuedFeedback, queueRows, heroTaskText, shouldSyncOnDrain } from "./transcript";
 import type { Block } from "./transcript";
 import { decideFallback, readSseStream, postJson } from "./stream";
 import type { AsSseEvent } from "./stream";
@@ -66,6 +66,11 @@ export function startAssistantPanel(): () => void {
     onApprove: approve,
     onTabChange: drawPages,
     toolLevel: (name) => toolLevels.get(name) ?? null,
+    // S4-B: baris PARKED di kartu TASK membawa Batal per-taskId — hanya
+    // taskId baris itu yang dibatalkan; task aktif tidak tersentuh.
+    onTaskCancel: (taskId) => {
+      void cancelTask(taskId);
+    },
   });
   const actor = makeActor({
     L: window.__live2dAgent,
@@ -95,10 +100,19 @@ export function startAssistantPanel(): () => void {
   let liveAsk: { abort: AbortController; receivedAnyEvent: boolean } | null = null;
   let localApprovals = new Set<string>(); // apId yang panel ini yang menyelesaikan
 
+  // S4-B: proyeksi antrean SELALU dari snapshot /status terakhir — tidak ada
+  // queue state lokal (server sumber kebenaran). prevActiveId hanya untuk
+  // deteksi transisi drain (B1), satu string, bukan sistem generasi.
+  let lastStatus: StatusResp | null = null;
+  let prevActiveId = "";
+
   // ── Util kecil ──────────────────────────────────────────────────
   let currentPlan: any[] = [];
+  const renderTaskCard = () => {
+    view.renderTask(heroTaskText(lastStatus, transcript.currentTask()), currentPlan, queueRows(lastStatus));
+  };
   const render = () => {
-    view.renderTask(transcript.currentTask(), currentPlan);
+    renderTaskCard();
     view.render(transcript.blocks);
   };
 
@@ -327,17 +341,27 @@ export function startAssistantPanel(): () => void {
   }
 
   /** Cancel tugas berjalan (runtime tetap hidup). Bila tugas milik panel ini,
-   *  SSE di-abort — protokol Kasus B (decideFallback) mencegah resend. */
-  async function cancelTask(): Promise<void> {
-    let accepted = false;
+   *  SSE di-abort — protokol Kasus B (decideFallback) mencegah resend.
+   *  S4-B: task-aware. Tanpa target = task AKTIF (perilaku lama persis).
+   *  Target parked = buang satu task antrean — stream aktif TIDAK di-abort
+   *  dan tombol cancel global tidak dilumpuhkan (task aktif boleh tetap ada;
+   *  state tombol mengikuti /status berikutnya). */
+  async function cancelTask(targetTaskId?: string): Promise<void> {
+    let d: any = {};
     try {
-      const d = await postJson(API + "/api/assistant/cancel", {});
-      accepted = !!d.accepted;
+      d = await postJson(API + "/api/assistant/cancel", targetTaskId ? { taskId: targetTaskId } : {});
     } catch {}
-    liveAsk?.abort.abort();
-    transcript.status(accepted ? t("as.cancelSent") : t("as.cancelNone"), "warn");
+    const accepted = !!d.accepted;
+    if (!targetTaskId || d.cancelled === "active") liveAsk?.abort.abort();
+    transcript.status(
+      accepted
+        ? d.cancelled === "parked"
+          ? t("as.taskCancelled", { id: targetTaskId || "" })
+          : t("as.cancelSent")
+        : t("as.cancelNone"),
+      "warn"
+    );
     render();
-    setCancelEnabled(false);
     refreshStatus();
   }
 
@@ -376,6 +400,7 @@ export function startAssistantPanel(): () => void {
     } catch {
       return;
     }
+    lastStatus = st; // S4-B: satu-satunya sumber proyeksi kartu TASK/antrean
     // Pill: live kita > sibuk klien lain > nunggu izin > idle/mati.
     // Saat loop pause untuk approval rt.busy=false — pendingApprovals yang
     // jadi sumber state "approval" (jangan sampai pill keliru "siap").
@@ -399,9 +424,10 @@ export function startAssistantPanel(): () => void {
         render();
       }
     }
-    // Kartu TASK (pusat perhatian): tugas berjalan + checklist plan live.
+    // Kartu TASK (pusat perhatian): tugas berjalan (server activeTask yang
+    // berwenang — B1) + checklist plan + proyeksi antrean (S4-B).
     currentPlan = st.plan || [];
-    view.renderTask(transcript.currentTask(), currentPlan);
+    renderTaskCard();
     // Metadata level tool (badge auto/izin) — refresh map bila dikirim.
     if (Array.isArray(st.tools) && st.tools.length) {
       toolLevels.clear();
@@ -425,6 +451,13 @@ export function startAssistantPanel(): () => void {
     localApprovals = new Set([...localApprovals].filter((id) => pendingIds.includes(id)));
     transcript.reconcileApprovals(pendingIds);
     render();
+    // S4-B (B1): jawaban task yang baru rampung terlihat TANPA menunggu
+    // antrean kering — identitas activeTask berganti (A→B hasil drain)
+    // menarik history sekali. A→idle tetap lewat aturan busy→false di bawah;
+    // same-task (poll berulang) tidak pernah fetch ulang.
+    const curActiveId = st.activeTask?.taskId || "";
+    if (shouldSyncOnDrain(prevActiveId, curActiveId, !!liveAsk)) await syncHistory();
+    prevActiveId = curActiveId;
     // Transisi busy→false: tarik history (jawaban final dari sesi CLI/drop).
     if (prevBusy && !st.busy && !liveAsk) await syncHistory();
     prevBusy = !!st.busy;

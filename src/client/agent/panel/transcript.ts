@@ -495,6 +495,68 @@ export class Transcript {
 }
 
 /**
+ * S4-B: proyeksi MURNI antrean worker — satu-satunya sumber kebenaran adalah
+ * /api/assistant/status (kontrak S4-A). Tidak ada state client, tidak ada
+ * mutasi: snapshot sama ⇒ rows sama (render idempoten). PARKED rows bukan
+ * pesan chat — mereka eksekusi state, dirender di kartu TASK, bukan transcript.
+ */
+export type QueueRow = {
+  taskId: string;
+  text: string;
+  /** posisi FIFO 1-based utk parked; 0 utk task aktif. */
+  position: number;
+  kind: "active" | "parked";
+  state: "running" | "paused" | "parked";
+};
+
+type StatusLike = {
+  activeTask?: { taskId: string; text: string; state: "running" | "paused" } | null;
+  parkedTasks?: Array<{ taskId: string; text: string }> | null;
+};
+
+export function queueRows(st: StatusLike | null | undefined): QueueRow[] {
+  const rows: QueueRow[] = [];
+  const act = st && st.activeTask;
+  if (act) {
+    rows.push({
+      taskId: String(act.taskId),
+      text: String(act.text || ""),
+      position: 0,
+      kind: "active",
+      state: act.state === "paused" ? "paused" : "running",
+    });
+  }
+  const parked = (st && st.parkedTasks) || [];
+  for (let i = 0; i < parked.length; i++) {
+    rows.push({
+      taskId: String(parked[i].taskId),
+      text: String(parked[i].text || ""),
+      position: i + 1, // posisi SELALU hasil proyeksi urutan array — bukan state
+      kind: "parked",
+      state: "parked",
+    });
+  }
+  return rows;
+}
+
+/** Hero kartu TASK: server activeTask yang berwenang; fallback ke
+ *  currentTask (client) HANYA saat status tidak memuat task aktif. */
+export function heroTaskText(st: StatusLike | null | undefined, fallback: string): string {
+  const raw = st && st.activeTask ? st.activeTask.text : "";
+  return String(raw || "").trim() ? String(raw) : fallback;
+}
+
+/**
+ * B1 (visibilitas jawaban antara): sync history saat IDENTITAS task aktif
+ * berganti karena drain (A→B, dua-duanya non-kosong, stream sendiri tidak
+ * hidup). A→idle TETAP ditangani aturan lama busy→false; same-A→same-A
+ * (poll berulang) selalu false — tidak ada fetch berulang.
+ */
+export function shouldSyncOnDrain(prevActiveId: string, curActiveId: string, liveAsk: boolean): boolean {
+  return !liveAsk && !!prevActiveId && !!curActiveId && prevActiveId !== curActiveId;
+}
+
+/**
  * S4-A: mapping balasan ask/queued → baris status panel. Murni & testable —
  * panel TIDAK pernah membuang task diam-diam: queued = feedback "masuk
  * antrean", error (mis. antrean penuh) = feedback gagal, sisanya diam.

@@ -3057,6 +3057,20 @@ input[type="range"]::-moz-range-thumb {
 .as-task .as-plan-item .st.done::before { content: "✓"; color: var(--mint); }
 .as-task .as-plan-item .st.failed::before { content: "×"; color: var(--coral); }
 .as-task .as-plan-item .note { color: var(--muted); font-size: 10px; }
+/* S4-B: proyeksi antrean worker dari /status — baris di dalam kartu TASK.
+   Eksekusi state, BUKAN chat: dirender ulang penuh tiap snapshot sehingga
+   mustahil dobel/basi; cancel hanya ada di baris parked. */
+.as-queue-head { margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--line-soft); }
+.as-queue { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.as-qrow { display: flex; align-items: baseline; gap: 7px; min-width: 0; padding: 1px 0; font-size: 11.5px; color: var(--text-dim); }
+.as-qrow.active { color: var(--text); }
+.as-qpos { flex: 0 0 auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.as-qid { flex: 0 0 auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.as-qrow .st { flex: 0 0 auto; font-size: 9.5px; letter-spacing: .04em; padding: 0 6px; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--muted); white-space: nowrap; }
+.as-qrow .st.running { border-color: var(--mint-border); color: var(--mint); }
+.as-qrow .st.paused { border-color: var(--accent-border); color: var(--lamp-soft); }
+.as-qtext { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-qcancel { flex: 0 0 auto; margin-left: auto; padding: 0 8px; }
 
 /* ── Assistant (remake ala ZCode) ───────────────────────────────── */
 /* Kontrak kelas baru: .as-root, .as-statusbar, .as-pill*, .as-tl, .as-blk*,

@@ -291,6 +291,15 @@ export function createProductionHost(options: HostOptions): ProductionHost {
       }
       renderer.startUp(gl);
       renderer.loadShaders(shaderBase);
+      // PARITAS BASELINE (3ff89bc): stack legacy era-4 merender dengan
+      // setIsPremultipliedAlpha(true); tanpa ini flag default false membuat
+      // getModelColorWithOpacity tidak mengalikan rgb×alpha → artmesh
+      // opacity<1 (shading, blush, highlight, tepi atlas) tampil terlalu
+      // terang terhadap blend premultiplied (ONE, 1−SRC_ALPHA). Tekstur
+      // di bawah memang diupload premultiplied (UNPACK_PREMULTIPLY), jadi
+      // invariantnya harus konsisten. Setelah pembuatan renderer, sebelum
+      // draw pertama — urutan yang sama dengan sample resmi.
+      renderer.setIsPremultipliedAlpha(true);
 
       // Upload tekstur premultiplied (proven golden PATCH 6)
       const textures: unknown[] = [];

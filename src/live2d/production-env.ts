@@ -178,6 +178,9 @@ export interface SettingLike {
 export interface RendererLike {
   startUp(gl: unknown): void;
   loadShaders(shaderPath?: string): void;
+  /** Paritas baseline (3ff89bc) & sample resmi: tekstur diupload
+   * premultiplied, jadi renderer WAJIB beroperasi dengan invariant yang sama. */
+  setIsPremultipliedAlpha(enable: boolean): void;
   bindTexture(modelTextureNo: number, glTexture: unknown): void;
   setMvpMatrix(matrix44: unknown): void;
   drawModel(shaderPath?: string): void;

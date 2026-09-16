@@ -17,6 +17,31 @@ membongkar inti lama.
 4. Status gabungan selalu bisa dibaca: `GET /api/mode` →
    `{active, vtuber, assistant, pet}`.
 
+### Gating proaktif per mode (S6, 2026-09-16 — TERKUNCI)
+
+Detail lengkap: [`docs/BEHAVIOR-CONTRACT.md`](BEHAVIOR-CONTRACT.md) §5.
+Gerbang `proactiveAllowed` di brain.ts dieksekusi SEBELUM efek apa pun
+(nol LLM/emotion/gaze/klaim kanal/bubble saat refusal):
+
+- **chat** + Mode Otak ON → proaktif diizinkan sesuai aturan lama
+  (`idleSpeak`/`awaySpeak`/`returnSpeak`/masa tenang tetap berlaku).
+- **Mode Otak OFF** → karakter sunyi penuh dari perilaku proaktif.
+- **vtuber** (mode aktif ATAU stream nyata menyala) → proaktif mati; jalur
+  ucap milik siaran.
+- **assistant/pet panel** → proaktif mati selama worker memegang slot
+  (RUNNING/PAUSED); antrean parked tanpa pemegang slot TIDAK menyetel.
+- Mood/sambut/pamit ikut gerbang yang sama; pamit dievaluasi saat jeda
+  selesai, bukan saat penjadwalan.
+
+Ctx disebarkan PUSH murni (brain tidak polling): app.js (toggle Mode Otak),
+`mode-runtime.js` (mode + flag stream saat start/stop/destroy), `projek.ts`
+(petaan `activeTask.state`/`busy` dari poll `/status` 4 dtk yang sudah ada).
+**Cakupan jujur:** ctx dan kanal ucap adalah MILIK JENDELA UTAMA — overlay
+OBS (`vtuber.html`) tetap di luar keduanya (putusan S1; area produk lintas
+window belum diputuskan). Saat gate lolos tapi kanal terpegang, arbitrase
+prioritas S4-D tetap menolak di klaim (baris terakhir; refusal setelah LLM
+= semantik yang dipertahankan, bukan bug).
+
 ## Shell 4 kolom (2026-09-07)
 
 Layout app ala coding-agent: `[activity+projek/history][stage Live2D][conversation][technical pane]`.

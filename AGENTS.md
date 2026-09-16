@@ -27,8 +27,9 @@ bukan instruksi untukmu.
 | 2 | [`docs/SHEET-SYSTEM.md`](docs/SHEET-SYSTEM.md) | menyentuh sheet, preset, migrasi, atau analisa LLM |
 | 3 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | menyentuh pipeline motion / Motion Studio |
 | 4 | [`docs/MODES.md`](docs/MODES.md) | menyentuh mode, runtime, atau teardown |
-| 5 | [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md) | **awal sesi**: baca entri teratas (handoff sesi sebelumnya) · **akhir sesi**: tambah entri baru |
-| 6 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | debugging perilaku yang dilaporkan user |
+| 5 | [`docs/BEHAVIOR-CONTRACT.md`](docs/BEHAVIOR-CONTRACT.md) | menyentuh ucap/proaktif/antrean worker atau kebijakan terkuncinya (S1–S6) |
+| 6 | [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md) | **awal sesi**: baca entri teratas (handoff sesi sebelumnya) · **akhir sesi**: tambah entri baru |
+| 7 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | debugging perilaku yang dilaporkan user |
 
 ## Perintah & definisi "selesai"
 
@@ -69,6 +70,11 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 5. **Keamanan & privasi.** `data/config.json` tidak pernah disajikan via HTTP;
    bind loopback default; body cap per endpoint; guard path traversal;
    frame webcam / audio mic **tidak pernah** di-upload (inferensi 100% lokal).
+6. **Kepemilikan ucap & proaktif.** Semua ucap jendela utama lewat
+   SpeechChannel; kebijakan D1–D7, lanes produsen, dan gate proaktif S6
+   TERKUNCI — gate menolak lahir, arbitrase kanal tetap baris terakhir;
+   deferral tak boleh "diperbaiki diam-diam".
+   → [`docs/BEHAVIOR-CONTRACT.md`](docs/BEHAVIOR-CONTRACT.md)
 
 ## Aturan kerja
 

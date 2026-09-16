@@ -3070,7 +3070,7 @@ input[type="range"]::-moz-range-thumb {
 .as-qrow .st.running { border-color: var(--mint-border); color: var(--mint); }
 .as-qrow .st.paused { border-color: var(--accent-border); color: var(--lamp-soft); }
 .as-qtext { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-qcancel { flex: 0 0 auto; margin-left: auto; padding: 0 8px; }
+.as-qcancel, .as-qmodify { flex: 0 0 auto; margin-left: auto; padding: 0 8px; }
 
 /* ── Assistant (remake ala ZCode) ───────────────────────────────── */
 /* Kontrak kelas baru: .as-root, .as-statusbar, .as-pill*, .as-tl, .as-blk*,

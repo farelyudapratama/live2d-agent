@@ -71,6 +71,11 @@ export function startAssistantPanel(): () => void {
     onTaskCancel: (taskId) => {
       void cancelTask(taskId);
     },
+    // S4-C: baris ACTIVE membawa Modify — server yang atomik mengganti
+    // task dengan replikanya (A' inherit posisi pipeline; parked di tolak).
+    onTaskModify: (taskId) => {
+      void modifyTask(taskId);
+    },
   });
   const actor = makeActor({
     L: window.__live2dAgent,
@@ -363,6 +368,40 @@ export function startAssistantPanel(): () => void {
     );
     render();
     refreshStatus();
+  }
+
+  /** S4-C: modifikasi task AKTIF. Alur: klik Modify → prompt teks baru (pola
+   *  sama confirm() reset) → POST /modify {taskId,text} → SERVER yang atomik
+   *  mengganti task; UI TIDAK bermutasi optimistik — baris A' tampil setelah
+   *  refreshStatus mengonfirmasi proyeksi server. Gagal = ✗ eksplisit. */
+  async function modifyTask(taskId: string): Promise<void> {
+    const cur = String(lastStatus?.activeTask?.text || "");
+    let text: string | null = null;
+    try {
+      text = window.prompt(t("as.modify.prompt"), cur);
+    } catch {
+      return; // environment tanpa prompt — diam, jangan kirim apa pun
+    }
+    if (text === null) return; // user membatalkan — tidak ada request
+    const txt = text.trim();
+    if (!txt) {
+      transcript.status("✗ " + t("as.modify.empty"), "err");
+      render();
+      return;
+    }
+    let d: any = {};
+    try {
+      d = await postJson(API + "/api/assistant/modify", { taskId, text: txt });
+    } catch (e: any) {
+      d = { error: e?.message || String(e) };
+    }
+    if (d && d.ok) {
+      transcript.status(t("as.modify.ok", { id: String(d.taskId || "") }), "ok");
+    } else {
+      transcript.status("✗ " + ((d && d.error) || "modify gagal"), "err");
+    }
+    render();
+    refreshStatus(); // authoritative projection — bukan edit lokal
   }
 
   async function resetAgent(): Promise<void> {

@@ -15,7 +15,7 @@ import { execSync } from "child_process";
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
 import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive } from "./vtuber";
-import { assistantStart, assistantStop, assistantCancel, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
+import { assistantStart, assistantStop, assistantCancel, assistantModify, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { translateForSpeech, ttsLangIsFixed } from "./persona/speech-lang";
 import { appRoot } from "../shared/paths";
@@ -371,6 +371,13 @@ async function handleAPI(req: Request): Promise<Response|null> {
     // S4-A: taskId opsional — tanpa target = task aktif (perilaku lama).
     const body = await readBody(req).catch(() => null);
     return json(assistantCancel(body));
+  }
+  if(method==="POST" && path==="/api/assistant/modify") {
+    // S4-C: modifikasi task AKTIF (cancel+replacement atomik, A' inherit
+    // posisi pipeline). Task parked ditolak eksplisit.
+    const body = await readBody(req).catch(() => null);
+    const r = assistantModify(body, config);
+    return json(r, r.ok ? 200 : 400);
   }
   if(method==="GET" && path==="/api/assistant/history") return json(assistantHistory());
   if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);

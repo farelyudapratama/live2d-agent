@@ -30,6 +30,9 @@ export type PanelViewDeps = {
   /** S4-B: cancel SATU task PARKED by taskId — hanya baris parked yang memancing
    *  callback ini; task aktif tidak pernah bisa dibatalkan lewat baris antrean. */
   onTaskCancel?: (taskId: string) => void;
+  /** S4-C: modifikasi task AKTIF by taskId — hanya baris active yang memancing
+   *  callback ini; task parked tidak punya affordance modifikasi (deferred). */
+  onTaskModify?: (taskId: string) => void;
 };
 
 /** Badge level tool di header kartu: "auto" (mint) / "izin" (amber). */
@@ -709,6 +712,14 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
           : t("as.queue.parked");
       r.appendChild(el("span", "st " + row.state, label));
       r.appendChild(el("span", "as-qtext", row.text));
+      if (row.kind === "active" && deps.onTaskModify) {
+        // S4-C: Modify HANYA di baris ACTIVE — target persis taskId baris.
+        const mb = el("button", "mini-btn as-qcancel as-qmodify", t("as.queue.modify")) as HTMLButtonElement;
+        mb.type = "button";
+        mb.title = t("as.queue.modifyTip", { id: row.taskId });
+        mb.addEventListener("click", () => deps.onTaskModify?.(row.taskId));
+        r.appendChild(mb);
+      }
       if (row.kind === "parked" && deps.onTaskCancel) {
         const btn = el("button", "mini-btn as-qcancel", t("as.queue.cancel")) as HTMLButtonElement;
         btn.type = "button";

@@ -331,6 +331,63 @@ export async function assistantResolveApproval(
   return await assistantAsk("Lanjutkan tugas berdasarkan hasil tool di atas.", config, onEvent);
 }
 
+/**
+ * S4-C: MODIFIKASI task AKTIF — cancel + replacement, SATU operasi atomik.
+ *
+ * Kontrak terkunci (Option 1): A' mewarisi posisi pipeline A — ia menjadi
+ * eksekusi BERIKUTNYA, di DEPAN seluruh parked B/C. Ini BUKAN pembatalan
+ * in-place dan BUKAN rewind dunia: pembatalan tetap kooperatif (tool
+ * in-flight A selesai dulu; side effect yang sudah terjadi TIDAK dibatalkan).
+ *
+ * Atomisitas: fungsi ini TIDAK punya satu pun `await`. Semua mutasi state
+ * terjadi dalam satu tick event-loop, sehingga drain tidak pernah bisa
+ * menyisipkan B sebelum A' terpasang — kasus paused di-klaim langsung
+ * (slot lepas seketika), kasus running hanya menaruh A' di KEPALA parked +
+ * memasang flag kooperatif; rilis A (satu-satunya, via guard taskId-nya
+ * sendiri) lalu men-shift A' pertama.
+ *
+ * taskId lama PERMANEN pensiun: semua guard rilis/drain berbasis equality
+ * taskId milik A' yang baru — completion/cancel basi untuk id lama no-op
+ * (pola S4-A T16/T17). Modifikasi task PARKED ditolak eksplisit (deferred).
+ */
+export function assistantModify(
+  body: { taskId?: string; text?: string } | null,
+  config: ConfigManager,
+): { ok: boolean; retired?: string; taskId?: string; state?: "pending" | "running"; error?: string } {
+  const rt = getRuntime();
+  if (!rt || rt.destroyed) return { ok: false, error: "assistant mode tidak aktif" };
+  const rawId = String(body?.taskId ?? "");
+  const txt = String(body?.text ?? "").trim().slice(0, 4000);
+  if (!rawId) return { ok: false, error: "taskId wajib diisi" };
+  if (!txt) return { ok: false, error: "teks pengganti tidak boleh kosong" };
+  const old = rt.activeTask;
+  if (!old || old.taskId !== rawId) {
+    if (rt.parkedTasks.some((p) => p.taskId === rawId))
+      return { ok: false, error: "hanya task AKTIF yang bisa dimodifikasi — task parked di luar cakupan S4-C" };
+    return { ok: false, error: "taskId tidak dikenal/sudah pensiun — tidak ada yang diubah" };
+  }
+  if (rt.parkedTasks.length >= MAX_PARKED)
+    return { ok: false, error: `antrean penuh (${MAX_PARKED}) — modify ditolak (tanpa drop senyap)` };
+  const newId = nextTaskId(rt);
+  if (old.state === "paused") {
+    // Tidak ada loop yang membaca flag — terminal SEKETIKA, klaim A' di
+    // tick yang sama: approvals milik A dimatikan permanen (approve/deny
+    // basi → "approval tidak ditemukan"), slot berpindah tanpa jeda drain.
+    rt.approvals.clear();
+    pushMsg(rt, { role: "assistant", content: "(tugas " + old.taskId + " diganti → " + newId + " oleh user)" });
+    const t: TaskRec = { taskId: newId, text: txt, state: "running", cfg: config };
+    rt.activeTask = t;
+    void executeTask(rt, t, txt, config).catch(() => {});
+    return { ok: true, retired: old.taskId, taskId: newId, state: "running" };
+  }
+  // RUNNING: A tetap pemegang slot sampai flag kooperatifnya teramati —
+  // rilis tunggal oleh eksekusi A sendiri (guard taskId), dan shift pertama
+  // antrean sudah A' (kepala). Urutan akhir: A → A' → B → C.
+  rt.parkedTasks.unshift({ taskId: newId, text: txt });
+  rt.cancelRequested = true;
+  return { ok: true, retired: old.taskId, taskId: newId, state: "pending" };
+}
+
 // ── Undo: daftar snapshot & revert (panel tab Review) ────────────
 
 export function assistantUndoList() {

@@ -89,6 +89,8 @@ export const DICT_EN: Record<string, string> = {
   "as.stop": "Stop Agent",
   "as.cancel": "Stop Task",
   "as.cancelSent": "Stop sent — the task halts after the current step.",
+  "as.queued": "Task queued (#{id}) — runs after the active task finishes.",
+  "as.queueInfo": "{n} task(s) waiting in queue.",
   "as.cancelNone": "No task is currently running.",
   "as.hint1": "The runtime keeps running when you switch panels or via the CLI (`bun run agent`).",
   "as.inputPh": "Ask for anything, e.g. read the folder structure…",

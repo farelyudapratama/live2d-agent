@@ -16,7 +16,7 @@
 
 import { createLifecycle } from "../../lifecycle";
 import { createAssistantApi, bootThenPoll } from "./api";
-import { Transcript, CONTINUATION_PROMPT } from "./transcript";
+import { Transcript, CONTINUATION_PROMPT, queuedFeedback } from "./transcript";
 import type { Block } from "./transcript";
 import { decideFallback, readSseStream, postJson } from "./stream";
 import type { AsSseEvent } from "./stream";
@@ -91,6 +91,7 @@ export function startAssistantPanel(): () => void {
   let destroy = false;
   let lastSeq = 0;
   let prevBusy = false;
+  let prevParked = 0; // S4-A: visibilitas perubahan ukuran antrean PARK
   let liveAsk: { abort: AbortController; receivedAnyEvent: boolean } | null = null;
   let localApprovals = new Set<string>(); // apId yang panel ini yang menyelesaikan
 
@@ -149,21 +150,25 @@ export function startAssistantPanel(): () => void {
     } catch {}
   }
 
-  /** Cancel aktif saat ada tugas berjalan (stream kita / klien lain). */
+  /** Cancel aktif saat ada tugas berjalan di runtime — termasuk task yang
+   *  SEDANG menunggu izin (paused): cancel untuk paused = terminal seketika. */
   function setCancelEnabled(on: boolean): void {
     if (cancelBtn) cancelBtn.disabled = !on;
-  }
-
-  function setInputEnabled(on: boolean): void {
-    if (input) input.disabled = !on;
-    if (sendBtn) sendBtn.disabled = !on;
-    setCancelEnabled(on || !!liveAsk);
   }
 
   // ── Stream: ask & approve (protokol dua-kasus) ──────────────────
   function handleSse(ev: AsSseEvent): void {
     if (ev.type === "speak") {
       speakAsCharacter(ev.text);
+    }
+    // S4-A: ask saat slot terisi dibalas queued (stream langsung tutup) —
+    // beri feedback eksplisit "masuk antrean", JANGAN diam-diam.
+    if ((ev as any).type === "done" && (ev as any).queued) {
+      const f = queuedFeedback(t, ev as any);
+      if (f.msg) {
+        transcript.status(f.msg, "ok");
+        render();
+      }
     }
     // Registry perubahan file + log terminal (tab Review/Terminal)
     if (ev.type === "tool_call") {
@@ -192,7 +197,7 @@ export function startAssistantPanel(): () => void {
     liveAsk = null;
     transcript.endLive();
     render();
-    setInputEnabled(true);
+    setCancelEnabled(false);
     refreshStatus();
     syncHistory();
   }
@@ -204,7 +209,7 @@ export function startAssistantPanel(): () => void {
   ): Promise<void> {
     const ac = new AbortController();
     liveAsk = { abort: ac, receivedAnyEvent: false };
-    setInputEnabled(false);
+    setCancelEnabled(true);
     transcript.beginLive();
     render();
     try {
@@ -239,6 +244,10 @@ export function startAssistantPanel(): () => void {
           if (d.reply) {
             transcript.appendFinal(d.reply);
             if (d.speak) speakAsCharacter(d.speak);
+          } else if (d.queued) {
+            // S4-A: ternyata slot sudah terisi saat resend — terparkir, bukan gagal.
+            const f = queuedFeedback(t, d);
+            if (f.msg) transcript.status(f.msg, "ok");
           }
         } catch (e2: any) {
           transcript.status("✗ " + (e2?.message || e2), "err");
@@ -254,7 +263,7 @@ export function startAssistantPanel(): () => void {
   // ── Aksi panel ──────────────────────────────────────────────────
   function send(text: string): void {
     const txt = String(text || "").trim();
-    if (!txt || liveAsk) return;
+    if (!txt) return;
     // Draft terkirim → composer kosong lagi (tinggi ikut normal). Dulu teks
     // tetap nanggung di input setiap kali mengirim — seperti chat mati.
     if (input) {
@@ -263,6 +272,26 @@ export function startAssistantPanel(): () => void {
     }
     transcript.appendUser(txt);
     render();
+    if (liveAsk) {
+      // S4-A: taskku masih berjalan — kirim baru TIDAK dibuang/ditolak.
+      // Ia PARK di antrean worker (ask non-stream; server balas segera
+      // dengan {queued,taskId} — BUKAN menunggu tugas selesai).
+      void postJson(API + "/api/assistant/ask", { text: txt })
+        .then((d) => {
+          const f = queuedFeedback(t, d);
+          if (f.msg) {
+            transcript.status(f.msg, f.kind);
+            render();
+          }
+          refreshStatus();
+        })
+        .catch((e: any) => {
+          const f = queuedFeedback(t, { error: e?.message || String(e) });
+          transcript.status(f.msg, "err");
+          render();
+        });
+      return;
+    }
     runStream("/api/assistant/ask-stream", { text: txt }, { path: "/api/assistant/ask", body: { text: txt } });
   }
 
@@ -313,7 +342,21 @@ export function startAssistantPanel(): () => void {
   }
 
   async function resetAgent(): Promise<void> {
-    try { await postJson(API + "/api/assistant/reset", {}); } catch {}
+    // S4-A: guard server — reset DITOLAK selama task memegang slot.
+    // postJson melempar saat error; UI TIDAK menghapus transcript-nya.
+    let d: any;
+    try {
+      d = await postJson(API + "/api/assistant/reset", {});
+    } catch (e: any) {
+      transcript.status("✗ " + (e?.message || e), "err");
+      render();
+      return;
+    }
+    if (d && d.ok === false) {
+      transcript.status("✗ " + (d.error || ""), "err");
+      render();
+      return;
+    }
     transcript = new Transcript();
     registry.clear();
     termLog.clear();
@@ -344,9 +387,18 @@ export function startAssistantPanel(): () => void {
         : st.busy ? "busyOther"
         : "idle",
     );
-    // Tombol cancel: aktif saat ada tugas berjalan di runtime (kita/CLI),
-    // mati saat idle — tanpa runtime tak ada yang bisa dibatalkan.
-    setCancelEnabled(!!st.running && (st.busy || !!liveAsk));
+    // Tombol cancel: aktif saat ada task memegang runtime — berjalan,
+    // stream kita, ATAU paused-approval (cancel paused = terminal seketika).
+    setCancelEnabled(!!st.running && (st.busy || !!liveAsk || !!st.activeTask));
+    // S4-A: visibilitas antrean PARK — baris status saat jumlah berubah.
+    const parkedCount = (st.parkedTasks || []).length;
+    if (parkedCount !== prevParked) {
+      prevParked = parkedCount;
+      if (parkedCount > 0) {
+        transcript.status(t("as.queueInfo", { n: parkedCount }), "ok");
+        render();
+      }
+    }
     // Kartu TASK (pusat perhatian): tugas berjalan + checklist plan live.
     currentPlan = st.plan || [];
     view.renderTask(transcript.currentTask(), currentPlan);

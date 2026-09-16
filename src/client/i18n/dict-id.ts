@@ -97,6 +97,8 @@ export const DICT_ID: Record<string, string> = {
   "as.stop": "Matikan Agent",
   "as.cancel": "Stop Task",
   "as.cancelSent": "Stop dikirim — tugas berhenti setelah langkah yang sedang jalan.",
+  "as.queued": "Task diantrekan (#{id}) — jalan setelah task aktif selesai.",
+  "as.queueInfo": "{n} task menunggu di antrean.",
   "as.cancelNone": "Tidak ada tugas yang sedang berjalan.",
   "as.hint1": "Runtime tetap jalan saat pindah panel atau lewat CLI (`bun run agent`).",
   "as.inputPh": "Minta apa? mis. baca struktur folder…",

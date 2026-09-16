@@ -26,7 +26,15 @@ export const MAX_ITERATIONS = 25;
 /** Nama semua tool terdaftar — untuk stripToolDirective (filter baris tool-call). */
 const TOOL_NAMES = TOOLS.map((t) => t.name);
 
-export type AskResult = { ok: boolean; error?: string; reply?: string };
+export type AskResult = {
+  ok: boolean;
+  error?: string;
+  reply?: string;
+  /** S4-A: loop BERHENTI karena menunggu keputusan izin (bukan terminal).
+   *  Facade memakainya untuk mempertahankan kepemilikan task (state=paused)
+   *  alih-alih melepas slot — task baru yang datang harus PARK. */
+  pausedForApproval?: boolean;
+};
 
 function buildSystem(lang: string, workDir: string): string {
   const t = {
@@ -187,6 +195,7 @@ export async function agentAsk(
     await maybeSummarize(rt, config);
     let final = "";
     let cancelled = false;
+    let pausedForApproval = false;
     const seenCalls = new Set<string>();
     for (let turn = 0; turn < MAX_ITERATIONS && !rt.destroyed; turn++) {
       if (rt.cancelRequested) { cancelled = true; break; }
@@ -258,6 +267,7 @@ export async function agentAsk(
         });
         emitEvent("permission_request", detected.name);
         emit({ type: "approval", id, tool: detected.name, args: publicArgs });
+        pausedForApproval = true; // S4-A: pause BUKAN terminal — task tetap punya slot
         final = stripToolDirective(reply, TOOL_NAMES) + "\n\n⏳ Aku butuh izinmu untuk " + detected.name + " — cek panel Assistant.";
         break;
       }
@@ -282,7 +292,9 @@ export async function agentAsk(
     pushMsg(rt, { role: "assistant", content: stripToolDirective(final, TOOL_NAMES) });
     const finalText = stripToolDirective(final, TOOL_NAMES);
     emitEvent("final_answer", (rt.plan.length ? "[" + planLabel(rt.plan) + "] " : "") + finalText.slice(0, 120));
-    return { ok: true, reply: finalText };
+    return pausedForApproval
+      ? { ok: true, reply: finalText, pausedForApproval: true }
+      : { ok: true, reply: finalText };
   } catch (e: any) {
     pushMsg(rt, { role: "assistant", content: "⚠️ " + e.message });
     emitEvent("error", String(e.message || "").slice(0, 120));

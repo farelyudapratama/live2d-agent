@@ -5,8 +5,25 @@
  * tahu apa-apa soal persona/karakter.
  */
 
+import type { ConfigManager } from "../../shared/config";
+
 export type AsMsg = { role: "user" | "assistant" | "tool"; content: string; ts: number };
 export type AsApproval = { id: string; tool: string; args: any; ts: number };
+
+/** Satu rekaman IDENTITAS task worker (S4-A). `state` bukan duplikasi
+ *  eksekusi — `busy` tetap milik loop; TaskRec adalah SATU-satunya pemegang
+ *  slot: hanya satu task RUNNING/PAUSED yang boleh menegah runtime menerima
+ *  task baru. `cfg` config terakhir — dipakai drain antrean tanpa perlu
+ *  thread ulang parameter ke pemanggil facade. */
+export type TaskRec = {
+  taskId: string;
+  text: string;
+  state: "running" | "paused";
+  cfg: ConfigManager;
+};
+
+/** Task yang PARK menunggu slot (FIFO, cap MAX_PARKED). */
+export type ParkedRec = { taskId: string; text: string };
 
 /** Catatan state penting yang WAJIB selamat dari summarization history. */
 export type SessionNotes = {
@@ -68,6 +85,14 @@ export type Runtime = {
   /** Permintaan cancel kooperatif (POST /api/assistant/cancel) — dicek loop
    *  antar-langkah; tool yang sedang jalan selesai dulu (run_command ≤30 dtk). */
   cancelRequested: boolean;
+  /** S4-A: SATU task worker yang memegang runtime (running ATAU paused
+   *  approval). Null = slot bebas. Inilah sumber kebenaran kepemilikan —
+   *  `busy` saja tidak cukup karena pause-approval melepas busy. */
+  activeTask: TaskRec | null;
+  /** S4-A: task PARK FIFO (maks MAX_PARKED; overflow menolak yang TERBARU). */
+  parkedTasks: ParkedRec[];
+  /** Penghitung taskId — unik seumur runtime, deterministik untuk test. */
+  nextTaskSeq: number;
 };
 
 let runtime: Runtime | null = null;
@@ -77,6 +102,8 @@ export const MAX_HISTORY = 60;
 export const HISTORY_CHAR_BUDGET = 30000;
 /** Cap rekaman undo (FIFO) — isi file disimpan in-memory saja. */
 export const MAX_UNDO = 20;
+/** Cap antrean PARK worker (S4-A) — overflow menolak task TERBARU. */
+export const MAX_PARKED = 20;
 
 export function getRuntime(): Runtime | null {
   return runtime;
@@ -106,6 +133,9 @@ export function makeRuntime(cfg: any, workDir: string, history: AsMsg[]): Runtim
     undo: [],
     sessionId: "",
     cancelRequested: false,
+    activeTask: null,
+    parkedTasks: [],
+    nextTaskSeq: 0,
   };
 }
 

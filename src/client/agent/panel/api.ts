@@ -8,6 +8,11 @@ export type AssistantStatus = {
   plan?: any[];
   notes?: { filesTouched?: string[] };
   tools?: Array<{ name: string; level: "safe" | "mutating" }>;
+  /** S4-A: task worker yang memegang slot — running ATAU paused (approval). */
+  activeTask?: { taskId: string; text: string; state: "running" | "paused" } | null;
+  /** S4-A: PARK FIFO — antrean task worker yang menunggu slot. */
+  parkedTasks?: Array<{ taskId: string; text: string }>;
+  queueCount?: number;
 };
 
 export function createAssistantApi(origin: string) {

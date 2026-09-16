@@ -367,7 +367,11 @@ async function handleAPI(req: Request): Promise<Response|null> {
   // Assistant runtime
   if(method==="POST" && path==="/api/assistant/start") return handleAssistantStart(req);
   if(method==="POST" && path==="/api/assistant/stop") { assistantStop(); return json({ok:true}); }
-  if(method==="POST" && path==="/api/assistant/cancel") return json(assistantCancel());
+  if(method==="POST" && path==="/api/assistant/cancel") {
+    // S4-A: taskId opsional — tanpa target = task aktif (perilaku lama).
+    const body = await readBody(req).catch(() => null);
+    return json(assistantCancel(body));
+  }
   if(method==="GET" && path==="/api/assistant/history") return json(assistantHistory());
   if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);
   if(method==="POST" && path==="/api/assistant/ask-stream") return handleAssistantAskStream(req);
@@ -380,7 +384,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
     const r = assistantMemoryDelete(String(body?.key || ""));
     return json(r, r.ok ? 200 : 404);
   }
-  if(method==="POST" && path==="/api/assistant/reset") { assistantReset(); return json({ok:true}); }
+  if(method==="POST" && path==="/api/assistant/reset") return json(assistantReset());
   if(method==="GET" && path==="/api/assistant/status") return json(assistantStatus());
   if(method==="GET" && path==="/api/assistant/sessions") return json(assistantSessionsList());
   if(method==="POST" && path==="/api/assistant/sessions/new") {

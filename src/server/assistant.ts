@@ -9,7 +9,8 @@
  */
 import type { ConfigManager } from "../shared/config";
 import { appRoot } from "../shared/paths";
-import { makeRuntime, getRuntime, setRuntime, loadSession, saveSession, pushMsg } from "./agent/state";
+import { makeRuntime, getRuntime, setRuntime, loadSession, saveSession, pushMsg, MAX_PARKED } from "./agent/state";
+import type { TaskRec } from "./agent/state";
 import { makeSessionsStore } from "./agent/sessions";
 import { agentAsk, agentRunApproved } from "./agent/loop";
 import { stripToolDirective } from "./agent/parse";
@@ -63,6 +64,13 @@ export function assistantStatus() {
     /** Aktivitas agent terakhir — stage chip menampilkan apa yang sedang
      *  dikerjakan tanpa membuka panel. Null bila runtime mati/bus kosong. */
     lastEvent: lastEvent ? { type: lastEvent.type, label: lastEvent.label } : null,
+    /** S4-A: identitas task worker yang memegangi runtime (running/paused). */
+    activeTask: rt?.activeTask
+      ? { taskId: rt.activeTask.taskId, text: rt.activeTask.text.slice(0, 120), state: rt.activeTask.state }
+      : null,
+    /** S4-A: daftar PARK FIFO — taskId + potongan teks, bukan state internal. */
+    parkedTasks: rt ? rt.parkedTasks.map((p) => ({ taskId: p.taskId, text: p.text.slice(0, 120) })) : [],
+    queueCount: rt?.parkedTasks.length || 0,
   };
 }
 
@@ -90,25 +98,72 @@ export function assistantStart(cfg: any): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-export function assistantReset() {
+/**
+ * Reset history worker. S4-A (I8): TIDAK boleh memutasi history selama ada
+ * task memegang slot (running ATAU paused) — ditolak dengan feedback eksplisit.
+ * Cancel bukan efek samping reset: tugas aktif TIDAK ikut dibatalkan.
+ */
+export function assistantReset(): { ok: boolean; accepted: boolean; error?: string } {
   const rt = getRuntime();
-  if (rt) {
-    rt.history = [];
-    saveSession(rt);
+  if (!rt) return { ok: true, accepted: true };
+  if (rt.activeTask || rt.busy) {
+    return { ok: false, accepted: false, error: "tugas masih berjalan/menunggu izin — reset ditolak" };
   }
-  return { ok: true };
+  rt.history = [];
+  saveSession(rt);
+  return { ok: true, accepted: true };
 }
 
 /**
- * Cancel tugas berjalan TANPA mematikan runtime (kooperatif: loop mengecek
- * flag antar-langkah; tool yang sedang eksekusi selesai dulu). Return
- * accepted=false bila tidak ada tugas berjalan.
+ * Cancel tugas berjalan TANPA mematikan runtime. S4-A: task-aware.
+ *  - taskId cocok PARKED   → buang dari antrean, task aktif TIDAK tersentuh.
+ *  - taskId cocok ACTIVE   → running: flag kooperatif; paused: terminal
+ *    seketika (tidak ada loop yang membaca flag) + drain antrean.
+ *  - tanpa taskId          → task aktif; bila tak ada apa pun: accepted:false
+ *    (perilaku lama dipertahankan).
+ * Antrean TIDAK pernah dibatalkan otomatis bareng task aktif.
  */
-export function assistantCancel(): { ok: boolean; accepted: boolean } {
+export function assistantCancel(body?: { taskId?: string } | null): {
+  ok: boolean;
+  accepted: boolean;
+  cancelled: "active" | "parked" | null;
+} {
   const rt = getRuntime();
-  if (!rt || !rt.busy) return { ok: true, accepted: false };
-  rt.cancelRequested = true;
-  return { ok: true, accepted: true };
+  if (!rt) return { ok: true, accepted: false, cancelled: null };
+  const raw = body && body.taskId != null ? String(body.taskId) : "";
+  if (raw) {
+    const i = rt.parkedTasks.findIndex((p) => p.taskId === raw);
+    if (i >= 0) {
+      rt.parkedTasks.splice(i, 1); // HANYA yang diparkir (I9)
+      return { ok: true, accepted: true, cancelled: "parked" };
+    }
+    if (rt.activeTask && rt.activeTask.taskId === raw) return cancelActive(rt);
+    return { ok: true, accepted: false, cancelled: null }; // target salah: jangan sentuh apa pun
+  }
+  if (rt.activeTask) return cancelActive(rt);
+  if (rt.busy) {
+    rt.cancelRequested = true; // defensif: busy manual tanpa task (test lama)
+    return { ok: true, accepted: true, cancelled: "active" };
+  }
+  return { ok: true, accepted: false, cancelled: null };
+}
+
+function cancelActive(rt: NonNullable<ReturnType<typeof getRuntime>>): {
+  ok: boolean;
+  accepted: boolean;
+  cancelled: "active" | "parked" | null;
+} {
+  const task = rt.activeTask!;
+  if (task.state === "paused") {
+    // Tidak ada loop berjalan untuk membaca flag — terminal SEKETIKA.
+    // Approval milik task ini dimatikan (celah resume basi tertutup).
+    rt.approvals.clear();
+    pushMsg(rt, { role: "assistant", content: "(tugas " + task.taskId + " dibatalkan saat menunggu izin)" });
+    releaseAndDrain(rt, task);
+    return { ok: true, accepted: true, cancelled: "active" };
+  }
+  rt.cancelRequested = true; // kooperatif lama: tool in-flight selesai dulu
+  return { ok: true, accepted: true, cancelled: "active" };
 }
 
 // ── Event stream untuk panel/pet/akting (bus ber-seq) ──────────
@@ -118,24 +173,77 @@ export function assistantEvents(sinceSeq = 0) {
   return { latest: d.latest, busy: !!getRuntime()?.busy, events: d.events };
 }
 
-// ── Ask: jembatan ke agent loop + narrator di akhir ────────────
+// ── Ask: jembatan ke agent loop + narrator + TASK QUEUE (S4-A) ─
+//
+// Kontrak worker (Behavior Contract S4-A):
+//   - paling banyak SATU task RUNNING/PAUSED memegangi runtime (`activeTask`);
+//   - task baru saat slot terisi = PARK ke FIFO antrean (cap MAX_PARKED);
+//     overflow menolak yang TERBARU dengan feedback eksplisit — tanpa drop
+//     senyap;
+//   - tiap task terminal (sukses/error/cancel/limit) MELEPAS slot tepat
+//     satu kali, lalu drain berikutnya — pemilik transisi drain hanya
+//     pemanggil releaseAndDrain yang lolos guard taskId (completion basi
+//     tidak bisa melepas task orang lain atau men-drain dua kali).
 
 function assistantAskNoop(): void {}
 
-export async function assistantAsk(
+export type AssistantAskResult = {
+  ok: boolean;
+  error?: string;
+  reply?: string;
+  speak?: string;
+  /** S4-A: task di-PARK (bukan dijalankan, bukan ditolak). */
+  queued?: boolean;
+  taskId?: string;
+  /** posisi 1-based di antrean saat queued */
+  position?: number;
+};
+
+/** taskId unik seumur runtime; deterministik (testable), bukan ID terdistribusi. */
+function nextTaskId(rt: NonNullable<ReturnType<typeof getRuntime>>): string {
+  return "t_" + ++rt.nextTaskSeq;
+}
+
+/** Slot terisi = task memegang runtime (running ATAU paused-approval).
+ *  `busy` saja tidak cukup — pause-approval melepas busy (bug lama yang
+ *  memungkinkan dua loop atas satu history). */
+function slotOccupied(rt: NonNullable<ReturnType<typeof getRuntime>>): boolean {
+  return !!rt.activeTask || rt.busy;
+}
+
+function parkTask(rt: NonNullable<ReturnType<typeof getRuntime>>, text: string): AssistantAskResult {
+  if (rt.parkedTasks.length >= MAX_PARKED) {
+    return { ok: false, error: `antrean tugas penuh (${MAX_PARKED}) — task terbaru DITOLAK` };
+  }
+  const task = { taskId: nextTaskId(rt), text };
+  rt.parkedTasks.push(task);
+  return { ok: true, queued: true, taskId: task.taskId, position: rt.parkedTasks.length };
+}
+
+/** Jalankan task yang slotnya SUDAH diklaim. Lapisan narrator (speak) ikut
+ *  berjalan untuk task drain — perlakuannya persis ask non-stream klien luar
+ *  hari ini (suara akhir via quip actor atas event final_answer; speak hanya
+ *  ke sink SSE pemanggil). Rilis + drain terjadi SETELAH speak layer. */
+async function executeTask(
+  rt: NonNullable<ReturnType<typeof getRuntime>>,
+  task: TaskRec,
   text: string,
   config: ConfigManager,
-  onEvent: (e: any) => void = assistantAskNoop,
-): Promise<{ ok: boolean; error?: string; reply?: string; speak?: string }> {
-  const rt = getRuntime();
-  if (!rt) return { ok: false, error: "assistant mode tidak aktif" };
-  if (rt.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
-
-  const persona = rt.persona;
-  const r = await agentAsk(rt, text, config, onEvent !== assistantAskNoop ? onEvent : undefined);
-  if (!r.ok) return r;
-
+  onEvent?: (e: any) => void,
+): Promise<AssistantAskResult> {
+  const r = await agentAsk(rt, text, config, onEvent);
+  if (!r.ok) {
+    releaseAndDrain(rt, task); // error = terminal — antrean tidak deadlock
+    return { ok: false, error: r.error, taskId: task.taskId };
+  }
+  if (r.pausedForApproval) {
+    // PAUSE = tetap ACTIVE/OWNED (I2/I11): task berikutnya HARUS park.
+    task.state = "paused";
+    return { ok: true, reply: r.reply, taskId: task.taskId };
+  }
+  task.state = "running"; // kelanjutan pasca-approval
   // Lapisan akting: hasil panjang dipadatkan jadi komentar berkarakter.
+  const persona = rt.persona;
   const clean = cleanForSpeech(stripToolDirective(r.reply || "", TOOLS.map((t) => t.name)));
   let speak: string | undefined;
   if (clean && !r.reply?.includes("⏳")) {
@@ -146,8 +254,42 @@ export async function assistantAsk(
       speak = n.speak;
     }
   }
-  if (speak) onEvent({ type: "speak", text: speak });
-  return { ok: true, reply: r.reply, speak };
+  if (speak) {
+    if (onEvent) onEvent({ type: "speak", text: speak });
+  }
+  releaseAndDrain(rt, task);
+  return { ok: true, reply: r.reply, speak, taskId: task.taskId };
+}
+
+/** Rilis milik-task-sendiri + drain SATU langkah. Sinkron; tidak ada await
+ *  di antara guard dan klaim berikutnya — dua terminal tidak bisa klaim ganda. */
+function releaseAndDrain(
+  rt: NonNullable<ReturnType<typeof getRuntime>>,
+  task: TaskRec,
+): void {
+  if (rt.destroyed) return; // runtime lama: jangan lahirkan task di atasnya
+  if (!rt.activeTask || rt.activeTask.taskId !== task.taskId) return; // rilis basi = no-op (I6)
+  rt.activeTask = null;
+  const next = rt.parkedTasks.shift();
+  if (!next) return;
+  const t: TaskRec = { taskId: next.taskId, text: next.text, state: "running", cfg: task.cfg };
+  rt.activeTask = t; // klaim SENYAP — pemilik transisi drain satu-satunya (I7)
+  void executeTask(rt, t, t.text, task.cfg).catch(() => {});
+}
+
+export async function assistantAsk(
+  text: string,
+  config: ConfigManager,
+  onEvent: (e: any) => void = assistantAskNoop,
+): Promise<AssistantAskResult> {
+  const rt = getRuntime();
+  if (!rt) return { ok: false, error: "assistant mode tidak aktif" };
+  const txt = String(text || "").slice(0, 4000);
+  // S4-A: slot terisi (running ATAU paused) → PARK, BUKAN ditolak.
+  if (slotOccupied(rt)) return parkTask(rt, txt);
+  const task: TaskRec = { taskId: nextTaskId(rt), text: txt, state: "running", cfg: config };
+  rt.activeTask = task; // klaim SENYAP sebelum await pertama — race-free
+  return executeTask(rt, task, txt, config, onEvent !== assistantAskNoop ? onEvent : undefined);
 }
 
 export async function assistantResolveApproval(
@@ -155,7 +297,7 @@ export async function assistantResolveApproval(
   approve: boolean,
   config: ConfigManager,
   onEvent: (e: any) => void = assistantAskNoop,
-): Promise<{ ok: boolean; error?: string; reply?: string; speak?: string }> {
+): Promise<AssistantAskResult> {
   const rt = getRuntime();
   if (!rt) return { ok: false, error: "assistant mode tidak aktif" };
   const ap = rt.approvals.get(id);
@@ -165,13 +307,27 @@ export async function assistantResolveApproval(
   // belum pernah di-emit — kini dipakai supaya panel/pet menutup kartu izin
   // secara reaktif (bukan menunggu poll status berikutnya).
   emitEvent("permission_resolved", (approve ? "disetujui: " : "ditolak: ") + ap.tool);
+  const sink = onEvent !== assistantAskNoop ? onEvent : undefined;
+  const task = rt.activeTask;
+  if (task && task.state === "paused") {
+    // Keputusan milik task yang MEMEGANG slot — kelanjutan jalan di slot
+    // yang sama (bukan ask baru yang akan/boleh PARK).
+    if (!approve) {
+      pushMsg(rt, { role: "tool", content: "User MENOLAK " + ap.tool + " — batalkan rencana itu dan tanyakan alternatif." });
+      releaseAndDrain(rt, task); // DENIAL = terminal untuk task — antrean lanjut
+      return { ok: true, reply: "Ditolak. Aku batalkan.", taskId: task.taskId };
+    }
+    task.state = "running";
+    task.cfg = config;
+    await agentRunApproved(rt, ap.tool, ap.args, sink);
+    return executeTask(rt, task, "Lanjutkan tugas berdasarkan hasil tool di atas.", config, sink);
+  }
+  // Defensif — approval tanpa task pemilik (kondisi lama). Perilaku pra-S4-A.
   if (!approve) {
     pushMsg(rt, { role: "tool", content: "User MENOLAK " + ap.tool + " — batalkan rencana itu dan tanyakan alternatif." });
     return { ok: true, reply: "Ditolak. Aku batalkan." };
   }
-  await agentRunApproved(rt, ap.tool, ap.args, onEvent !== assistantAskNoop ? onEvent : undefined);
-  // lanjutkan reasoning setelah tool dieksekusi — streaming bila onEvent
-  // diberikan (approve-stream dari panel), senyap bila tidak (route lama).
+  await agentRunApproved(rt, ap.tool, ap.args, sink);
   return await assistantAsk("Lanjutkan tugas berdasarkan hasil tool di atas.", config, onEvent);
 }
 
@@ -196,7 +352,11 @@ export function assistantSessionsList() {
 
 export function assistantSessionCreate(workDir?: string): { ok: boolean; error?: string } {
   const rt = getRuntime();
-  if (rt?.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
+  // S4-A: guard diperluas — task PAUSED maupun PARKED tetap memegang
+  // sesi. Operasi sesi TIDAK boleh melewati keduanya (task parked tidak
+  // pernah boleh dieksekusi diam-diam terhadap sesi berbeda; migrasi
+  // lintas sesi di luar cakupan — lihat STATUS S4-A).
+  if (rt && (rt.busy || rt.activeTask || rt.parkedTasks.length > 0)) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
   const wd = String(workDir || rt?.workDir || appRoot()).trim();
   // Simpan dulu state sesi lama (bila ada), lalu buat & pindah.
   if (rt) saveSession(rt);
@@ -211,7 +371,7 @@ export function assistantSessionCreate(workDir?: string): { ok: boolean; error?:
 
 export function assistantSessionSwitch(id: string): { ok: boolean; error?: string } {
   const rt = getRuntime();
-  if (rt?.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
+  if (rt && (rt.busy || rt.activeTask || rt.parkedTasks.length > 0)) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
   if (rt) saveSession(rt); // simpan yang lama dulu
   const rec = sessionsStore.switchTo(String(id || ""));
   if (!rec) return { ok: false, error: "sesi tidak ditemukan" };
@@ -226,7 +386,7 @@ export function assistantSessionSwitch(id: string): { ok: boolean; error?: strin
 
 export function assistantSessionDelete(id: string): { ok: boolean; error?: string; newActive?: string } {
   const rt = getRuntime();
-  if (rt?.busy) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
+  if (rt && (rt.busy || rt.activeTask || rt.parkedTasks.length > 0)) return { ok: false, error: "masih memproses pertanyaan sebelumnya" };
   const r = sessionsStore.remove(String(id || ""));
   if (!r.ok) return { ok: false, error: "sesi tidak ditemukan" };
   // Sesi aktif terhapus → runtime dipindah ke sesi sisa terbaru (atau kosong).

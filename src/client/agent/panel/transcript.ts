@@ -494,6 +494,20 @@ export class Transcript {
   }
 }
 
+/**
+ * S4-A: mapping balasan ask/queued → baris status panel. Murni & testable —
+ * panel TIDAK pernah membuang task diam-diam: queued = feedback "masuk
+ * antrean", error (mis. antrean penuh) = feedback gagal, sisanya diam.
+ */
+export function queuedFeedback(
+  t: (k: string, v?: Record<string, string | number>) => string,
+  d: { queued?: boolean; taskId?: string; error?: string } | null | undefined,
+): { msg: string; kind: "ok" | "err"; queued: boolean } {
+  if (d && d.error) return { msg: "✗ " + d.error, kind: "err", queued: false };
+  if (d && d.queued) return { msg: t("as.queued", { id: d.taskId || "?" }), kind: "ok", queued: true };
+  return { msg: "", kind: "ok", queued: false };
+}
+
 /** Buang baris `TOOL: name {…}` (format panggilan tool) dari teks yang mengalir. */
 export function stripToolLine(text: string): string {
   return String(text || "").replace(/^\s*TOOL:\s*[a-z_]+\s*\{[\s\S]*?\}\s*$/gim, "").trimEnd();

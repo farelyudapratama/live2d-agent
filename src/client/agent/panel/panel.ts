@@ -39,7 +39,9 @@ function getT() {
 function speakAsCharacter(text: string): void {
   if (!text) return;
   try { window.__addChat?.("agent", text); } catch {}
-  try { window.__live2dAgent?.speak?.(text); } catch {}
+  // S1: ucap karakter Harness ikut SpeechChannel jendela utama dengan
+  // identitas — quip/task tidak lagi nyelundup tanpa kepemilikan.
+  try { window.__live2dAgent?.speak?.(text, undefined, { producer: "harness/actor" }); } catch {}
 }
 
 export function startAssistantPanel(): () => void {

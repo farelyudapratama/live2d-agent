@@ -175,19 +175,25 @@ async function run() {
     // bridge: app.js speak/doRemoteTTS/browserTTS/stopSpeech/markDone dan
     // rantai brain tetap 100% produksi.
     await ev(`(() => {
-      const nativeCancel = () => {};
       window.__ssCancels = 0;
-      const uQ = [];
+      window.__ssSpoke = []; // LOG murni untuk bukti akustik S6
+      let q = [];
       try { delete window.speechSynthesis; } catch (e) {}
       window.speechSynthesis = {
-        get speaking(){ return uQ.length > 0; },
+        get speaking(){ return q.length > 0; },
         get pending(){ return false; },
-        getVoices(){ return []; },
+        // Browser BERSUARA: voices tersedia => jalur pickVoice app.js memanggil
+        // speechSynthesis.speak sungguhan; cancel memicu onend (paritas Chrome).
+        getVoices(){ return [{ name:'smoke-voice', lang:'id-ID', default:true }]; },
         pause(){}, resume(){},
-        cancel(){ window.__ssCancels++; uQ.splice(0).forEach(t=>clearTimeout(t)); },
-        speak(u){ const ms = 300 + Math.min(3000, u.text.length * 25);
-          const t = setTimeout(() => { const k = uQ.indexOf(t); if (k>=0) uQ.splice(k,1); try { u.onend && u.onend(); } catch (e) {} }, ms);
-          uQ.push(t); },
+        addEventListener(){}, removeEventListener(){},
+        cancel(){ window.__ssCancels++; const cur=q.slice(); q=[];
+          cur.forEach(x=>{ clearTimeout(x.timer); try { x.u.onend && x.u.onend(); } catch (e) {} }); },
+        speak(u){ window.__ssSpoke.push(String(u.text).slice(0,8));
+          const ms = 300 + Math.min(3000, u.text.length * 25);
+          const item = { u, timer: 0 };
+          item.timer = setTimeout(() => { q = q.filter(x=>x!==item); try { u.onend && u.onend(); } catch (e) {} }, ms);
+          q.push(item); },
       };
       window.__appEvents = { idleSpeak: false, awaySpeak: false, returnSpeak: false, quietMs: 0 };
       if (window.__agent) { window.__agent.setCameraMood = () => {}; }
@@ -229,6 +235,8 @@ async function run() {
     await submit("pesan S1");
     check("S1 rantai jadi aktif & owned", await pollFor(`window.__agent._reactiveState().utteranceActive === true`, 5000));
     check("S1 lockAI aktif via bridge produksi", await pollFor(`window.__l2dDebug.state.aiLock === true`, 3000));
+    check("S1 SpeechChannel dimiliki brain/chain (logis S6-prep)",
+      await pollFor(`!!window.__speechChannel && window.__speechChannel.current()?.producer === 'brain/chain'`, 3000));
     const c0 = await chat();
     check("S1 segmen pertama tampil di chat", c0.includes(A1), `${c0.length} entri agent`);
     check("S1 rantai selesai penuh", await pollFor(`window.__agent._reactiveState().utteranceActive === false`, 40000));
@@ -236,6 +244,8 @@ async function run() {
     check("S1 tiga segmen TEPAT sekali masing-masing",
       [A1, A2, A3].every((t) => c1.filter((x: string) => x === t).length === 1));
     check("S1 lockAI lepas saat selesai", (await locked()) === false);
+    check("S1 kanal lepas setelah rantai selesai",
+      (await ev(`!!window.__speechChannel && window.__speechChannel.current() === null`)) === true);
     await sleep(6000); // lewat semua sisa fallback/guard timer rantai lama
     const c2 = await chat();
     check("S1 tidak ada revive setelah selesai", c2.length === c1.length, `${c2.length} vs ${c1.length}`);
@@ -266,7 +276,7 @@ async function run() {
     console.log("\n🧪 S3: stopSpeech manual idempoten; rantai lanjut & release sekali");
     await stub([REPLY(C1, C2)]);
     await submit("pesan S3");
-    check("S3 rantai aktif", await pollFor(`window.__agent._reactiveState().utteranceActive === true`, 5000));
+    check("S3 rantai aktif", await pollFor(`window.__agent._reactiveState().utteranceActive === true`, 5000), JSON.stringify(await ev(`Object.assign(window.__agent._reactiveState(), {busy: window.__agent.busy, req: !!window.__agent._reqCtrl, chatCount: window.__chatCount, dirCalls: window.__dirCalls})`)));
     const stopTwice = await ev(`(() => {
       try { window.__live2dAgent.stopSpeech(); window.__live2dAgent.stopSpeech(); return 'ok'; }
       catch (e) { return 'ERR:' + e.message; }
@@ -289,6 +299,8 @@ async function run() {
     await ev(`document.querySelector('.model-item button.load[data-name="lumine"]').click(); true`);
     check("S5 ownership batal & lock lepas saat switch",
       await pollFor(`window.__agent._reactiveState().utteranceActive === false`, 15000));
+    check("S5 kanal ucap ikut bersih saat model switch (INV-7)",
+      (await ev(`!!window.__speechChannel && window.__speechChannel.current() === null`)) === true);
     check("S5 model baru siap (handle lumine)",
       await pollFor(`!!(window.__l2dDebug.state.handle && window.__l2dDebug.state.model && window.__l2dDebug.state.modelPath && window.__l2dDebug.state.modelPath.includes('lumine'))`, 60000));
     const afterSwitch = (await chat()).length;
@@ -302,6 +314,41 @@ async function run() {
     const cS5b = await chat();
     check("S5 E tepat sekali & lock balance",
       [E1, E2].every((t) => cS5b.filter((x: string) => x === t).length === 1) && (await locked()) === false);
+
+    // ── S6 (S1) — takeover eksternal: logika + akustik; brain TIDAK boleh lanjut ──
+    console.log("\n🧪 S6: eksternal merebut kanal saat brain bicara — brain mati, bukan 'selesai'");
+    const G1 = pad("S6SATU", 140);
+    const G2 = "S6DUA tak seharusnya";
+    await stub([REPLY(G1, G2)]);
+    await submit("pesan S6");
+    check("S6 brain chain aktif", await pollFor(`window.__agent._reactiveState().utteranceActive === true`, 5000));
+    check("S6 kanal milik brain/chain sebelum takeover",
+      await pollFor(`window.__speechChannel.current()?.producer === 'brain/chain'`, 3000));
+    const cancelsBefore = await ev(`window.__ssCancels`);
+    // producer luar masuk lewat BRIDGE PRODUKSI (speakShared), bukan stub:
+    const extSpoke = await ev(`window.__live2dAgent.speak('S6LUAR ' + 'v'.repeat(60), undefined, { producer: 'probe/external' }); true`);
+    void extSpoke;
+    check("S6 owner berpindah ke probe/external",
+      await pollFor(`window.__speechChannel.current()?.producer === 'probe/external'`, 3000));
+    check("S6 brain ditandai lost: rantai mati + lock lepas",
+      (await ev(`window.__agent._reactiveState().utteranceActive === false && window.__l2dDebug.state.aiLock === false`)) === true);
+    check("S6 enforcer menghentikan audio brain (cancel meningkat)",
+      (await ev(`window.__ssCancels`)) > cancelsBefore);
+    // akustik: brain seg1 pernah benar-benar bersuara
+    const spoke1 = await ev(`window.__ssSpoke`);
+    check("S6 akustik: segmen brain terdengar sebelum takeover",
+      Array.isArray(spoke1) && spoke1.some((x: string) => x.startsWith("S6SATU")), JSON.stringify(spoke1));
+    // eksternal berbicara penuh lalu melepas kanal
+    check("S6 eksternal bersuara",
+      (await ev(`window.__ssSpoke.some(x=>x.startsWith('S6LUAR'))`)) === true);
+    check("S6 kanal bebas setelah eksternal selesai",
+      await pollFor(`window.__speechChannel.current() === null`, 8000));
+    await sleep(500); // lewati jeda 180ms: bukti telat bahwa brain TIDAK lanjut
+    const cS6 = await chat();
+    const spokeS6 = await ev(`window.__ssSpoke`);
+    check("S6 REGRESI: segmen brain kedua TIDAK pernah bersuara (lost ≠ completed)",
+      !spokeS6.some((x: string) => x.startsWith("S6DUA")) && !cS6.includes(G2),
+      JSON.stringify(spokeS6));
 
     // ── health akhir ─────────────────────────────────────────────
     const errs = await ev(`window.__smokeErrors`);

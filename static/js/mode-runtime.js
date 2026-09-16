@@ -119,7 +119,8 @@
     // suara + bubble via app utama kalau ada
     function speak(text) {
       try {
-        if (window.__debugSpeak) window.__debugSpeak(text);
+        // S1: identitas vtuber/audience untuk kanal kepemilikan ucap.
+        if (window.__debugSpeak) window.__debugSpeak(text, null, "vtuber/audience");
         else if (window.__addChat) window.__addChat("agent", text);
       } catch (e) {}
     }

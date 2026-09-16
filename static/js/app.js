@@ -747,6 +747,11 @@
           window.__agent.invalidateCapabilityProfile &&
           window.__agent.invalidateCapabilityProfile();
       } catch (e) {}
+      // S1 INV-7: kepemilikan ucap bersama TIDAK boleh selamat lintas model —
+      // pemilik lama menerima `lost`, audio yang tersisa dihentikan enforcer.
+      try {
+        window.__speechChannel && window.__speechChannel.reset("model-switch");
+      } catch (e) {}
 
       const settings = await buildModelSettings(modelPath);
       // G2: ada load lebih baru → continuation ini mati sebelum menyentuh
@@ -2799,6 +2804,45 @@
     if (!aborted) markDone();
   }
 
+  // ── S1 SpeechChannel — pembungkus kepemilikan di SEBELAR engine speak ──
+  // Engine speak TIDAK diubah (TTS/audio pipeline lama). speakShared hanya:
+  // (1) klaim kanal untuk ucapan ini bila pemanggil tidak membawa token
+  //     milik rantai (implicit claim, auto-release saat selesai);
+  // (2) hitung outcome dari KEPEMILIKAN saat callback engine tiba —
+  //     onend setelah cancel bukan "completed" (INV-4);
+  // (3) graceful: kanal absen (bundle lama) → perilaku persis seperti dulu.
+  function stopSpeechNow() {
+    try {
+      if (state.ttsAudio) state.ttsAudio.pause();
+    } catch (e) {}
+    try {
+      if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+    } catch (e) {}
+  }
+  // INV-3: enforcer kanal — setiap takeover/reset menghentikan audio yang
+  // sedang berjalan SEBELUM pemilik baru bersuara. Idempoten, aman tanpa audio.
+  try {
+    window.__speechChannel && window.__speechChannel.setEnforcer(stopSpeechNow);
+  } catch (e) {}
+  function speakShared(text, onDone, opts) {
+    const ch = window.__speechChannel;
+    opts = opts || {};
+    if (!ch || typeof ch.claim !== "function") {
+      speak(text, onDone);
+      return;
+    }
+    let token =
+      opts.token && ch.isOwner && ch.isOwner(opts.token) ? opts.token : null;
+    const implicit = !token;
+    if (implicit) token = ch.claim(String(opts.producer || "app/direct"), {});
+    const mine = token;
+    speak(text, function () {
+      const outcome = !mine || ch.isOwner(mine) ? "completed" : "lost";
+      if (implicit && mine) ch.release(mine);
+      if (onDone) onDone(outcome);
+    });
+  }
+
   function speak(text, onDone) {
     if (!state.model) {
       showBubble(text);
@@ -2879,7 +2923,9 @@
         : "";
     // Hook bicara lintas-scope (mode-runtime VTuber dsb.) — terpasang
     // apa pun providernya, sehingga SEMUA omongan lewat satu pipeline ini.
-    window.__debugSpeak = (t) => speak(String(t || ""));
+    // S1: lewat speakShared + identitas producer (default jalur vtuber).
+    window.__debugSpeak = (t, done, producer) =>
+      speakShared(String(t || ""), done, producer ? { producer: String(producer) } : undefined);
     if (ttsRemoteActive()) {
       doRemoteTTS(text, markDone, fallbackTimer, reveal, fixedLang);
       return;
@@ -3160,7 +3206,9 @@
       if (brainOn && window.__agent) {
         window.__agent.think(text);
       } else {
-        speak(text);
+        // S1: jalur langsung (brain OFF) pun ikut kanal kepemilikan —
+        // tidak ada lagi producer tanpa-pemilik yang nyelundup ke speak.
+        speakShared(text, null, { producer: "app/direct" });
       }
     }
 
@@ -7066,7 +7114,7 @@
   }
 
   window.__live2dAgent = {
-    speak,
+    speak: speakShared, // S1 — semua bridge speech lewat kanal kepemilikan
     setExpression: applyExpression,
 
     // PHASE 18 S4 — hentikan utterance berjalan untuk kepemilikan rantai
@@ -7077,14 +7125,8 @@
     // yang datang dari stop ini sudah di-guard token rantai, jadi stop
     // tidak pernah bisa menghidupkan rantai basi. Tidak ada subsistem
     // audio kedua.
-    stopSpeech: () => {
-      try {
-        if (state.ttsAudio) state.ttsAudio.pause();
-      } catch (e) {}
-      try {
-        if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
-      } catch (e) {}
-    },
+    stopSpeech: () => stopSpeechNow(), // S1: implementasi tunggal (dipakai
+    // juga sebagai enforcer SpeechChannel — satu jalur pembatalan audio),
 
     setAccessory: (paramIdOrName, val) => {
       const preset = findPreset(paramIdOrName, 'aksesoris');

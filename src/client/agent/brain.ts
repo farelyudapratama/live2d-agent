@@ -29,6 +29,7 @@ import {
 } from "./directive-parser";
 import { expressionHint } from "./expression-classifier";
 import { scaleRoleFraction } from "./param-range";
+import type { SpeechToken } from "../speech/channel";
 import type {
   ChatMessage,
   ParsedSegment,
@@ -91,6 +92,12 @@ const DEFAULT_GESTURES = [
 
 function l2d(): any {
   return (window as any).__live2dAgent;
+}
+
+// S1: akses lazy ke SpeechChannel (bundle memasang lebih dulu; absen =
+// graceful degradation ke perilaku pra-S1).
+function chan(): any {
+  return typeof window !== "undefined" ? (window as any).__speechChannel : null;
 }
 
 // Estimasi durasi bicara TTS satu segmen (heuristik: ±16 karakter/detik plus
@@ -196,6 +203,9 @@ export class AgentBrain {
   private _chainGen = 0;
   private _chainOwner: number | null = null;
   private _chainTimer: ReturnType<typeof setTimeout> | null = null;
+  // S1 SpeechChannel: kanal = AKSES ucap jendela utama; _chainOwner = urutan
+  // segmen brain. Dua tanggung jawab berbeda, keduanya token-guarded.
+  private _chanToken: SpeechToken | null = null;
 
   // ── P15.5: Post-proactive context bridge ──
   // Mencatat perilaku proaktif terakhir yang benar-benar dieksekusi agar
@@ -546,14 +556,23 @@ Contoh pendek:
     const token = ++this._chainGen;
     this._chainOwner = token;
     l2d()?.lockAI?.(); // claim = tepat satu lockAI
+    // S1: rantai brain memegang KANAL ucap selama hidup. onLost = ada
+    // producer luar mengambil alih → rantai MATI (bukan lanjut seolah
+    // segmen selesai). Refusal (null) hanya mungkin di masa depan saat
+    // priority dipakai; hari ini semua default 0 → selalu takeover legal.
+    const ch = chan();
+    this._chanToken = ch
+      ? ch.claim("brain/chain", { onLost: () => this._onChannelLost(token) })
+      : null;
     return token;
   }
 
   /** Rantai selesai normal. Lepas hanya bila masih pemilik — callback basi
-   *  tidak pernah melepas lock milik rantai baru. */
+   *  tidak pernah melepas lock milik rantai baru. Lepas kanal juga. */
   private _releaseUtterance(token: number): void {
     if (this._chainOwner !== token) return;
     this._chainOwner = null;
+    this._releaseChannel();
     l2d()?.unlockAI?.(); // terminal = tepat satu unlockAI
   }
 
@@ -567,10 +586,39 @@ Contoh pendek:
       this._chainTimer = null;
     }
     const L = l2d();
+    this._releaseChannel(); // LEPAS KANAL dulu → sisa callback speak akan
+    // membaca 'lost', dan producer lain bebas mengklaim tanpa rebutan.
     try {
       L?.stopSpeech?.(); // bridge idempoten; aman tanpa audio/model
     } catch (e) {}
     L?.unlockAI?.(); // lock yang DIPEGANG rantai ini dilepas tepat sekali
+  }
+
+  /** S1: kanal diambil producer lain saat rantai brain bicara. Matikan
+   *  rantai dengan disiplin token Phase 18: tanpa maju segmen, unlock
+   *  sekali, timer bersih. TIDAK memanggil stopSpeech — enforcer kanal
+   *  yang menghentikannya (hindari dobel-batal & reentrancy). */
+  private _onChannelLost(chainToken: number): void {
+    if (this._chainOwner !== chainToken) return; // rantai sudah mati — no-op
+    this._chainOwner = null;
+    if (this._chainTimer !== null) {
+      clearTimeout(this._chainTimer);
+      this._chainTimer = null;
+    }
+    // Release token-guarded: bila kepemilikan sudah pindah → no-op aman;
+    // bila anomali (lost tanpa pindah) → kanal ikut bersih. Idempoten.
+    this._releaseChannel();
+    l2d()?.unlockAI?.();
+  }
+
+  private _releaseChannel(): void {
+    const ch = chan();
+    if (ch && this._chanToken) {
+      try {
+        ch.release(this._chanToken); // stale = no-op true-semantik (INV-5)
+      } catch (e) {}
+    }
+    this._chanToken = null;
   }
 
   private async animateTextViaDirector(
@@ -731,7 +779,7 @@ Contoh pendek:
         this.playSegments(segments, true);
       } else {
         const msg = "Hmm, aku bingung jawabnya...";
-        l2d()?.speak?.(msg);
+        l2d()?.speak?.(msg, undefined, { producer: "brain/fallback" });
         addChat("agent", msg);
       }
     } catch (err: any) {
@@ -747,7 +795,7 @@ Contoh pendek:
       console.error("[agent]", err);
       const msg =
         "Maaf, aku lagi gak bisa mikir sekarang. Cek koneksi atau api key ya.";
-      l2d()?.speak?.(msg);
+      l2d()?.speak?.(msg, undefined, { producer: "brain/fallback" });
       addChat("agent", msg);
     } finally {
       // Phase 16: _endRequest() menjamin timer + controller dibersihkan di
@@ -920,13 +968,25 @@ Contoh pendek:
       );
 
       // Speak with callback — next segment starts when THIS one finishes
-      L.speak(seg.text, () => {
-        if (this._chainOwner !== my) return; // engine guard 45–60s yang telat
-        this._chainTimer = setTimeout(() => {
-          this._chainTimer = null;
-          nextSegment();
-        }, 180);
-      });
+      // S1: token kanal rantai ikut dilewatkan; outcome "lost" (kanal
+      // direbut producer luar) TIDAK BOLEH dianggap completion segmen.
+      L.speak(
+        seg.text,
+        (outcome?: string) => {
+          if (outcome === "lost") {
+            this._onChannelLost(my); // defensif — lazimnya onLost sudah menangani
+            return;
+          }
+          if (this._chainOwner !== my) return; // engine guard 45–60s yang telat
+          this._chainTimer = setTimeout(() => {
+            this._chainTimer = null;
+            nextSegment();
+          }, 180);
+        },
+        // bicara di bawah kepemilikan rantai; BILA kanal refusal/graceless
+        // (token null) implicit-claim per segmen tetap ber-identity brain.
+        { token: this._chanToken ?? undefined, producer: "brain/chain" },
+      );
     };
     nextSegment();
     return true;

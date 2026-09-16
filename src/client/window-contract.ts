@@ -8,12 +8,19 @@ import type * as LipSync from "./speech/lip-sync";
 import type { collectNativeExpressions } from "./engine/native-expressions";
 import type * as I18n from "./i18n/index";
 import type { Live2DApi } from "../live2d/types";
+import type { SpeechChannel, SpeechOutcome } from "./speech/channel";
 
 export type Destroy = () => void;
 
 export type Live2DLegacyBridge = {
   getCapabilityProfile?: () => Promise<{ userNote?: string }>;
-  speak?: (text: string) => void;
+  // S1: speak membawa opsi token/producer; callback menerima outcome
+  // "completed" | "lost" (kanal milik bersama — completion BUKAN onend browser).
+  speak?: (
+    text: string,
+    onDone?: (outcome?: SpeechOutcome) => void,
+    opts?: { token?: unknown; producer?: string },
+  ) => void;
 };
 
 declare global {
@@ -65,6 +72,7 @@ declare global {
     __i18n?: typeof I18n;
     __live2dAgent?: Live2DLegacyBridge;
     __live2dApi?: Live2DApi;
+    __speechChannel?: SpeechChannel;
     __addChat?: (role: string, text: string) => void;
   }
 }

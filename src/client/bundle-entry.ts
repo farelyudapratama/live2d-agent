@@ -38,6 +38,7 @@ import { startProjekRail } from "./shell/projek";
 import { startBrowserPanel } from "./browser/panel";
 import { startStageHintFade } from "./shell/stage-hint";
 import { installLive2DApi } from "../live2d/index";
+import { createSpeechChannel } from "./speech/channel";
 
 if (typeof window !== "undefined") {
   window.MotionDSL = MotionDSL;
@@ -127,6 +128,10 @@ if (typeof window !== "undefined") {
   // Cubism. Implementasi renderer menyusul di bawah kontrak src/live2d/types.ts;
   // sampai itu app.js masih memanggil pustaka lama langsung.
   window.__live2dApi = installLive2DApi(window);
+  // S1 — SpeechChannel: kepemilikan ucap bersama jendela utama (murni, tanpa
+  // DOM). app.js memasang enforcer (stopSpeechNow) dan membungkus speak lewat
+  // speakShared; brain/harness/vtuber/direct semuanya lewat satu seam ini.
+  window.__speechChannel = createSpeechChannel();
   try { startProjekRail(); } catch {}
   // Hint panggung memudar setelah interaksi pertama (drag/zoom).
   try { startStageHintFade(); } catch {}

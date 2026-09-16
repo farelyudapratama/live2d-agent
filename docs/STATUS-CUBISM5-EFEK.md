@@ -1,5 +1,84 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-16 (53) — BEHAVIOR CONTRACT S1: SHARED SPEECH CHANNEL — VERIFIED
+
+S1 dari Behavior Contract v1 diimplementasi dan diverifikasi. Infrastruktur
+kepemilikan ucap jendela utama — BUKAN kebijakan produk; S2+ (PET merge,
+VTuber queue/operator, Harness lanes, gating proaktif) TIDAK disentuh.
+
+### Yang dibuat
+
+1. **`src/client/speech/channel.ts`** (baru, murni TS tanpa DOM):
+   `createSpeechChannel()` — claim/release/isOwner/outcome/current/reset +
+   `setEnforcer`. Satu slot pemilik; takeover hanya bila `priority >=`
+   pemilik; pemilik lama terima `lost` SINKRON sebelum klaim return, lalu
+   enforcer (stopSpeechNow app.js) menghentikan audio; klaim saat kanal
+   bebas TIDAK menyentuh enforcer. Release idempoten; token basi tidak
+   bisa melepas pemilik (INV-2/5). `reset("model-switch")` = jalur INV-7.
+2. **app.js**: `speakShared` membungkus engine `speak` (pipeline TTS/audio
+   TIDAK diubah) di SEBELAR tunggal semua ucap jendela utama; outcome
+   dihitung dari KEPEMILIKAN saat callback engine tiba — `onend` setelah
+   cancel tidak bisa lagi menyamar jadi completion (INV-4). Semua call
+   site bawa identitas: `__debugSpeak(text, done, producer)`, jalur direct
+   `app/direct`, bridge `speak` = `speakShared`. Enforcer dipasang ke
+   `stopSpeechNow` (pause ttsAudio + speechSynthesis.cancel — idempoten).
+3. **AgentBrain**: `_chainOwner` Phase 18 TETAP sebagai pengatur sekuens
+   segmen; kanalSpeech dipakai SATU klaim per rantai (`brain/chain`,
+   token rantai dilewatkan ke speak per segmen → tanpa self-preemption).
+   `onLost` kanal → rantai MATI (bukan lanjut); callback speak lama yang
+   datang belakangan dapat outcome `lost` → defensif no-op. Jalur tanpa
+   kanal (bundle lama/test stub) = perilaku pra-S1 utuh.
+4. **Harness panel**: `speakAsCharacter` → `speak(text, undefined,
+   {producer:"harness/actor"})` — quip/task ikut kanal. Semantik cancel
+   task TIDAK diubah. **VTuber main-app**: `__debugSpeak(..., "vtuber/audience")`.
+   Overlay OBS = jendela/proses lain → DI LUAR kanal (sesuai kontrak).
+5. **INV-7 seam**: `loadModel` teardown kini `__speechChannel.reset
+   ("model-switch")` setelah invalidate brain — pemilik lama `lost`, audio
+   sisa berhenti, kanal bersih sebelum model baru.
+
+### Asumsi prioritas yang DIDOKUMENTASIKAN (bukan kebijakan final)
+
+Semua produsen default priority 0 → takeover selalu legal = PERSIS perilaku
+fisik engine hari ini (ucapan baru membatalkan lama); yang berubah hanya
+korban kini melihat `lost`, bukan completion. Parameter `priority` tersedia
+sebagai mekanisme untuk S2/S3; mapping USER>audience>proaktif SENGAJA belum
+ditanam. Kuota refusal `null` hanya aktif bila pemilik priority lebih tinggi.
+
+### Tests
+
+- `test/speech-channel.test.ts` — 9 unit murni kanal (checklist claim/
+  takeover/refusal/stale-release/double-release/outcome/reset/identity).
+- `test/brain-speech-channel.test.ts` — 7 unit integrasi: regresi kunci
+  A→B lanjut normal TANPA preempt eksternal; A→preempt eksternal→B TIDAK
+  jalan; stale token tak bisa lepas pemilik baru; graceful tanpa kanal;
+  model switch melepas kanal.
+- `test/smoke-engine-utterance.ts` — S1/S5 diperluas + skenario S6 baru:
+  takeover lewat BRIDGE PRODUKSI; bukti LOGIS (owner, rantai mati, lock
+  lepas) DAN AKUSTIK (log `__ssSpoke` real-browser-parity + cancel
+  meningkat; segmen kedua brain tidak pernah bersuara) + kanal bersih
+  saat model switch. Shim smoke dinaikkan ke paritas browser bersuara
+  (voices + onend-saat-cancel) — murni file test.
+
+### Quality gates (satu rangkaian):
+- unit **1357 pass / 0 fail** (72 file; +16) · guards **411 / 0** (7 suite)
+- `tsc` bersih · `build` bersih
+- smoke **43/43** termasuk S6 logis+akustik · suite P16/P17/P18 penuh hijau
+- Scope audit: nol perubahan MotionRuntime/Arbiter/renderer/prompting/
+  queue/merge/operator-lane/gating; overlay tak disentuh
+
+### Catatan proses
+
+Sesi implementasi S1 sebelumnya sudah meninggalkan working tree sebagian
+(implementasi utuh, belum terverifikasi/ter-commit); sesi ini memverifikasi
+tiap integrasi terhadap invariant (termasuk jalur token anti self-preemption),
+memperbaiki shim smoke (artefak environment: tanpa voices, speak engine tak
+pernah sampai speechSynthesis — 3 cek akustik gagal), menjalankan semua gate,
+baru commit.
+
+### Commit: `a26c0da` feat(app): S1 shared speech channel for main-window speech
+
+---
+
 ## UPDATE 2026-09-16 (52) — TARGETED CORRECTNESS FIX: CLEAR-CHAT SHARED ARRAY + ATOMIC REQUEST CLAIM — VERIFIED
 
 Bukan fase baru. Dua bug correctness temuan audit policy pasca-Phase 18.

@@ -1174,9 +1174,16 @@
       const motionPlaying = state.handle ? !state.handle.isMotionFinished() : false;
       if (motionPlaying) {
         const nowG = performance.now();
-        if (!(state.clipGateUntil > nowG)) state.clipGateStartedAt = nowG;
-        if (nowG + 450 > (state.clipGateUntil || 0))
-          state.clipGateUntil = nowG + 450;
+        // Gaze user segar (mouse baru digerakkan) → jangan perpanjang gate:
+        // idle native TIDAK merebut pose dari mouse-follow. Paritas baseline
+        // 3ff89bc yang tak punya gate rolling untuk klip idle. Klip milik
+        // aplikasi (emotion/playNative) tetap memakai clipUntil penuh.
+        const userGazeFresh = Date.now() - (state.lookUserAt || 0) < 2500;
+        if (!userGazeFresh) {
+          if (!(state.clipGateUntil > nowG)) state.clipGateStartedAt = nowG;
+          if (nowG + 450 > (state.clipGateUntil || 0))
+            state.clipGateUntil = nowG + 450;
+        }
       }
       let poseAuthority = 1;
       const clipUntilEff = Math.max(

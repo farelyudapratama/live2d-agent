@@ -122,6 +122,17 @@ describe("2. gerbang native motion (static app.js)", () => {
     expect(appSrc).toContain("Math.max(\n        state.clipUntil || 0,\n        state.clipGateUntil || 0,\n      )");
   });
 
+  test("gaze user segar → gate rolling TIDAK diperpanjang (mouse-follow menang atas idle native)", () => {
+    // Regresi 2026-09-17: rolling gate +450 ms ikut memperpanjang poseAuthority
+    // = 0 selama klip idle native (auto-start 7 dtk) → intent mouse dibuang.
+    // Fix: gate hanya diperpanjang saat gaze user TIDAK segar.
+    const gateIdx = appSrc.indexOf("const motionPlaying = state.handle ? !state.handle.isMotionFinished() : false;");
+    expect(gateIdx).toBeGreaterThan(-1);
+    const gateBody = appSrc.slice(gateIdx, appSrc.indexOf("}", appSrc.indexOf("state.clipGateUntil = nowG + 450")));
+    expect(gateBody).toContain("userGazeFresh");
+    expect(gateBody).toContain("if (!userGazeFresh) {");
+  });
+
   test("tebakan durasi lama menjadi window minimum (playNative/playEmotionClip tidak diubah)", () => {
     expect(appSrc).toContain("state.clipUntil = state.clipStartedAt + 2200 + 250;"); // playNative
     expect(appSrc).toContain("state.clipUntil = state.clipStartedAt + dur;"); // playEmotionClip

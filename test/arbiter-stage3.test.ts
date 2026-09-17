@@ -126,11 +126,43 @@ describe("2. gerbang native motion (static app.js)", () => {
     // Regresi 2026-09-17: rolling gate +450 ms ikut memperpanjang poseAuthority
     // = 0 selama klip idle native (auto-start 7 dtk) → intent mouse dibuang.
     // Fix: gate hanya diperpanjang saat gaze user TIDAK segar.
-    const gateIdx = appSrc.indexOf("const motionPlaying = state.handle ? !state.handle.isMotionFinished() : false;");
+    const gateIdx = appSrc.indexOf(
+      "const motionPlaying = state.handle ? !state.handle.isMotionFinished() : false;",
+    );
     expect(gateIdx).toBeGreaterThan(-1);
-    const gateBody = appSrc.slice(gateIdx, appSrc.indexOf("}", appSrc.indexOf("state.clipGateUntil = nowG + 450")));
-    expect(gateBody).toContain("userGazeFresh");
-    expect(gateBody).toContain("if (!userGazeFresh) {");
+    const gateEnd = appSrc.indexOf("let poseAuthority = 1;", gateIdx);
+    expect(gateEnd).toBeGreaterThan(gateIdx);
+    const gateBody = appSrc.slice(gateIdx, gateEnd);
+
+    // Deterministik: eksekusi blok gate persis seperti di app.js dengan waktu
+    // dan state tiruan — tanpa browser, tanpa rAF.
+    const runGate = (state: any, nowMs: number, dateNow: number) => {
+      const sandbox: any = {
+        state,
+        performance: { now: () => nowMs },
+        Date: { now: () => dateNow },
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(gateBody, sandbox);
+    };
+    const mkState = (lookUserAt: number | null) => ({
+      handle: { isMotionFinished: () => false },
+      clipGateUntil: 0,
+      clipGateStartedAt: 0,
+      lookUserAt,
+    });
+
+    // Gaze segar (mouse digerakkan 500 ms lalu) → gate TIDAK diperpanjang.
+    const fresh: any = mkState(1_000_000 - 500);
+    vm.runInContext(gateBody, vm.createContext({ state: fresh, performance: { now: () => 1_000_000 }, Date: { now: () => 1_000_000 } }));
+    expect(fresh.clipGateUntil).toBe(0);
+    expect(fresh.clipGateStartedAt).toBe(0);
+
+    // Gaze basi (tidak pernah gerak) → rolling +450 ms tetap jalan.
+    const stale: any = mkState(null);
+    vm.runInContext(gateBody, vm.createContext({ state: stale, performance: { now: () => 1_000_000 }, Date: { now: () => 1_000_000 } }));
+    expect(stale.clipGateUntil).toBe(1_000_450);
+    expect(stale.clipGateStartedAt).toBe(1_000_000);
   });
 
   test("tebakan durasi lama menjadi window minimum (playNative/playEmotionClip tidak diubah)", () => {

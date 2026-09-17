@@ -5,6 +5,9 @@ import { Config, Connection } from "./types";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 
+const DEFAULT_MOUSE_FOLLOW = { preset: "default" };
+const MOUSE_FOLLOW_GAIN_KEYS = ["headGainX", "headGainY", "bodyGainX", "bodyGainY", "eyeGainX", "eyeGainY"];
+
 const DEFAULT_CONFIG: Config = {
   activeId: null,
   overlay: { enabled: true, alpha: 0.9, size: 1 },
@@ -29,7 +32,7 @@ const DEFAULT_CONFIG: Config = {
     moodDebounceMs: 5000,
     moodStableTicks: 2,
   },
-  motion: { enabled: false, gain: 1.5 },
+  motion: Object.assign({ enabled: false, gain: 1.5 }, { mouseFollow: DEFAULT_MOUSE_FOLLOW }),
   // Bahasa UI + bahasa balasan AI. "auto" = user belum memilih → klien
   // mendeteksi navigator.language saat first-run dan menulis nilai konkret;
   // server memperlakukan "auto" sebagai "id". (Pola backfill sama dengan stt:
@@ -48,6 +51,20 @@ const DEFAULT_CONFIG: Config = {
 };
 
 export const KNOWN_EVENT_KEYS = ["idleSpeak","idleMs","idleRepeatMs","awaySpeak","returnSpeak","awayHiddenMs","quietMs"];
+
+export function mergeMotionIntoConfig(prev: any, incoming: any): any {
+  const base = (typeof prev === "object" && prev) ? prev : {};
+  const oldMotion = (base.motion && typeof base.motion === "object") ? base.motion : {};
+  const patch = (incoming && typeof incoming === "object") ? incoming : {};
+  const oldMF = (oldMotion.mouseFollow && typeof oldMotion.mouseFollow === "object") ? oldMotion.mouseFollow : {};
+  const patchMF = (patch.mouseFollow && typeof patch.mouseFollow === "object") ? patch.mouseFollow : {};
+  const hasExplicitGain = MOUSE_FOLLOW_GAIN_KEYS.some((k) => Object.prototype.hasOwnProperty.call(patchMF, k));
+  const mouseFollow = Object.keys(patchMF).length && patchMF.preset && !hasExplicitGain
+    ? { preset: patchMF.preset }
+    : Object.assign({}, DEFAULT_MOUSE_FOLLOW, oldMF, patchMF);
+  const motion = Object.assign({}, DEFAULT_CONFIG.motion, oldMotion, patch, { mouseFollow });
+  return Object.assign({}, base, { motion });
+}
 
 export function mergeEventsIntoConfig(prev: any, incoming: any): any {
   const base = (typeof prev === "object" && prev) ? prev : {};
@@ -180,6 +197,13 @@ export class ConfigManager {
 
   // TTS section utuh milik user; merge agar field lama (apiKey/voice/model)
   // tidak hilang saat UI lama cuma mengirim {endpoint}.
+  saveMotion(motion: any): void {
+    let prev: any = {};
+    try { prev = JSON.parse(readFileSync(this.path, "utf8")); } catch {}
+    const data = mergeMotionIntoConfig(prev, motion);
+    try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan motion:", e.message); }
+  }
+
   saveTTS(tts: any): void {
     let prev: any = {};
     try { prev = JSON.parse(readFileSync(this.path, "utf8")); } catch {}

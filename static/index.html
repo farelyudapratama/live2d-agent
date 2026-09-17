@@ -581,6 +581,32 @@
              tidak menutupi model di stage kiri — sama seperti
              Jelaskan Parameter & Editor Preset. -->
         <div class="tab-pane" data-pane="motion">
+          <div class="section-title" data-i18n="cfg.mouseFollowTitle">Mouse Follow</div>
+          <div class="cfg-box motion-follow-box">
+            <p class="hint" data-i18n="cfg.mouseFollowHint">Atur seberapa jauh kepala, badan, dan mata mengikuti posisi mouse. Perubahan terasa langsung dan bisa disimpan.</p>
+            <label class="cfg-row" for="motion-follow-preset">
+              <span class="cfg-label" data-i18n="cfg.mouseFollowPreset">Preset</span>
+              <select id="motion-follow-preset">
+                <option value="default" data-i18n="cfg.mouseFollowPresetDefault">Default</option>
+                <option value="strong" data-i18n="cfg.mouseFollowPresetStrong">Strong</option>
+                <option value="wild" data-i18n="cfg.mouseFollowPresetWild">Wild</option>
+                <option value="custom" data-i18n="cfg.mouseFollowPresetCustom">Custom</option>
+              </select>
+            </label>
+            <div class="motion-follow-grid">
+              <label class="cfg-row" for="motion-follow-head-x"><span class="cfg-label" data-i18n="cfg.mouseFollowHeadX">Kepala X</span><input id="motion-follow-head-x" type="range" min="0" max="60" step="1" /><output id="motion-follow-head-x-out" class="cfg-out" for="motion-follow-head-x"></output></label>
+              <label class="cfg-row" for="motion-follow-head-y"><span class="cfg-label" data-i18n="cfg.mouseFollowHeadY">Kepala Y</span><input id="motion-follow-head-y" type="range" min="0" max="60" step="1" /><output id="motion-follow-head-y-out" class="cfg-out" for="motion-follow-head-y"></output></label>
+              <label class="cfg-row" for="motion-follow-body-x"><span class="cfg-label" data-i18n="cfg.mouseFollowBodyX">Badan X</span><input id="motion-follow-body-x" type="range" min="0" max="1" step="0.05" /><output id="motion-follow-body-x-out" class="cfg-out" for="motion-follow-body-x"></output></label>
+              <label class="cfg-row" for="motion-follow-body-y"><span class="cfg-label" data-i18n="cfg.mouseFollowBodyY">Badan Y</span><input id="motion-follow-body-y" type="range" min="0" max="1" step="0.05" /><output id="motion-follow-body-y-out" class="cfg-out" for="motion-follow-body-y"></output></label>
+              <label class="cfg-row" for="motion-follow-eye-x"><span class="cfg-label" data-i18n="cfg.mouseFollowEyeX">Mata X</span><input id="motion-follow-eye-x" type="range" min="0" max="1.5" step="0.05" /><output id="motion-follow-eye-x-out" class="cfg-out" for="motion-follow-eye-x"></output></label>
+              <label class="cfg-row" for="motion-follow-eye-y"><span class="cfg-label" data-i18n="cfg.mouseFollowEyeY">Mata Y</span><input id="motion-follow-eye-y" type="range" min="0" max="1.5" step="0.05" /><output id="motion-follow-eye-y-out" class="cfg-out" for="motion-follow-eye-y"></output></label>
+            </div>
+            <div class="note-row">
+              <button id="btn-save-motion-follow" class="mini-btn" data-i18n="cfg.mouseFollowSave">Simpan Mouse Follow</button>
+              <span id="motion-follow-status" class="note-status" role="status" aria-live="polite"></span>
+            </div>
+          </div>
+
           <div class="section-title" data-i18n="ms.title">Motion Studio</div>
           <p class="hint" data-i18n-html="ms.paneHint">Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b>
             — kepala, tangan, rambut, alis, apa pun yang rig-nya punya. Simpan dengan

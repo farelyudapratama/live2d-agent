@@ -1,5 +1,34 @@
 # STATUS SESI — Dukungan Cubism 5 & Efek Model (Handoff)
 
+## UPDATE 2026-09-17 (64) — KELUHAN MOUSE-FOLLOW VISUAL: BELUM TERVERIFIKASI
+
+User melaporkan kepala/badan diam atau hanya mata mengikuti mouse walaupun
+probe angka sebelumnya dinyatakan berhasil. Sesi ini diagnosis saja; tidak
+mengubah kode produksi, gain, ownership, sheet, atau konfigurasi user.
+
+- Audit source: target mouse bukan bukti pose akhir. MotionRuntime aktif
+  memakai aiPose; intent mouse idle-pose juga bisa kalah dari sticky/rawDrive
+  atau gate clip. Penyebab spesifik pada sesi user belum terbukti.
+- Browser uji lokal memuat lumine setelah `bun run build` bersih. Input mouse
+  nyata ke kanan menghasilkan target kepala X sekitar 29.70 dan badan X 7.43,
+  tetapi nilai easing tetap 0 dan penghitung frames/coreUpdates tetap 20
+  pada beberapa pembacaan terpisah. Hasil arbitrase tetap pose idle lama.
+  Ini membuktikan loop pada browser uji tidak maju, BUKAN membuktikan akar
+  keluhan di browser/jendela user. Tidak memaksa tick manual untuk mengklaim
+  keberhasilan mouse-follow.
+- Runtime menandai sheet basi (`scannerVersion`, have=null, want=2), tetapi
+  hasHead/hasBody true dan intent kedua role ada. Belum terbukti penyebab.
+- Screenshot berhasil dibuat tetapi gambar tidak diteruskan ke model oleh
+  lingkungan sesi. Tidak ada penerimaan visual; klaim sebelumnya bahwa
+  angka parameter membuktikan mouse-follow secara visual tidak cukup.
+- Panel mouse-follow pada perubahan working tree belum punya wiring event
+  client; tidak dipakai sebagai bukti kalibrasi berhasil. Perubahan user
+  dan berkas test tak terlacak dibiarkan utuh.
+
+Validasi sesi: build bersih; unit/guard/tsc tidak dijalankan (tidak ada fix
+kode). Diagnosis belum tuntas. Jangan menyimpulkan perbaikan gain/reset
+breath dari hasil ini; perlu observasi gerakan pada loop render yang maju.
+
 ## UPDATE 2026-09-17 (63) — FINAL VISUAL PARITY PASS: screenColor & SHARPNESS — NO FIX (TERBUKTI)
 
 Pass terakhir menuntaskan tiga sisa temuan audit parity; **tidak ada perubahan

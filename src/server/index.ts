@@ -663,6 +663,7 @@ async function handleConfigPost(req:Request):Promise<Response>{
     else if(action==="delete"){ conns=conns.filter(c=>c.id!==body.id); if(cfg.activeId===body.id) cfg.activeId=conns[0]?.id||null; }
     else if(action==="setActive"){ if(!conns.find(c=>c.id===body.id)) return json({error:"connection tidak ada"},404); cfg.activeId=body.id; }
     else if(action==="saveEvents"){ config.saveEvents(body.events||{}); return json({ok:true, events: config.load().events}); }
+    else if(action==="saveMotion"){ config.saveMotion(body.motion||{}); return json({ok:true, motion: config.load().motion}); }
     else if(action==="saveTTS"){ config.saveTTS(body.tts||{}); const t=config.load().tts||{}; return json({ok:true, tts:Object.assign({},t,{apiKey:t.apiKey?config.maskKey(t.apiKey):""})}); }
     else if(action==="saveI18n"){ config.saveI18n(body.i18n||{}); return json({ok:true, i18n: config.load().i18n}); }
     else if(action==="save"){ if(Array.isArray(body.connections)) conns=body.connections; if(body.activeId) cfg.activeId=body.activeId; }

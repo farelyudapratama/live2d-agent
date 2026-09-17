@@ -396,8 +396,7 @@
         // Wake bounded: donasi yang barusan mengosongkan slot tidak punya
         // rantai ke operator; sapuan tiap poll (2,5 dtk) menjamin drain lanjut.
         pumpOperators();
-        }
-      } catch (e) { /* server restart dsb — coba lagi */ }
+        } catch (e) { /* server restart dsb — coba lagi */ }
     }
 
     // wiring tombol start/stop
